@@ -371,7 +371,7 @@ public sealed class CourtRefreshStatusService(AppDbContext db, TimeProvider? tim
     public async Task<WhatIsNotUpdatedSummaryDto> GetWhatIsNotUpdatedSummaryAsync(long requestId, CancellationToken ct = default)
     {
         var caseIds = await db.LitigationCases.AsNoTracking()
-            .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null)
+            .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null).Where(LitigationData.Attribution.LitigationAttribution.IsShown)
             .Select(c => c.LitigationCaseId)
             .ToListAsync(ct);
 
@@ -445,7 +445,7 @@ public sealed class CourtRefreshStatusService(AppDbContext db, TimeProvider? tim
 
         // Calculate fields still missing across all cases
         var cases = await db.LitigationCases.AsNoTracking()
-            .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null)
+            .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null).Where(LitigationData.Attribution.LitigationAttribution.IsShown)
             .Select(c => new
             {
                 c.CaseStatus,
@@ -630,7 +630,7 @@ public sealed class CourtRefreshStatusService(AppDbContext db, TimeProvider? tim
         var cases = caseIds is not null
             ? caseIds.Distinct().ToList()
             : await db.LitigationCases.AsNoTracking()
-                .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null)
+                .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null).Where(LitigationData.Attribution.LitigationAttribution.IsShown)
                 .Select(c => c.LitigationCaseId)
                 .ToListAsync(ct);
 
@@ -687,7 +687,7 @@ public sealed class CourtRefreshStatusService(AppDbContext db, TimeProvider? tim
         }
 
         var courtCases = await db.LitigationCases.AsNoTracking()
-            .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null)
+            .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null).Where(LitigationData.Attribution.LitigationAttribution.IsShown)
             .ToListAsync(ct);
 
         var freshnessMap = courtCases.Count == 0

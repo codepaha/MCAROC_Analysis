@@ -5,6 +5,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.LitigationData;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -92,6 +93,7 @@ public sealed class LitigationEndToEndAcceptanceTests : IAsyncLifetime
         await using var verify = CreateContext();
         var onlyCase = Assert.Single(await verify.LitigationCases.Where(c => c.RequestId == requestId).ToListAsync());
         Assert.Equal("TNKP070001331234", onlyCase.Cnr);
+        Assert.Equal(LitigationAttributionOutcome.Attributed, onlyCase.AttributionOutcome);   // a party is the company ("1 ACCEPTANCE CO LTD")
         Assert.Equal(2, await verify.LitigationCaseOrders.CountAsync(o => o.LitigationCaseId == onlyCase.LitigationCaseId));
         Assert.Equal(2, await verify.LitigationCaseSourceReports.CountAsync(s => s.LitigationCaseId == onlyCase.LitigationCaseId));
 
@@ -126,6 +128,13 @@ public sealed class LitigationEndToEndAcceptanceTests : IAsyncLifetime
         var snapshotId = await persistence.EnsureSnapshotAsync(
             jobId, job.RawResponseHash!, job.ReportFormat, job.RawReportBytes!, DateTime.UtcNow, CancellationToken.None);
         await persistence.PersistSnapshotAsync(snapshotId, CancellationToken.None);
+
+        // #489: an imported case is the company's once attributed, as the attribution worker does between the import and any list or report.
+        await using var attributionDb = CreateContext();
+        await new MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttributionService(attributionDb,
+                new ServiceCollection().BuildServiceProvider(),
+                NullLogger<MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttributionService>.Instance)
+            .AttributeRequestAsync(job.RequestId, CancellationToken.None);
     }
 
     private static LitigationSearchJobService NewSearchService(AppDbContext db, StubHandler handler)
@@ -164,14 +173,14 @@ public sealed class LitigationEndToEndAcceptanceTests : IAsyncLifetime
 
     private const string FirstReport = """
         { "request_details":{"job_id":"local-job","keywords":["Acceptance Co Limited"]}, "district_court":{"against":{"civil":[
-          {"_id":"provider-one","csp_id":"csp-first","cnr_number":"TNKP070001331234","type":"district","court":"Acceptance District Court","case_no":"12/2025","case_type":"OS","case_year":"2025","case_status":"PENDING","orders":[{"pdf_url":"https://vendor.example/order-a.pdf","order_date":"2025-01-05","order_type":"Order"}]},
-          {"_id":"provider-two","csp_id":"csp-second","cnr_number":"TNKP070001331234","type":"district","court":"Acceptance District Court","case_no":"12/2025","case_type":"OS","case_year":"2025","case_status":"PENDING","orders":[{"pdf_url":"https://vendor.example/order-b.pdf","order_date":"2025-01-06","order_type":"Judgment"}]}
+          {"_id":"provider-one","csp_id":"csp-first","cnr_number":"TNKP070001331234","type":"district","court":"Acceptance District Court","case_no":"12/2025","case_type":"OS","case_year":"2025","case_status":"PENDING","petitioners":[{"name":"STATE BANK OF INDIA"}],"respondents":[{"name":"1 ACCEPTANCE CO LTD"}],"orders":[{"pdf_url":"https://vendor.example/order-a.pdf","order_date":"2025-01-05","order_type":"Order"}]},
+          {"_id":"provider-two","csp_id":"csp-second","cnr_number":"TNKP070001331234","type":"district","court":"Acceptance District Court","case_no":"12/2025","case_type":"OS","case_year":"2025","case_status":"PENDING","petitioners":[{"name":"STATE BANK OF INDIA"}],"respondents":[{"name":"1 ACCEPTANCE CO LTD"}],"orders":[{"pdf_url":"https://vendor.example/order-b.pdf","order_date":"2025-01-06","order_type":"Judgment"}]}
         ]}}}
         """;
 
     private const string SecondReport = """
         { "request_details":{"job_id":"local-job-rerun","keywords":["Acceptance Co Limited"]}, "district_court":{"against":{"civil":[
-          {"_id":"provider-three","csp_id":"csp-third","cnr_number":"TNKP070001331234","type":"district","court":"Acceptance District Court","case_no":"12/2025","case_type":"OS","case_year":"2025","case_status":"PENDING","orders":[{"pdf_url":"https://vendor.example/order-a.pdf","order_date":"2025-01-05","order_type":"Order"}]}
+          {"_id":"provider-three","csp_id":"csp-third","cnr_number":"TNKP070001331234","type":"district","court":"Acceptance District Court","case_no":"12/2025","case_type":"OS","case_year":"2025","case_status":"PENDING","petitioners":[{"name":"STATE BANK OF INDIA"}],"respondents":[{"name":"1 ACCEPTANCE CO LTD"}],"orders":[{"pdf_url":"https://vendor.example/order-a.pdf","order_date":"2025-01-05","order_type":"Order"}]}
         ]}}}
         """;
 }

@@ -3479,6 +3479,25 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<string>("Act")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<DateTime?>("AttributionDecidedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("AttributionOutcome")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("AttributionParty")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("AttributionReason")
+                        .HasMaxLength(600)
+                        .HasColumnType("nvarchar(600)");
+
+                    b.Property<string>("AttributionRule")
+                        .HasMaxLength(60)
+                        .HasColumnType("nvarchar(60)");
+
                     b.Property<string>("Bench")
                         .HasColumnType("nvarchar(max)");
 
@@ -3571,6 +3590,8 @@ namespace MCAROC_Analysis.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.HasKey("LitigationCaseId");
+
+                    b.HasIndex("RequestId", "AttributionOutcome");
 
                     b.HasIndex("RequestId", "ProviderCaseId")
                         .IsUnique()
@@ -4115,6 +4136,59 @@ namespace MCAROC_Analysis.Migrations
                         .IsUnique();
 
                     b.ToTable("LitigationOrderDocuments");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationPartyVerdict", b =>
+                {
+                    b.Property<long>("LitigationPartyVerdictId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("LitigationPartyVerdictId"));
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("PartyKey")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<string>("PartyName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("PromptVersion")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(600)
+                        .HasColumnType("nvarchar(600)");
+
+                    b.Property<string>("SubjectKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Verdict")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("LitigationPartyVerdictId");
+
+                    b.HasIndex("SubjectKey", "PartyKey", "PromptVersion")
+                        .IsUnique();
+
+                    b.ToTable("LitigationPartyVerdicts");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationPortfolioAiAnalysis", b =>

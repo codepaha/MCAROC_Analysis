@@ -112,6 +112,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<CalculationAiAuditRun> CalculationAiAuditRuns => Set<CalculationAiAuditRun>();
     public DbSet<AiUsageRecord> AiUsageRecords => Set<AiUsageRecord>();
     public DbSet<LitigationNameSpelling> LitigationNameSpellings => Set<LitigationNameSpelling>();
+    public DbSet<LitigationPartyVerdict> LitigationPartyVerdicts => Set<LitigationPartyVerdict>();
     public DbSet<CalculationAssuranceOverrideAudit> CalculationAssuranceOverrideAudits => Set<CalculationAssuranceOverrideAudit>();
 
     // Large Archive Upload & Storage Admission
@@ -338,6 +339,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Cascade);
             e.Property(x => x.CspId).HasMaxLength(100);
             e.Property(x => x.ProviderCaseId).HasMaxLength(100);
+            e.Property(x => x.AttributionOutcome).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.AttributionRule).HasMaxLength(60);
+            e.Property(x => x.AttributionParty).HasMaxLength(500);
+            e.Property(x => x.AttributionReason).HasMaxLength(600);
+            e.HasIndex(x => new { x.RequestId, x.AttributionOutcome });
             e.Property(x => x.Cnr).HasMaxLength(20);
             e.Property(x => x.ProceedingType).HasMaxLength(30);
         });
@@ -1110,6 +1116,19 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => x.CalculationCheckResultId);
             e.HasIndex(x => x.CalculationLedgerEntryId);
+        });
+
+        modelBuilder.Entity<LitigationPartyVerdict>(e =>
+        {
+            e.HasKey(x => x.LitigationPartyVerdictId);
+            e.Property(x => x.SubjectKey).HasMaxLength(64);
+            e.Property(x => x.PartyKey).HasMaxLength(400);
+            e.Property(x => x.PartyName).HasMaxLength(500);
+            e.Property(x => x.PromptVersion).HasMaxLength(40);
+            e.Property(x => x.Model).HasMaxLength(100);
+            e.Property(x => x.Verdict).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Reason).HasMaxLength(600);
+            e.HasIndex(x => new { x.SubjectKey, x.PartyKey, x.PromptVersion }).IsUnique();
         });
 
         modelBuilder.Entity<LitigationNameSpelling>(e =>

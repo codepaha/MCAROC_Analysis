@@ -72,8 +72,37 @@ public sealed class LitigationCase
     /// case's real-world state can change between search runs.</summary>
     public DateTime LastSeenUtc { get; set; }
 
+    /// <summary>Whether this case is the company's (#489, decision a). Null: not assessed yet (a case stored before attribution existed), shown as before
+    /// until the attribution worker reaches it. Only <see cref="LitigationAttributionOutcome.Attributed"/> is shown anywhere else; every list, count,
+    /// report, chat answer and analysis reads it through <c>LitigationAttribution.IsShown</c>.</summary>
+    public LitigationAttributionOutcome? AttributionOutcome { get; set; }
+
+    /// <summary>Which rule decided: the whole-name rule (<c>exact</c>, <c>exact-former-name</c>, <c>exact-representative</c>...), <c>other-body</c>,
+    /// <c>judged-same</c> / <c>judged-different</c> / <c>judged-unsure</c>.</summary>
+    public string? AttributionRule { get; set; }
+
+    /// <summary>The party, as the record writes it, the decision rests on.</summary>
+    public string? AttributionParty { get; set; }
+
+    /// <summary>The reason in words, shown with the case ("the party is the company's former name", the judgement's own reason).</summary>
+    public string? AttributionReason { get; set; }
+
+    public DateTime? AttributionDecidedUtc { get; set; }
+
     public List<LitigationCaseOrder> Orders { get; set; } = [];
     public List<LitigationCaseSourceReport> SourceReports { get; set; } = [];
+}
+
+public enum LitigationAttributionOutcome
+{
+    /// <summary>The company's: a party is the company by the whole-name rule, or was judged to be.</summary>
+    Attributed,
+    /// <summary>Waiting for the judgement of a party that the rules could not settle. Not shown.</summary>
+    Pending,
+    /// <summary>The judgement could not say. Not shown or counted; listed apart with its reason.</summary>
+    Ambiguous,
+    /// <summary>No party is the company (another body that contains its name, or judged different). Not shown or counted; listed apart with its reason.</summary>
+    NotTheCompany
 }
 
 /// <summary>One order/judgment record for a <see cref="LitigationCase"/>, exactly as the vendor returned it

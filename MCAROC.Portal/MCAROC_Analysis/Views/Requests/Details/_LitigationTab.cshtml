@@ -978,12 +978,53 @@
                     <div class="d-flex flex-wrap gap-1">
                         @foreach (var kw in lake.SourceCoverage.Keywords)
                         {
-                            <span class="badge bg-light text-dark border" title="Source: @kw.Source">
+                            <span class="badge bg-light text-dark border" title="@(kw.Reason ?? $"Source: {kw.Source}")">
                                 @kw.Value <small class="text-muted">(@kw.Source)</small>
                             </span>
                         }
                     </div>
                 </div>
+            }
+
+            @if (lake.SourceCoverage.AttributionWaitingCount > 0)
+            {
+                <div class="alert alert-info py-2 small mb-3" role="status">
+                    <i class="bi bi-hourglass-split me-1"></i>
+                    @lake.SourceCoverage.AttributionWaitingCount case(s) returned by the search are being checked against the company's names. They are listed and counted once confirmed.
+                </div>
+            }
+
+            @if (lake.SourceCoverage.SetAside.Count > 0)
+            {
+                var notCompany = lake.SourceCoverage.SetAside.Count(s => s.Outcome == LitigationAttributionOutcome.NotTheCompany);
+                var unclear = lake.SourceCoverage.SetAside.Count - notCompany;
+                <details class="mb-3">
+                    <summary class="small fw-bold">
+                        Set aside: @lake.SourceCoverage.SetAside.Count case(s) returned by the search are not counted
+                        (@notCompany not this company's, @unclear could not be confirmed)
+                    </summary>
+                    <div class="table-responsive mt-2">
+                        <table class="table table-sm small align-middle mb-0">
+                            <thead><tr><th>Case</th><th>Court</th><th>Party</th><th>Why</th></tr></thead>
+                            <tbody>
+                                @foreach (var s in lake.SourceCoverage.SetAside)
+                                {
+                                    <tr>
+                                        <td><a href="/Requests/@reqId/Litigation/Cases/@s.LitigationCaseId">@(s.CaseNumber ?? "—")</a></td>
+                                        <td>@(s.Court ?? "—")</td>
+                                        <td>@(s.Party ?? "—")</td>
+                                        <td>
+                                            <span class="badge @(s.Outcome == LitigationAttributionOutcome.NotTheCompany ? "bg-secondary" : "bg-warning text-dark")">
+                                                @(s.Outcome == LitigationAttributionOutcome.NotTheCompany ? "Not this company" : "Could not confirm")
+                                            </span>
+                                            @s.Reason
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </details>
             }
 
             <div class="small text-muted border-top pt-2 mt-2">

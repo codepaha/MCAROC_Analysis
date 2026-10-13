@@ -39,6 +39,23 @@
         <a href="@returnUrl"><i class="bi bi-arrow-left me-1"></i>Litigation — @request.CompanyName</a>
     </div>
 
+    @if (Model.Attribution is { Counted: false } setAside)
+    {
+        <div class="alert alert-warning small" role="alert" data-attribution="set-aside">
+            <strong>Not counted for @request.CompanyName.</strong>
+            @(setAside.Outcome == LitigationAttributionOutcome.NotTheCompany ? "This case is not this company's." : "It could not be confirmed that this case is this company's.")
+            @if (!string.IsNullOrWhiteSpace(setAside.Party)) { <span>Party: <em>@setAside.Party</em>.</span> }
+            @setAside.Reason
+        </div>
+    }
+    else if (Model.Attribution is { Counted: true, Reason: { Length: > 0 } why })
+    {
+        <div class="small text-muted mb-2" data-attribution="counted">
+            <i class="bi bi-check2-circle me-1"></i>Counted for @request.CompanyName: @why
+            @if (!string.IsNullOrWhiteSpace(Model.Attribution.Party)) { <span>(party: <em>@Model.Attribution.Party</em>)</span> }
+        </div>
+    }
+
     <!-- Identity -->
     <div class="card shadow-sm mb-3">
         <div class="card-body">

@@ -48,7 +48,8 @@ public sealed class RefreshRunService(AppDbContext db, FetchWorkQueue queue, Tim
         db.Set<ModuleRefreshRun>().Add(run);
         await db.SaveChangesAsync(ct);
 
-        var cases = await db.LitigationCases.AsNoTracking().Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null)
+        // #489: only the company's cases are refreshed at the portals.
+        var cases = await db.LitigationCases.AsNoTracking().Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null).Where(LitigationData.Attribution.LitigationAttribution.IsShown)
             .OrderBy(c => c.LitigationCaseId).ToListAsync(ct);
         var store = new LitigationModuleStore(db, _time);
         var moduleCases = new Dictionary<long, ModuleCase>();

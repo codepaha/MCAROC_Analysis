@@ -298,6 +298,12 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                         .Where(sr => sr.LitigationReportSnapshotId == authoritativeSnapshotId)
                         .CountAsync(ct);
                     var uniqueCasesCount = await caseIdsQuery.CountAsync(ct);
+                    // #489: what the search returned but is not counted, and why.
+                    var notShown = await db.LitigationCaseSourceReports.AsNoTracking()
+                        .Where(sr => sr.LitigationReportSnapshotId == authoritativeSnapshotId && sr.Case!.MergedIntoCaseId == null
+                            && sr.Case.AttributionOutcome != null && sr.Case.AttributionOutcome != LitigationAttributionOutcome.Attributed)
+                        .Select(sr => new { sr.Case!.LitigationCaseId, sr.Case.CaseNumber, sr.Case.Court, Outcome = sr.Case.AttributionOutcome!.Value, sr.Case.AttributionParty, sr.Case.AttributionReason })
+                        .Distinct().ToListAsync(ct);
 
                     bool isAuthoritativeCoverage = !isPriorRun && litVm.ImportState == SnapshotImportState.Completed;
 
@@ -315,7 +321,11 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                         DownloadedOrders = downloadedCount,
                         PendingOrders = pendingOrdersCount,
                         FailedOrders = failedCount,
-                        ExpiredOrders = expiredCount
+                        ExpiredOrders = expiredCount,
+                        SetAside = notShown.Where(n => n.Outcome != LitigationAttributionOutcome.Pending)
+                            .OrderBy(n => n.Outcome).ThenBy(n => n.LitigationCaseId)
+                            .Select(n => new SetAsideCase(n.LitigationCaseId, n.CaseNumber, n.Court, n.Outcome, n.AttributionParty, n.AttributionReason)).ToList(),
+                        AttributionWaitingCount = notShown.Count(n => n.Outcome == LitigationAttributionOutcome.Pending)
                     };
 
                     if (!compact && focusCase.HasValue)

@@ -99,6 +99,8 @@ public static class PipelineEventText
         ["RESOLVED_SOLE_ACTIVE"] = "the only active company with that name was selected automatically",
         ["RESOLVED_HUMAN_SELECTED"] = "company selected by a person",
         ["ORDER_DOWNLOAD_STALLED"] = "an order document has been waiting to download for 5+ days",
+        ["ATTRIBUTING"] = "checking which of the cases found are the company's",
+        ["ATTRIBUTION_STALLED"] = "cases have waited 2+ hours for the check of whether a party is the company",
         ["AWAITING_ORDER_PROCESSING"] = "awaiting order download/chunking",
         ["LITIGATION_ANALYSIS_NOT_ELIGIBLE"] = "the request can't be analysed automatically",
         ["LITIGATION_ANALYSIS_ALREADY_RUN"] = "this report was already analysed",

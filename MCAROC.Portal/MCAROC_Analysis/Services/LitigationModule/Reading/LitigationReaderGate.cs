@@ -35,6 +35,7 @@ public static class LitigationCaseSets
     public static IQueryable<long> Legacy(AppDbContext db, long snapshotId) =>
         db.LitigationCaseSourceReports.AsNoTracking()
             .Where(sr => sr.LitigationReportSnapshotId == snapshotId && sr.Case!.MergedIntoCaseId == null)
+            .Where(LitigationData.Attribution.LitigationAttribution.IsShownLink)   // #489: only the company's cases
             .Select(sr => sr.LitigationCaseId).Distinct();
 
     public static async Task<IQueryable<long>> ForAsync(AppDbContext db, CaseSetSource source, long requestId, long snapshotId, CancellationToken ct) =>

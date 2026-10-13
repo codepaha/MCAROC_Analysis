@@ -439,7 +439,11 @@ public sealed class PartyDiscoveryIntakeService : IPartyDiscoveryIntakeService
                     District = district,
                     Bench = bench,
                     PetitionersJson = JsonSerializer.Serialize(new[] { ready.Candidate.ApplicantOrComplainant }.Where(p => !string.IsNullOrWhiteSpace(p))),
-                    RespondentsJson = JsonSerializer.Serialize(new[] { ready.Candidate.Respondent }.Where(p => !string.IsNullOrWhiteSpace(p)))
+                    RespondentsJson = JsonSerializer.Serialize(new[] { ready.Candidate.Respondent }.Where(p => !string.IsNullOrWhiteSpace(p))),
+                    // #489: a discovered case is taken in only when a party is the company by the whole-name rule.
+                    AttributionOutcome = LitigationAttributionOutcome.Attributed, AttributionRule = ready.Candidate.MatchResult.Rule,
+                    AttributionParty = ready.Candidate.MatchResult.MatchedParty, AttributionReason = "A party is the company, found by the portal party search.",
+                    AttributionDecidedUtc = nowUtc
                 };
 
                 _db.LitigationCases.Add(legacyCase);

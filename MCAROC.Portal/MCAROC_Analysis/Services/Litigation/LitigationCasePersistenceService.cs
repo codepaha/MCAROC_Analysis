@@ -263,7 +263,8 @@ public sealed class LitigationCasePersistenceService(
                     followedMerge = true;
                 }
                 var isNewCase = litigationCase is null;
-                litigationCase ??= new LitigationCase { RequestId = requestId, FirstSeenUtc = now };
+                // #489: a vendor case is not the company's until attributed; it waits (hidden, and the pipeline with it) for the attribution worker.
+                litigationCase ??= new LitigationCase { RequestId = requestId, FirstSeenUtc = now, AttributionOutcome = LitigationAttributionOutcome.Pending, AttributionDecidedUtc = now };
                 if (isNewCase)
                 {
                     db.LitigationCases.Add(litigationCase);

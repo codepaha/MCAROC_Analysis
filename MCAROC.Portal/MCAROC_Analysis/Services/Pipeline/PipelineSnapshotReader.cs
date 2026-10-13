@@ -126,9 +126,13 @@ public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOpt
             var staleCutoff = DateTime.UtcNow.AddDays(-5);
             var hasStalledOrderDownload = orderDocs.Any(d => d.Status == LitigationOrderDocumentStatus.Pending && d.CreatedUtc <= staleCutoff);
 
+            // #489: the imported cases are the company's only once attributed; the stage is not done while any is unsettled.
+            var outstanding = await db.LitigationCases.AsNoTracking().Where(c => c.RequestId == requestId)
+                .Where(MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttribution.IsWaiting)
+                .GroupBy(_ => 1).Select(g => new { Count = g.Count(), Since = g.Min(c => c.AttributionDecidedUtc) }).FirstOrDefaultAsync(ct);
             searchFacts = new LitigationSearchFacts(search.LitigationSearchJobId, search.Status, search.FailureReason,
                 snapshot?.LitigationReportSnapshotId, snapshot?.Status, ordersFullyProcessed, hasStalledOrderDownload,
-                search.LeaseExpiresUtc, snapshot?.LeaseExpiresUtc);
+                search.LeaseExpiresUtc, snapshot?.LeaseExpiresUtc, outstanding?.Count ?? 0, outstanding?.Since);
         }
 
         var litigationAnalysis = await db.LitigationAiAnalysisRuns.AsNoTracking().Where(r => r.RequestId == requestId)

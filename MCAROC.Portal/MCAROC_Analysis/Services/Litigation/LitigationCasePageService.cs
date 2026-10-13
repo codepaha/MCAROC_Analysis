@@ -19,7 +19,10 @@ public sealed record LitigationIdentityEvidence(
 /// <summary>Everything the standalone page of one litigation case shows.</summary>
 public sealed record LitigationCasePage(
     McaRequest Request, LitigationCaseCardViewModel Card, DateTime RetrievedUtc, IReadOnlyList<ChargeLitigationLink> ChargeLinks,
-    IReadOnlyList<RelatedLitigationCase> RelatedCases, LitigationIdentityEvidence Identity);
+    IReadOnlyList<RelatedLitigationCase> RelatedCases, LitigationIdentityEvidence Identity, CaseAttributionNote? Attribution = null);
+
+/// <summary>#489: why the case is, or is not, the company's. <see cref="Counted"/> false: set aside, opened from the set-aside list, shown with its reason.</summary>
+public sealed record CaseAttributionNote(bool Counted, LitigationAttributionOutcome? Outcome, string? Rule, string? Party, string? Reason);
 
 /// <summary>Loads one case of a request's current litigation report for its own page: the same card the Litigation tab builds
 /// (identity, age, baseline risk tier, parties, orders with outcomes and property matches, any stored analysis), plus the charge it
@@ -41,7 +44,12 @@ public sealed class LitigationCasePageService(
         // The same definition of "the request's cases" as the register (plan section 12.6): the gate picks legacy or the module.
         var caseSource = readerGate is null ? CaseSetSource.Legacy : await readerGate.ResolveCasePageAsync(requestId, ct);
         var inReport = await LitigationCaseSets.ForAsync(db, caseSource, requestId, snapshot.LitigationReportSnapshotId, ct);
-        if (!await inReport.AnyAsync(id => id == caseId, ct)) return null;
+        var counted = await inReport.AnyAsync(id => id == caseId, ct);
+        // #489: a case the search returned but that is set aside (not the company's, or not confirmed) opens too, from the set-aside list, marked as not counted.
+        if (!counted && !await db.LitigationCaseSourceReports.AsNoTracking().AnyAsync(sr => sr.LitigationCaseId == caseId
+                && sr.LitigationReportSnapshotId == snapshot.LitigationReportSnapshotId && sr.Case!.MergedIntoCaseId == null
+                && sr.Case.AttributionOutcome != null && sr.Case.AttributionOutcome != LitigationAttributionOutcome.Attributed, ct))
+            return null;
 
         var theCase = await db.LitigationCases.AsNoTracking().Include(c => c.Orders).FirstOrDefaultAsync(c => c.LitigationCaseId == caseId, ct);
         if (theCase is null) return null;
@@ -81,7 +89,8 @@ public sealed class LitigationCasePageService(
         }
 
         var identity = await IdentityEvidenceAsync(request, companyProfile, theCase, orderDocs, companyNames, ct);
-        return new LitigationCasePage(request, card, snapshot.RetrievedUtc, links, await RelatedAsync(inReport, card, companyNames, ct), identity);
+        return new LitigationCasePage(request, card, snapshot.RetrievedUtc, links, await RelatedAsync(inReport, card, companyNames, ct), identity,
+            new CaseAttributionNote(counted, theCase.AttributionOutcome, theCase.AttributionRule, theCase.AttributionParty, theCase.AttributionReason));
     }
 
     /// <summary>Where an old link to a merged duplicate goes: the surviving case of the same request. Only when the case page is served from the module (plan section 12.6,

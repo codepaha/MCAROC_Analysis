@@ -139,6 +139,11 @@ builder.Services.AddScoped<IPaidCallAdmission, PaidCallAdmissionService>();
 builder.Services.AddScoped<LitigationReuseService>();
 builder.Services.Configure<LitigationKeywordOptions>(builder.Configuration.GetSection(LitigationKeywordOptions.SectionName));
 builder.Services.AddScoped<CompanyNameSuggestionService>();
+// Whether each vendor case is the company's (#489, decision a): rules first, then a cached judgement; only attributed cases are shown.
+builder.Services.Configure<MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttributionOptions>(
+    builder.Configuration.GetSection(MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttributionOptions.SectionName));
+builder.Services.AddScoped<MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttributionService>();
+builder.Services.AddHostedService<MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttributionWorker>();
 builder.Services.AddScoped<LitigationKeywordSuggester>();
 builder.Services.AddScoped<LitigationStartService>();
 builder.Services.AddScoped<ChargeLitigationService>();

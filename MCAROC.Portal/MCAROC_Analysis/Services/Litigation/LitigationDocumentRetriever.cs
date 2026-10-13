@@ -159,6 +159,11 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
             .ToList();
     }
 
+    /// <summary>#489: passages only from the company's cases (<c>LitigationAttribution.IsShown</c> in SQL): an order of a case that is not the company's, or is
+    /// still being judged, is never quoted.</summary>
+    private const string ShownCasesSql =
+        "SELECT lc.LitigationCaseId FROM LitigationCases lc WHERE lc.RequestId = @requestId AND (lc.AttributionOutcome IS NULL OR lc.AttributionOutcome = 'Attributed')";
+
     private const string WideColumns = """
         c.LitigationOrderChunkId, c.RequestId, c.LitigationOrderDocumentId, c.LitigationCaseOrderId, c.LitigationCaseId,
             c.CaseNumber, c.Cnr, c.Court, c.OrderType, c.OrderDate, c.ChunkIndex, c.PageNumber, c.ChunkText,
@@ -176,6 +181,7 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
                 SELECT TOP (@topK) LitigationOrderChunkId, VECTOR_DISTANCE('cosine', Embedding, @queryVector) AS Distance
                 FROM LitigationOrderChunks
                 WHERE RequestId = @requestId AND IsSuperseded = 0 AND EmbeddingModel = @model AND EmbeddingDimensions = @dimensions
+                    AND LitigationCaseId IN ({ShownCasesSql})
                 ORDER BY VECTOR_DISTANCE('cosine', Embedding, @queryVector)
             ) AS ranked
             JOIN LitigationOrderChunks c ON c.LitigationOrderChunkId = ranked.LitigationOrderChunkId
@@ -192,6 +198,7 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
                 FROM CONTAINSTABLE(LitigationOrderChunks, ChunkText, @ftQuery) AS ft
                 JOIN LitigationOrderChunks d ON d.LitigationOrderChunkId = ft.[KEY]
                 WHERE d.RequestId = @requestId AND d.IsSuperseded = 0 AND d.EmbeddingModel = @model AND d.EmbeddingDimensions = @dimensions
+                    AND d.LitigationCaseId IN ({ShownCasesSql})
                 ORDER BY ft.[RANK] DESC, d.LitigationOrderChunkId
             ) AS ranked
             JOIN LitigationOrderChunks c ON c.LitigationOrderChunkId = ranked.LitigationOrderChunkId
