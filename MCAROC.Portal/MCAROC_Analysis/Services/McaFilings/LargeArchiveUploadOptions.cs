@@ -37,6 +37,10 @@ public class LargeArchiveUploadOptions
     /// cores independent of MaxConcurrentUnpacks.</summary>
     public int MaxConcurrentDocumentProcessing { get; set; } = 4;
 
+    /// <summary>0 means "size to this machine": all logical cores but two (left for the database and the web app), never fewer than 2.</summary>
+    public static int EffectiveDocumentConcurrency(int configured) =>
+        configured > 0 ? configured : Math.Max(2, Environment.ProcessorCount - 2);
+
     /// <summary>Maximum concurrent Gemini structured-extraction calls at once (FilingProcessingWorker) —
     /// externally rate-limited by the Vertex AI project's own quota. Raise only after checking that quota;
     /// raising this past what the quota actually allows just trades faster local dispatch for more 429s.</summary>

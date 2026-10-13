@@ -16,17 +16,35 @@ public class FilingProcessingWorker(
     ILogger<FilingProcessingWorker> logger,
     IOptions<LargeArchiveUploadOptions>? options = null) : BackgroundService
 {
-    private readonly SemaphoreSlim _unpackConcurrency = new(Math.Max(1, options?.Value.MaxConcurrentUnpacks ?? 1));
-    private readonly SemaphoreSlim _documentConcurrency = new(Math.Max(1, options?.Value.MaxConcurrentDocumentProcessing ?? 4));
-    private readonly SemaphoreSlim _extractionConcurrency = new(Math.Max(1, options?.Value.MaxConcurrentAiExtraction ?? 2));
+    /// <summary>Workers per kind of work. Each worker takes one item at a time from its kind's queue, which serves batches round-robin, so
+    /// the worker count is the concurrency and no batch waits behind another.</summary>
+    internal static (int Unpack, int Document, int Extraction) WorkerCounts(LargeArchiveUploadOptions? o) => (
+        Math.Max(1, o?.MaxConcurrentUnpacks ?? 1),
+        LargeArchiveUploadOptions.EffectiveDocumentConcurrency(o?.MaxConcurrentDocumentProcessing ?? 4),
+        Math.Max(1, o?.MaxConcurrentAiExtraction ?? 2));
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await RunStartupRecoveryAsync(stoppingToken);
 
-        await foreach (var item in queue.ReadAllAsync(stoppingToken))
+        var (unpack, document, extraction) = WorkerCounts(options?.Value);
+        logger.LogInformation("MCA filings workers: {Unpack} unpack, {Document} document, {Extraction} AI extraction (served round-robin across batches)",
+            unpack, document, extraction);
+        var workers = new List<Task>();
+        workers.AddRange(Enumerable.Range(0, unpack).Select(_ => RunWorkerAsync(FilingWorkKind.Unpack, stoppingToken)));
+        workers.AddRange(Enumerable.Range(0, document).Select(_ => RunWorkerAsync(FilingWorkKind.Document, stoppingToken)));
+        workers.AddRange(Enumerable.Range(0, extraction).Select(_ => RunWorkerAsync(FilingWorkKind.Extraction, stoppingToken)));
+        await Task.WhenAll(workers);
+    }
+
+    private async Task RunWorkerAsync(FilingWorkKind kind, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
         {
-            _ = HandleItemAsync(item, stoppingToken);
+            FilingWorkItem item;
+            try { item = await queue.DequeueAsync(kind, ct); }
+            catch (OperationCanceledException) { return; }
+            await HandleItemAsync(item, ct);
         }
     }
 
@@ -56,13 +74,6 @@ public class FilingProcessingWorker(
 
     private async Task HandleItemAsync(FilingWorkItem item, CancellationToken ct)
     {
-        var semaphore = item switch
-        {
-            UnpackBatchWorkItem => _unpackConcurrency,
-            ExtractFilingWorkItem => _extractionConcurrency,
-            _ => _documentConcurrency
-        };
-        await semaphore.WaitAsync(ct);
         try
         {
             using var scope = scopeFactory.CreateScope();
@@ -86,15 +97,12 @@ public class FilingProcessingWorker(
                 "Operational slot '{SlotType}' is busy (held by {HolderId}); standing down unpack for batch {BatchId} (attempt {Attempt}), re-scheduling in {DelayMs}ms",
                 busyEx.SlotType, busyEx.ActiveHolderId, unpackItem.BatchId, nextRetry, (int)delay.TotalMilliseconds);
 
-            queue.EnqueueDelayed(new UnpackBatchWorkItem(unpackItem.BatchId, nextRetry), delay, ct);
+            queue.EnqueueDelayed(new UnpackBatchWorkItem(unpackItem.BatchId, nextRetry) { Lane = unpackItem.BatchId }, delay, ct);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception ex)
         {
             logger.LogError(ex, "Unhandled error processing MCA filing work item {ItemType}", item.GetType().Name);
-        }
-        finally
-        {
-            semaphore.Release();
         }
     }
 }

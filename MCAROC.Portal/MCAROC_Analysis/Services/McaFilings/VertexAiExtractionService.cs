@@ -126,7 +126,7 @@ public class VertexAiExtractionService
         return sb.ToString();
     }
 
-    private static ExtractionOutcome Validate(string schemaName, string rawResponse)
+    internal static ExtractionOutcome Validate(string schemaName, string rawResponse)
     {
         if (string.IsNullOrWhiteSpace(rawResponse))
             return new ExtractionOutcome(schemaName, null, rawResponse, ExtractionValidationStatus.Invalid, "Empty model response.", ExtractionStatus.Failed, "Empty model response.");
@@ -134,7 +134,15 @@ public class VertexAiExtractionService
         try
         {
             using var doc = JsonDocument.Parse(rawResponse);
-            var hasAnyValue = doc.RootElement.EnumerateObject()
+            var root = doc.RootElement;
+            // The model sometimes wraps the one object it was asked for in an array (Altigreen test, 2026-10-13): take that object.
+            // Any other shape is a failed extraction, never an exception — one threw past the claim and left the filing's documents InProgress.
+            if (root.ValueKind == JsonValueKind.Array && root.GetArrayLength() == 1 && root[0].ValueKind == JsonValueKind.Object)
+                return Validate(schemaName, root[0].GetRawText()) with { RawModelResponse = rawResponse };
+            if (root.ValueKind != JsonValueKind.Object)
+                return new ExtractionOutcome(schemaName, null, rawResponse, ExtractionValidationStatus.Invalid,
+                    $"Model returned a JSON {root.ValueKind} where an object was expected.", ExtractionStatus.Failed, "Wrong JSON shape.");
+            var hasAnyValue = root.EnumerateObject()
                 .Any(prop => prop.Value.ValueKind == JsonValueKind.Object
                     && prop.Value.TryGetProperty("value", out var v)
                     && v.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined));
