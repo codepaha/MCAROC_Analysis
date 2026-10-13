@@ -144,5 +144,14 @@ public static class LitigationModuleModel
             e.HasOne<ModuleRefreshRun>().WithMany().HasForeignKey(x => x.RunId).OnDelete(DeleteBehavior.NoAction);
             e.HasIndex(x => x.RunId);
         });
+
+        modelBuilder.Entity<ModuleHostTrafficState>(e =>
+        {
+            e.ToTable("HostTraffic", Schema);
+            e.HasKey(x => x.Host);
+            e.Property(x => x.Host).ValueGeneratedNever();
+            e.Property(x => x.ProbeHolder).HasMaxLength(100);
+            e.Property(x => x.LastFailure).HasMaxLength(500);
+        });
     }
 }

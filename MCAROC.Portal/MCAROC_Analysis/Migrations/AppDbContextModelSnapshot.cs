@@ -6971,6 +6971,42 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("FetchWorkItemRuns", "litigation");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleHostTrafficState", b =>
+                {
+                    b.Property<int>("Host")
+                        .HasColumnType("int");
+
+                    b.Property<double>("Concurrency")
+                        .HasColumnType("float");
+
+                    b.Property<int>("ConsecutiveFailures")
+                        .HasColumnType("int");
+
+                    b.Property<string>("LastFailure")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime?>("LastFailureUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastSuccessUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("OpenUntilUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ProbeHolder")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("ProbeUntilUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Host");
+
+                    b.ToTable("HostTraffic", "litigation");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Services.LitigationModule.Store.ModuleRefreshRun", b =>
                 {
                     b.Property<long>("RunId")
