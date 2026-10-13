@@ -129,6 +129,19 @@ public sealed class HostTrafficGate(AppDbContext db, IOperationalSlotLeaseServic
                 if (isProbe) await ReleaseProbeAsync(host, holder, CancellationToken.None);
                 return new HostEntry(null, HostEntryRefusal.AtCapacity, now + _opts.BusyRetryDelay);
             }
+            if (isProbe)
+            {
+                // Taking the permit can wait (the lease lock), so the probe claim may have lapsed and passed to another agent meanwhile. Confirm it is still ours, and restart its
+                // timeout from now, in one conditional update; if not, this agent is no longer the probe and must not call.
+                var probeUntil = Now + _opts.ProbeTimeout;
+                var stillOurs = await db.Set<ModuleHostTrafficState>().Where(s => s.Host == (int)host && s.ProbeHolder == holder)
+                    .ExecuteUpdateAsync(u => u.SetProperty(s => s.ProbeUntilUtc, probeUntil), ct) == 1;
+                if (!stillOurs)
+                {
+                    await slots.ReleaseSlotAsync(slotType, holder, CancellationToken.None);
+                    return new HostEntry(null, HostEntryRefusal.BreakerOpen, now + _opts.BusyRetryDelay);
+                }
+            }
             return new HostEntry(new HostPermit(host, holder, isProbe), HostEntryRefusal.None, null);
         }
 

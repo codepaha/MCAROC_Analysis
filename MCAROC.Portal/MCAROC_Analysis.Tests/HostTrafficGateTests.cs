@@ -367,4 +367,30 @@ public class HostTrafficGateTests : IAsyncLifetime
         Assert.False(await Gate(db, clock).RenewAsync(probe.Permit, default));
         Assert.Equal(before, (await db.Set<ModuleHostTrafficState>().AsNoTracking().SingleAsync(s => s.Host == (int)FetchHost.Drt)).ProbeUntilUtc);   // not extended
     }
+
+    [Fact]
+    public async Task A_probe_whose_claim_passed_to_another_agent_while_it_waited_for_a_permit_is_refused()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        await ReportAsync(clock, HostCallOutcome.Unavailable, times: 3);
+        clock.Utc += TimeSpan.FromMinutes(6);
+        await using var db = Ctx();
+        HostEntry? other = null;
+        var inner = new OperationalSlotLeaseService(db, NullLogger<OperationalSlotLeaseService>.Instance);
+        // While the first prober waits for its permit, its claim times out and a second agent becomes the probe.
+        var slow = new HostTrafficGate(db, new InterleavingSlots(inner, async () =>
+        {
+            if (other is not null) return;
+            clock.Utc += TimeSpan.FromMinutes(3);
+            await using var db2 = Ctx();
+            other = await Gate(db2, clock).TryEnterAsync(FetchHost.Drt, "agent-2", default);
+        }), Options, clock);
+
+        var first = await slow.TryEnterAsync(FetchHost.Drt, "slow-prober", default);
+
+        Assert.True(other!.Permit!.IsProbe);
+        Assert.False(first.Admitted);                                                            // only one probe goes
+        Assert.Equal(HostEntryRefusal.BreakerOpen, first.Refusal);
+        Assert.Equal(1, await db.OperationalSlotLeases.CountAsync(l => l.SlotType == "LitigationHost_Drt"));   // its permit was given back
+    }
 }
