@@ -415,7 +415,7 @@ public class FetchAgentTests : IAsyncLifetime
     }
 
     /// <summary>A vendor row with no shared key, in a request for <paramref name="company"/>, queued the way a refresh run queues it: with its lookup and request in the payload.</summary>
-    private static async Task<(long CaseId, long RequestId, string No)> KeylessVendorCaseAsync(TestClock clock, string company)
+    private static async Task<(long CaseId, long RequestId, string No)> KeylessVendorCaseAsync(TestClock clock, string company, YearSource yearSource = YearSource.Number)
     {
         var no = Interlocked.Increment(ref _no).ToString();
         await using var db = Ctx();
@@ -436,7 +436,7 @@ public class FetchAgentTests : IAsyncLifetime
         await db.SaveChangesAsync();
         var mc = await new LitigationModuleStore(db).EnsureCaseForLegacyAsync(legacy.LitigationCaseId, default);
         Assert.Null(mc.CaseKey);
-        var payload = new RefreshPayload(request.RequestId, "DRT", 1, "OA", no, 2022).ToJson();
+        var payload = new RefreshPayload(request.RequestId, "DRT", 1, "OA", no, 2022, yearSource).ToJson();
         await new FetchWorkQueue(db, null, clock).EnqueueAsync(FetchWorkKind.StatusFetch, FetchHost.Drt, mc.CaseId, null, payload, 0, default);
         return (mc.CaseId, request.RequestId, no);
     }
@@ -508,5 +508,30 @@ public class FetchAgentTests : IAsyncLifetime
         await using var db = Ctx();
         Assert.Null((await db.Set<ModuleCase>().AsNoTracking().SingleAsync(c => c.CaseId == caseId)).CaseKey);   // a duplicate: left for the merge rules
         Assert.Equal(1, await db.Set<ModuleCase>().CountAsync(c => c.CaseKey == $"DRT|1|OA|{no}|2022"));
+    }
+
+    [Fact]
+    public async Task A_vendor_year_inferred_from_one_signal_never_becomes_a_key_even_when_the_portal_confirms_the_case()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        var (caseId, requestId, no) = await KeylessVendorCaseAsync(clock, "Acme Limited", YearSource.InferredFilingOnly);   // the vendor row's year came from its filing date alone
+        var drt = new ScriptedDrt();
+        drt.Script.Enqueue(DrtCaseLookupResult.Found(Details($"OA/{no}/2022"), exitAddress: "exit-a"));
+
+        Assert.Equal(AgentTurn.Done, await TurnAsync(drt, clock));
+
+        await using var db = Ctx();
+        Assert.True(Assert.Single(await ObservationsAsync(caseId)).Verified);                     // the refresh itself still counts
+        Assert.Equal((int)PartyMatchOutcome.Verified, (await db.Set<ModuleRequestLink>().AsNoTracking().SingleAsync(l => l.RequestId == requestId && l.CaseId == caseId)).Verdict);
+        Assert.Null((await db.Set<ModuleCase>().AsNoTracking().SingleAsync(c => c.CaseId == caseId)).CaseKey);   // but no shared key (plan 3.3 (d))
+    }
+
+    [Fact]
+    public void A_payload_keeps_the_year_origin_and_an_old_payload_without_it_is_never_keyable()
+    {
+        var p = new RefreshPayload(1, "DRT", 1, "OA", "5", 2022, YearSource.InferredFilingOnly);
+        Assert.Equal(YearSource.InferredFilingOnly, RefreshPayload.FromJson(p.ToJson())!.ToLookup().Parts.YearSource);
+        var old = RefreshPayload.FromJson("{\"RequestId\":1,\"Forum\":\"DRT\",\"VenueId\":1,\"TypeCode\":\"OA\",\"No\":\"5\",\"Year\":2022}")!;
+        Assert.Equal(YearSource.None, old.ToLookup().Parts.YearSource);
     }
 }

@@ -8,7 +8,9 @@ namespace MCAROC_Analysis.Services.LitigationModule.Fetching;
 
 /// <summary>What a status-refresh item carries: the lookup to send and the request whose party check (the link) the answer is for. A case with a gate-minted key is looked up
 /// from its key and the stored lookup is ignored.</summary>
-public sealed record RefreshPayload(long? RequestId, string Forum, int VenueId, string TypeCode, string No, int Year)
+/// <param name="YearSource">Where the year came from in the vendor row. Kept so the gate can still refuse a key whose year rests on one inferred signal (plan 3.3 (d)), even after
+/// the portal confirms the case. A payload without it (an older one) counts as <see cref="Normalisation.YearSource.None"/>: never keyable.</param>
+public sealed record RefreshPayload(long? RequestId, string Forum, int VenueId, string TypeCode, string No, int Year, YearSource YearSource = YearSource.None)
 {
     public string ToJson() => JsonSerializer.Serialize(this);
 
@@ -20,13 +22,13 @@ public sealed record RefreshPayload(long? RequestId, string Forum, int VenueId, 
     }
 
     public static RefreshPayload From(PortalLookup lookup, long? requestId) =>
-        new(requestId, lookup.Forum, lookup.VenueId, lookup.Parts.TypeCode!, lookup.Parts.No!, lookup.Parts.Year!.Value);
+        new(requestId, lookup.Forum, lookup.VenueId, lookup.Parts.TypeCode!, lookup.Parts.No!, lookup.Parts.Year!.Value, lookup.Parts.YearSource);
 
     public PortalLookup ToLookup()
     {
         var display = $"{TypeCode}/{No}/{Year}";
-        // Lookup input only (plan 3.3): the year here may have been inferred from the vendor row. Identity is decided by what the portal returns, never by this.
-        var parts = new CaseNumberParts(TypeCode, No, Year, YearSource.Number, CaseNumberCompleteness.Complete, display, null, [], null, null, [], display);
+        // Lookup input only (plan 3.3): identity is decided by what the portal returns. The year's origin is kept as parsed, so the gate still sees an inferred year as inferred.
+        var parts = new CaseNumberParts(TypeCode, No, Year, YearSource, CaseNumberCompleteness.Complete, display, null, [], null, null, [], display);
         return new PortalLookup(Forum == "CONSUMER" ? FetchHost.Consumer : FetchHost.Drt, Forum, VenueId, parts);
     }
 }
