@@ -118,6 +118,35 @@ public class CompanyNameSuggestionServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task By_default_searches_use_no_generated_keywords_and_make_no_call()
+    {
+        // Review of #498: generated terms (initials, phonetic spellings) must not reach live results before attribution (#489 PR B) exists.
+        var client = new ScriptedClient(new LitigationAiCallResult(true, """{"spellings": ["भारत पेट्रोलियम"], "expansions": []}""", null));
+        await using var db = CreateContext();
+        var suggester = new LitigationKeywordSuggester(Service(db, client));
+        var keywords = await suggester.SuggestAsync("Bharat Petroleum Corporation Limited", ["Bharat Petroleum Corp Old Limited"], null, default);
+
+        Assert.Equal(LitigationKeywordPlanner.Build("Bharat Petroleum Corporation Limited", ["Bharat Petroleum Corp Old Limited"]), keywords);
+        Assert.All(keywords, k => Assert.Contains(k.Source, new[]
+            { LitigationKeywordSource.LegalName, LitigationKeywordSource.HistoricalLegalName, LitigationKeywordSource.GeneratedLegalSuffixVariant }));
+        Assert.Equal(0, client.Calls);
+    }
+
+    [Fact]
+    public async Task Switched_on_searches_use_the_generated_keywords()
+    {
+        var name = "Bharat Petroleum Corporation " + Guid.NewGuid().ToString("N")[..6] + " Limited";
+        var client = new ScriptedClient(new LitigationAiCallResult(true, """{"spellings": [], "expansions": []}""", null));
+        await using var db = CreateContext();
+        var suggester = new LitigationKeywordSuggester(Service(db, client),
+            Microsoft.Extensions.Options.Options.Create(new LitigationKeywordOptions { UseGeneratedKeywords = true }));
+        var keywords = await suggester.SuggestAsync(name, [], null, default);
+
+        Assert.Contains(keywords, k => k.Source == LitigationKeywordSource.GeneratedNameForm);
+        Assert.Equal(1, client.Calls);
+    }
+
+    [Fact]
     public async Task Without_an_AI_client_the_search_goes_ahead_on_the_rule_made_keywords()
     {
         await using var db = CreateContext();

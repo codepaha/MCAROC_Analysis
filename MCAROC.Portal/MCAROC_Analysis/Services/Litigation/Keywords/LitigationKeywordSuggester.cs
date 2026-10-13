@@ -1,4 +1,16 @@
+using Microsoft.Extensions.Options;
+
 namespace MCAROC_Analysis.Services.LitigationData;
+
+public sealed class LitigationKeywordOptions
+{
+    public const string SectionName = "LitigationKeywords";
+
+    /// <summary>Whether searches use the generated keywords (name forms, initials, Hindi and phonetic spellings). Off until the attribution of the cases they
+    /// find is in place (#489 PR B): a case returned through "BPCL" or a phonetic spelling must not reach any list, report or analysis unattributed.
+    /// Off, the search uses the registered and former names and their legal-suffix forms only, as before, and makes no AI call.</summary>
+    public bool UseGeneratedKeywords { get; set; }
+}
 
 /// <summary>
 /// The keywords a company's litigation is searched with, suggested by the system with no manual step (#489). In order of priority:
@@ -13,13 +25,14 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// its one search job; the portal party searches take <see cref="ForPortals"/>. A case found only through a generated keyword is the company's only once its
 /// party is attributed (#489, decision a).
 /// </summary>
-public sealed class LitigationKeywordSuggester(CompanyNameSuggestionService suggestions)
+public sealed class LitigationKeywordSuggester(CompanyNameSuggestionService suggestions, IOptions<LitigationKeywordOptions>? options = null)
 {
     public const int MaxKeywords = 20;
 
     public async Task<IReadOnlyList<LitigationKeyword>> SuggestAsync(string legalName, IEnumerable<string>? historicalNames, long? requestId, CancellationToken ct)
     {
         var planned = LitigationKeywordPlanner.Build(legalName, historicalNames);
+        if (options?.Value.UseGeneratedKeywords != true) return planned;
         var forms = NameFormVariants.Generate(legalName);
         var englishForms = planned.Select(k => k.Value).Concat(forms.Where(f => f.Source == LitigationKeywordSource.GeneratedNameForm).Select(f => f.Value)).ToList();
         var ai = await suggestions.GetAsync(legalName, englishForms, requestId, ct);
