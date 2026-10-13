@@ -347,6 +347,15 @@ public static class PipelineDecider
 
     private static StageVerdict LitigationAnalysis(PipelineSnapshot s, PipelinePolicy policy, StageVerdict litigation, DateTime now)
     {
+        if (s.LitigationAnalysis is { } done && s.LitigationReanalysisDue && policy.LitigationAnalysis
+            && done.Status is LitigationAiAnalysisRunStatus.Completed or LitigationAiAnalysisRunStatus.CompletedWithErrors)
+        {
+            // Post-login, every new case and order is analysed (owner, 2026-10-13): a court update changed the evidence after the last analysis.
+            var trustAgain = IdentityTrust.Evaluate(s.AppliedResolution, s.SpendThreshold);
+            if (trustAgain.Trusted)
+                return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: ReadyToStart,
+                    ReasonDetail: "Re-analysis due: the court update changed cases or orders since the last analysis.", SourceRef: done.Id);
+        }
         if (s.LitigationAnalysis is { } run)
         {
             return run.Status switch

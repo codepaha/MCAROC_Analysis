@@ -141,7 +141,62 @@ public sealed class LitigationStartService(
         var clientId = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId).Select(r => (long?)r.ClientId).FirstOrDefaultAsync(ct);
         if (clientId is null && !await db.Requests.AsNoTracking().AnyAsync(r => r.RequestId == requestId, ct))
             return LitigationStartResult.Ineligible("The request no longer exists.");
-        return await StartAnalysisAsync(requestId, clientId, PaidCallTrigger.Auto, ct, correlationId);
+        // Post-login, every new case and order is analysed (owner, 2026-10-13). Once the current snapshot has an analysis, an automatic start is a re-analysis
+        // of what changed since (a court update), admitted once per live-data version and still under the daily cap.
+        var snapshotId = await db.LitigationReportSnapshots.AsNoTracking()
+            .Where(s => s.SearchJob!.RequestId == requestId && s.Status == LitigationReportSnapshotStatus.Completed)
+            .OrderByDescending(s => s.LitigationReportSnapshotId).Select(s => (long?)s.LitigationReportSnapshotId).FirstOrDefaultAsync(ct);
+        var analysedBefore = snapshotId is { } sid && await db.LitigationAiAnalysisRuns.AsNoTracking().AnyAsync(r => r.RequestId == requestId && r.TriggerSnapshotId == sid
+            && (r.Status == LitigationAiAnalysisRunStatus.Completed || r.Status == LitigationAiAnalysisRunStatus.CompletedWithErrors), ct);
+        return analysedBefore
+            ? await StartReanalysisAsync(requestId, clientId, correlationId, ct)
+            : await StartAnalysisAsync(requestId, clientId, PaidCallTrigger.Auto, ct, correlationId);
+    }
+
+    /// <summary>An automatic re-analysis after the request's data changed. Only the cases whose evidence changed are analysed again (the orchestrator carries the
+    /// rest forward); nothing is started when nothing changed.</summary>
+    public async Task<LitigationStartResult> StartReanalysisAsync(long requestId, long? clientId, string? correlationId, CancellationToken ct)
+    {
+        var active = await ActiveRunAsync(requestId, ct);
+        if (active is not null) return new LitigationStartResult(true, active.Value, null, null);
+        if (await analysis.IsUpToDateAsync(requestId, ct))
+            return LitigationStartResult.Ineligible("Every case has already been analysed on its current evidence.");
+
+        var liveVersion = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId).Select(r => r.LiveDataVersion).FirstOrDefaultAsync(ct);
+        await admission.ResolveOutstandingAsync(PaidCallKind.LitigationAnalysis, requestId, ct);
+        if (await HasReservedAsync(PaidCallKind.LitigationAnalysis, requestId, ct))
+            return LitigationStartResult.Denied(AdmissionDenial.InFlight, "A litigation analysis for this request is already being started.");
+
+        var snapshot = await db.LitigationReportSnapshots.AsNoTracking()
+            .Where(s => s.SearchJob!.RequestId == requestId && s.Status == LitigationReportSnapshotStatus.Completed)
+            .OrderByDescending(s => s.LitigationReportSnapshotId)
+            .Select(s => new { s.LitigationReportSnapshotId, s.OriginSnapshotId })
+            .FirstOrDefaultAsync(ct);
+        var triggerSnapshotId = (long?)snapshot?.LitigationReportSnapshotId;
+        var originSnapshotId = snapshot is null ? null : (long?)(snapshot.OriginSnapshotId ?? snapshot.LitigationReportSnapshotId);
+
+        var admitted = await admission.TryAdmitAsync(new PaidCallAdmissionRequest(
+            PaidCallKind.LitigationAnalysis, PaidCallScopeKeys.LitigationReanalysis(requestId, liveVersion), PaidCallTrigger.Auto, requestId, clientId, correlationId), ct);
+        if (!admitted.Admitted)
+            return LitigationStartResult.Denied(admitted.Denial!.Value, DenialMessage(admitted.Denial.Value, "litigation re-analysis"));
+
+        LitigationAiAnalysisRun run;
+        try
+        {
+            run = await analysis.CreateOrJoinAsync(requestId, LitigationAiAnalysisTrigger.Update, triggerSnapshotId, originSnapshotId, ct);
+        }
+        catch
+        {
+            await admission.ReleaseAsync(admitted.AdmissionId!.Value, CancellationToken.None);
+            throw;
+        }
+        if (run.CreatedUtc < admitted.ReservedUtc)
+        {
+            await admission.ReleaseAsync(admitted.AdmissionId!.Value, ct);
+            return new LitigationStartResult(true, run.LitigationAiAnalysisRunId, null, null);
+        }
+        await admission.SetReferenceAsync(admitted.AdmissionId!.Value, run.LitigationAiAnalysisRunId, ct);
+        return new LitigationStartResult(true, run.LitigationAiAnalysisRunId, null, null, admitted.AdmissionId);
     }
 
     public async Task<LitigationStartResult> StartAnalysisAsync(long requestId, long? clientId, PaidCallTrigger trigger, CancellationToken ct, string? correlationId = null)

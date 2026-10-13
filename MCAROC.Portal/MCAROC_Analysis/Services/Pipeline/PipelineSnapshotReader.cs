@@ -13,8 +13,19 @@ namespace MCAROC_Analysis.Services.Pipeline;
 /// <summary>Builds a <see cref="PipelineSnapshot"/> with no-tracking reads only — it never writes, so the
 /// coordinator can't corrupt any table it observes.</summary>
 public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOptions<BprLitigationOptions> bprOptions,
-    IOptions<ReferenceToolOptions> referenceToolOptions, IOptions<ResolverOptions>? resolverOptions = null)
+    IOptions<ReferenceToolOptions> referenceToolOptions, IOptions<ResolverOptions>? resolverOptions = null, LitigationAiAnalysisOrchestrator? litigationAnalysis = null)
 {
+    /// <summary>Cheap first (timestamps), and only then the evidence check: it runs only in the window after a court update finished and before a re-analysis caught up.</summary>
+    private async Task<bool> ReanalysisDueAsync(long requestId, MCAROC_Analysis.Services.LitigationModule.Fetching.RefreshRunProgress? courtUpdate, CancellationToken ct)
+    {
+        if (litigationAnalysis is null || courtUpdate?.FinishedUtc is not { } courtFinished) return false;
+        var latest = await db.LitigationAiAnalysisRuns.AsNoTracking().Where(r => r.RequestId == requestId)
+            .OrderByDescending(r => r.LitigationAiAnalysisRunId).Select(r => new { r.Status, r.CompletedUtc }).FirstOrDefaultAsync(ct);
+        if (latest is null || latest.Status is not (LitigationAiAnalysisRunStatus.Completed or LitigationAiAnalysisRunStatus.CompletedWithErrors)) return false;
+        if (latest.CompletedUtc is { } done && done >= courtFinished) return false;
+        return !await litigationAnalysis.IsUpToDateAsync(requestId, ct);
+    }
+
     public virtual async Task<PipelineSnapshot?> ReadAsync(long requestId, CancellationToken ct)
     {
         var request = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId)
@@ -125,6 +136,7 @@ public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOpt
             .Select(r => new RunFacts<LitigationAiAnalysisRunStatus>(r.LitigationAiAnalysisRunId, r.Status, r.FailureReason, null, r.LeaseExpiresUtc))
             .FirstOrDefaultAsync(ct);
 
+        var courtUpdate = await MCAROC_Analysis.Services.LitigationModule.Fetching.RefreshRunService.LatestProgressAsync(db, requestId, ct);
         return new PipelineSnapshot
         {
             RequestId = requestId,
@@ -153,7 +165,8 @@ public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOpt
             LitigationConfigured = bprOptions.Value.IsConfigured,
             LitigationSearch = searchFacts,
             LitigationAnalysis = litigationAnalysis,
-            CourtUpdate = await MCAROC_Analysis.Services.LitigationModule.Fetching.RefreshRunService.LatestProgressAsync(db, requestId, ct),
+            CourtUpdate = courtUpdate,
+            LitigationReanalysisDue = await ReanalysisDueAsync(requestId, courtUpdate, ct),
             CourtAgentsEnabled = config.GetValue<bool>("LitigationPortals:Agents:Enabled")
         };
     }

@@ -12,7 +12,9 @@ public enum LitigationAiAnalysisItemStatus { Pending, Completed, Failed, Insuffi
 /// <summary>What started this run — <see cref="Auto"/> is the pipeline coordinator (docs/pipeline-automation-
 /// plan.md §4.2), <see cref="Reused"/> is a copy from another request's already-purchased snapshot (§4.2a,
 /// never itself a new spend), <see cref="Manual"/> is the existing reviewer button, unchanged.</summary>
-public enum LitigationAiAnalysisTrigger { Manual, Auto, Reused }
+/// <summary><c>Update</c>: an automatic re-analysis after the request's live data changed (a court update brought new or changed cases or orders). Only changed
+/// cases are analysed again; it is not bound by the one-<c>Auto</c>-run-per-snapshot rule, but each data version is admitted once.</summary>
+public enum LitigationAiAnalysisTrigger { Manual, Auto, Reused, Update }
 
 public sealed class LitigationAiAnalysisRun
 {

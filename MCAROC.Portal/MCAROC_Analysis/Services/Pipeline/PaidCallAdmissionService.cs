@@ -74,6 +74,9 @@ public static class PaidCallScopeKeys
     public static string LitigationAnalysis(long? originSnapshotId, long requestId) =>
         originSnapshotId is { } s ? $"analysis|{s}" : $"analysis|request:{requestId}";
 
+    /// <summary>An automatic re-analysis is admitted once per live-data version of the request: the same changed data is never paid for twice.</summary>
+    public static string LitigationReanalysis(long requestId, long liveDataVersion) => $"analysis-update|request:{requestId}|v{liveDataVersion}";
+
     public static string ReferenceUnlock(string canonicalIdentifier) => $"unlock|{canonicalIdentifier}";
 }
 
