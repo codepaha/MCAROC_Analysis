@@ -110,7 +110,7 @@ public class ReferenceToolClientTests : IDisposable
         Assert.Equal("PHPSESSID=abc; user=x", search.Headers.GetValues("Cookie").Single());
         var query = System.Web.HttpUtility.ParseQueryString(search.RequestUri!.Query);
         Assert.Equal("3.1.6", query["v"]);
-        Assert.Equal("8.1.26", query["cv"]);
+        Assert.Equal("8.1.28", query["cv"]);
         var payload = DecodePayload(query["qp"]!);
         Assert.Equal("getNameHints", payload.GetProperty("action").GetString());
         Assert.Equal("lodha", payload.GetProperty("q").GetString());
@@ -362,6 +362,102 @@ public class ReferenceToolClientTests : IDisposable
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task A_login_refused_as_an_outdated_app_version_adopts_the_version_the_tool_names_and_succeeds()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        handler.OnPath("server/user/login.php", req =>
+        {
+            if (!req.RequestUri!.Query.Contains("cv=8.1.30"))   // a release after the configured version
+                return new HttpResponseMessage((HttpStatusCode)426) { Content = new StringContent("{\"version\":\"8.1.28\",\"current_version\":\"8.1.30\",\"app\":\"core\"}") };
+            var resp = Json("{\"id\":265271}");
+            resp.Headers.Add("Set-Cookie", "PHPSESSID=after-upgrade; path=/");
+            return resp;
+        });
+
+        var client = NewClient(handler, username: "dharmendra@test.com", password: "SecretPassword123");
+        var login = await client.LoginAsync(CancellationToken.None);
+
+        Assert.True(login.IsValid);
+        var logins = handler.Requests.Where(r => r.RequestUri!.AbsolutePath.EndsWith("login.php")).ToList();
+        Assert.Equal(2, logins.Count);                                                           // the refused one, then exactly one retry
+        Assert.Contains("cv=8.1.30", logins[1].RequestUri!.Query);
+    }
+
+    [Fact]
+    public async Task A_426_without_a_usable_version_is_not_retried()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        handler.OnPath("server/user/login.php", _ => new HttpResponseMessage((HttpStatusCode)426) { Content = new StringContent("upgrade required") });
+
+        var client = NewClient(handler, username: "dharmendra@test.com", password: "SecretPassword123");
+        var login = await client.LoginAsync(CancellationToken.None);
+
+        Assert.False(login.IsValid);
+        Assert.Single(handler.Requests, r => r.RequestUri!.AbsolutePath.EndsWith("login.php"));
+    }
+
+    [Theory]
+    [InlineData(426, "{\"version\":\"8.1.26\",\"current_version\":\"8.1.28\",\"app\":\"core\"}", "8.1.28")]
+    [InlineData(426, "{\"current_version\":\"8.1.28; drop table\"}", null)]                 // not a version: never sent back
+    [InlineData(426, "not json", null)]
+    [InlineData(403, "{\"current_version\":\"8.1.28\"}", null)]                             // only an Upgrade Required carries it
+    public void The_current_version_is_read_only_from_an_upgrade_required_reply(int status, string body, string? expected) =>
+        Assert.Equal(expected, ReferenceToolClient.CurrentVersionFrom((HttpStatusCode)status, body));
+
+    [Theory]
+    [InlineData("{\"statusCode\":true}")]
+    [InlineData("{\"statusCode\":2070578}")]                                                   // the shape a later tool release answers with
+    public async Task An_unlock_reply_that_is_not_an_explicit_error_does_not_fail_the_call(string reply)
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        handler.OnPath("server/user/service.php", _ => Json(reply));
+        var client = NewClient(handler);
+
+        await client.AddAssetAsync(1, "bid-1", "TEST COMPANY PRIVATE LIMITED", CancellationToken.None);   // the caller's asset-status read decides
+    }
+
+    [Fact]
+    public async Task An_unlock_reply_with_an_explicit_error_is_a_refusal()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        handler.OnPath("server/user/service.php", _ => Json("{\"error\":\"insufficient credits\"}"));
+        var client = NewClient(handler);
+
+        var ex = await Assert.ThrowsAsync<ReferenceToolException>(() => client.AddAssetAsync(1, "bid-1", "TEST COMPANY PRIVATE LIMITED", CancellationToken.None));
+        Assert.Contains("refused", ex.Message);
+    }
+
+    [Fact]
+    public async Task A_company_unlocked_under_any_team_of_the_account_is_unlocked_whatever_team_is_listed_first()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        // The shape the tool answered for a company unlocked on 9 Oct under two of the account's three teams, with the third listed first.
+        handler.OnPath("server/user/service.php", _ => Json("{\"teams\":[{\"teamId\":309931,\"addedAt\":null,\"creditUsed\":true},"
+            + "{\"teamId\":284869,\"addedAt\":\"2026-10-09T10:27:28+05:30\",\"creditUsed\":true},{\"teamId\":290914,\"addedAt\":\"2026-10-09T10:27:28+05:30\",\"creditUsed\":true}]}"));
+        var client = NewClient(handler);
+
+        var status = await client.GetAssetStatusAsync("bid-1", CancellationToken.None);
+
+        Assert.NotNull(status.AddedAt);                                                          // no paid unlock is asked for
+        Assert.Equal(new DateTimeOffset(2026, 10, 9, 10, 27, 28, TimeSpan.FromHours(5.5)), status.AddedAt);
+        Assert.Equal(309931, status.TeamId);
+    }
+
+    [Fact]
+    public async Task A_company_no_team_holds_is_locked()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        handler.OnPath("server/user/service.php", _ => Json("{\"teams\":[{\"teamId\":1,\"addedAt\":null},{\"teamId\":2,\"addedAt\":null}]}"));
+        Assert.Null((await NewClient(handler).GetAssetStatusAsync("bid-1", CancellationToken.None)).AddedAt);
+    }
 
     private static ReferenceToolClient NewClient(StubHandler handler, bool configured = true, long? maxResponseBytes = null, string username = "", string password = "")
     {
