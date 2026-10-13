@@ -328,4 +328,43 @@ public class HostTrafficGateTests : IAsyncLifetime
         Assert.True(next.Permit!.IsProbe);
         Assert.False(await Gate(db, clock).RenewAsync(probe.Permit, default));
     }
+
+    [Fact]
+    public async Task A_probe_waits_for_calls_still_running_from_before_the_breaker_opened()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        await using var db = Ctx();
+        var a = await Gate(db, clock).TryEnterAsync(FetchHost.Consumer, "agent-a", default);
+        var b = await Gate(db, clock).TryEnterAsync(FetchHost.Consumer, "agent-b", default);     // the consumer cap (2) is full
+        Assert.True(a.Admitted && b.Admitted);
+        await ReportAsync(clock, HostCallOutcome.Unavailable, times: 3, host: FetchHost.Consumer);
+        clock.Utc += TimeSpan.FromMinutes(6);
+
+        var probe = await Gate(db, clock).TryEnterAsync(FetchHost.Consumer, "prober", default);
+        Assert.False(probe.Admitted);                                                            // the cap holds for the probe too
+        Assert.Equal(HostEntryRefusal.AtCapacity, probe.Refusal);
+        Assert.Equal(2, await db.OperationalSlotLeases.CountAsync(l => l.SlotType == "LitigationHost_Consumer"));
+
+        await Gate(db, clock).ReleaseAsync(a.Permit!, default);                                   // one old call finishes
+        var next = await Gate(db, clock).TryEnterAsync(FetchHost.Consumer, "prober", default);
+        Assert.True(next.Admitted);                                                              // the refused probe did not keep the claim
+        Assert.True(next.Permit!.IsProbe);
+    }
+
+    [Fact]
+    public async Task A_probe_that_lost_its_permit_cannot_keep_the_probe_claim()
+    {
+        var clock = new TestClock(DateTime.UtcNow);
+        await ReportAsync(clock, HostCallOutcome.Unavailable, times: 3);
+        clock.Utc += TimeSpan.FromMinutes(6);
+        await using var db = Ctx();
+        var probe = await Gate(db, clock).TryEnterAsync(FetchHost.Drt, "prober", default);
+        Assert.True(probe.Permit!.IsProbe);
+        await db.OperationalSlotLeases.Where(l => l.ActiveHolderId == probe.Permit.HolderId).ExecuteDeleteAsync();   // the permit is gone (expired and cleaned up)
+        var before = (await db.Set<ModuleHostTrafficState>().AsNoTracking().SingleAsync(s => s.Host == (int)FetchHost.Drt)).ProbeUntilUtc;
+
+        clock.Utc += TimeSpan.FromSeconds(90);
+        Assert.False(await Gate(db, clock).RenewAsync(probe.Permit, default));
+        Assert.Equal(before, (await db.Set<ModuleHostTrafficState>().AsNoTracking().SingleAsync(s => s.Host == (int)FetchHost.Drt)).ProbeUntilUtc);   // not extended
+    }
 }
