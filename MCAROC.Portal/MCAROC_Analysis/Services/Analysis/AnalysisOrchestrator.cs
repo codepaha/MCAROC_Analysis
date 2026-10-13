@@ -133,11 +133,8 @@ public class AnalysisOrchestrator(
             }).ToList();
             db.AnalysisFindings.AddRange(findingEntities);
 
-            // Detach run so that SaveChangesAsync will NOT write in-memory run status,
-            // which could overwrite an operator cancellation.
             await EnsureNotCancelledAsync(run.AnalysisRunId, requestId, ct);
-            db.Entry(run).State = EntityState.Detached;
-            await db.SaveChangesAsync(ct);
+            await SaveFindingsWithoutWritingRunAsync(db, run, ct);
 
             var metadataUpdated = await AnalysisRunGuarded(run.AnalysisRunId, requestId)
                 .ExecuteUpdateAsync(s => s
@@ -343,6 +340,17 @@ public class AnalysisOrchestrator(
     /// mattered. The atomic claim in RunAnalysisAsync only matches RequestStatus=DataExtracted, so a
     /// request already at AiAnalysisInProgress from a crashed run would never satisfy it again if simply
     /// re-enqueued — this resets it first.</summary>
+    /// <summary>Saves the findings just added without writing the run row, whose in-memory status could overwrite an operator cancellation.
+    /// The run is marked <b>Unchanged</b> for the save, not Detached: detaching a principal also detaches every dependent added under it, so the
+    /// findings were silently dropped and every analysis since early October 2026 kept only its AI cross-section flags (no rule findings, and a
+    /// review priority the dossier could not explain). It is detached after the save, as before, so no later save writes it either.</summary>
+    internal static async Task SaveFindingsWithoutWritingRunAsync(AppDbContext db, AnalysisRun run, CancellationToken ct)
+    {
+        db.Entry(run).State = EntityState.Unchanged;
+        await db.SaveChangesAsync(ct);
+        db.Entry(run).State = EntityState.Detached;
+    }
+
     public async Task<int> RecoverStaleWorkAsync(CancellationToken ct)
     {
         var stuckRequestIds = await db.Requests
