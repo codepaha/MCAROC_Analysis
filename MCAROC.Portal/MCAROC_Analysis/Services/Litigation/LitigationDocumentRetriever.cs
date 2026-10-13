@@ -107,7 +107,7 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
         long requestId, IReadOnlyCollection<long> caseIds, int orderCount, int chunksPerOrder, CancellationToken ct)
     {
         var orders = await db.LitigationOrderChunks.AsNoTracking()
-            .Where(c => c.RequestId == requestId && caseIds.Contains(c.LitigationCaseId))
+            .Where(c => c.RequestId == requestId && !c.IsSuperseded && caseIds.Contains(c.LitigationCaseId))
             .Select(c => new { c.LitigationCaseOrderId, c.OrderDate })
             .Distinct()
             .ToListAsync(ct);
@@ -118,7 +118,7 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
         if (newest.Count == 0) return [];
 
         var chunks = await db.LitigationOrderChunks.AsNoTracking()
-            .Where(c => c.RequestId == requestId && newest.Contains(c.LitigationCaseOrderId))
+            .Where(c => c.RequestId == requestId && !c.IsSuperseded && newest.Contains(c.LitigationCaseOrderId))
             .OrderBy(c => c.PageNumber).ThenBy(c => c.ChunkIndex)
             .ToListAsync(ct);
         var seen = new HashSet<(long OrderId, string NormalizedBody)>();
@@ -137,7 +137,7 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
         long requestId, IReadOnlyCollection<long> caseIds, int take, CancellationToken ct)
     {
         var chunks = await db.LitigationOrderChunks.AsNoTracking()
-            .Where(c => c.RequestId == requestId && caseIds.Contains(c.LitigationCaseId))
+            .Where(c => c.RequestId == requestId && !c.IsSuperseded && caseIds.Contains(c.LitigationCaseId))
             .Select(c => new LitigationOrderChunk
             {
                 LitigationOrderChunkId = c.LitigationOrderChunkId, RequestId = c.RequestId, LitigationOrderDocumentId = c.LitigationOrderDocumentId,
@@ -175,7 +175,7 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
             FROM (
                 SELECT TOP (@topK) LitigationOrderChunkId, VECTOR_DISTANCE('cosine', Embedding, @queryVector) AS Distance
                 FROM LitigationOrderChunks
-                WHERE RequestId = @requestId AND EmbeddingModel = @model AND EmbeddingDimensions = @dimensions
+                WHERE RequestId = @requestId AND IsSuperseded = 0 AND EmbeddingModel = @model AND EmbeddingDimensions = @dimensions
                 ORDER BY VECTOR_DISTANCE('cosine', Embedding, @queryVector)
             ) AS ranked
             JOIN LitigationOrderChunks c ON c.LitigationOrderChunkId = ranked.LitigationOrderChunkId
@@ -191,7 +191,7 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
                 SELECT TOP (@topK) d.LitigationOrderChunkId, ft.[RANK] AS FtRank
                 FROM CONTAINSTABLE(LitigationOrderChunks, ChunkText, @ftQuery) AS ft
                 JOIN LitigationOrderChunks d ON d.LitigationOrderChunkId = ft.[KEY]
-                WHERE d.RequestId = @requestId AND d.EmbeddingModel = @model AND d.EmbeddingDimensions = @dimensions
+                WHERE d.RequestId = @requestId AND d.IsSuperseded = 0 AND d.EmbeddingModel = @model AND d.EmbeddingDimensions = @dimensions
                 ORDER BY ft.[RANK] DESC, d.LitigationOrderChunkId
             ) AS ranked
             JOIN LitigationOrderChunks c ON c.LitigationOrderChunkId = ranked.LitigationOrderChunkId

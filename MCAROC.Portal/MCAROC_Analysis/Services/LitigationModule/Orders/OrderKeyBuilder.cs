@@ -24,7 +24,8 @@ public static class OrderKeyBuilder
             throw new ArgumentException("BPR order key requires a non-empty OrderType.", nameof(orderType));
         }
 
-        return $"{pdfUrl.Trim()}|{orderDate.Trim()}|{orderType.Trim()}";
+        var key = $"{pdfUrl.Trim()}|{orderDate.Trim()}|{orderType.Trim()}";
+        return key.Length > 800 ? key[..800] : key;
     }
 
     /// <summary>Builds the BPR order key from (PdfUrl, DateOnly, OrderType).</summary>

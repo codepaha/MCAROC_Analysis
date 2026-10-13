@@ -1,7 +1,13 @@
+using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.McaFilings;
+using MCAROC_Analysis.Services.LitigationModule.Normalisation;
+using MCAROC_Analysis.Services.LitigationModule.Orders;
+using MCAROC_Analysis.Services.LitigationModule.Refresh;
+using MCAROC_Analysis.Services.LitigationModule.Sources.Orders;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Services.LitigationData;
@@ -28,15 +34,56 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// claim is no longer authoritative (superseded by a takeover, or its own lease simply ran out); it deletes
 /// only its own per-attempt file and touches nothing else — the row a takeover already published stands
 /// untouched.</summary>
-public sealed class LitigationOrderDocumentService(
-    AppDbContext db, BprLitigationClient client, IStorageReservationManager reservations, PdfTextExtractor textExtractor,
-    LitigationOrderDocumentQueue queue, LitigationOrderChunkingQueue chunkingQueue, IOptions<BprLitigationOptions> options,
-    IWebHostEnvironment env, ILogger<LitigationOrderDocumentService> logger)
+public sealed class LitigationOrderDocumentService
 {
     private const int LeaseMinutes = 10; // one HTTP download + one PDF text extraction — generous but not job-length
     private static readonly string LeaseOwnerId = $"{Environment.MachineName}:{Environment.ProcessId}";
 
-    private readonly BprLitigationOptions _opts = options.Value;
+    private readonly AppDbContext db;
+    private readonly IEnumerable<IOrderSourceClient> _sourceClients;
+    private readonly IStorageReservationManager reservations;
+    private readonly PdfTextExtractor textExtractor;
+    private readonly LitigationOrderDocumentQueue queue;
+    private readonly LitigationOrderChunkingQueue chunkingQueue;
+    private readonly BprLitigationOptions _opts;
+    private readonly IWebHostEnvironment env;
+    private readonly ILogger<LitigationOrderDocumentService> logger;
+
+    public LitigationOrderDocumentService(
+        AppDbContext db,
+        IEnumerable<IOrderSourceClient> sourceClients,
+        IStorageReservationManager reservations,
+        PdfTextExtractor textExtractor,
+        LitigationOrderDocumentQueue queue,
+        LitigationOrderChunkingQueue chunkingQueue,
+        IOptions<BprLitigationOptions> options,
+        IWebHostEnvironment env,
+        ILogger<LitigationOrderDocumentService> logger)
+    {
+        this.db = db;
+        _sourceClients = sourceClients;
+        this.reservations = reservations;
+        this.textExtractor = textExtractor;
+        this.queue = queue;
+        this.chunkingQueue = chunkingQueue;
+        _opts = options.Value;
+        this.env = env;
+        this.logger = logger;
+    }
+
+    internal LitigationOrderDocumentService(
+        AppDbContext db,
+        BprLitigationClient client,
+        IStorageReservationManager reservations,
+        PdfTextExtractor textExtractor,
+        LitigationOrderDocumentQueue queue,
+        LitigationOrderChunkingQueue chunkingQueue,
+        IOptions<BprLitigationOptions> options,
+        IWebHostEnvironment env,
+        ILogger<LitigationOrderDocumentService> logger)
+        : this(db, [new BprOrderSourceClient(client, options)], reservations, textExtractor, queue, chunkingQueue, options, env, logger)
+    {
+    }
 
     // ── Processing ─────────────────────────────────────────────────────────────────────────────────
     // Admission (creating/refreshing a LitigationOrderDocument row) is deliberately NOT this service's job —
@@ -67,12 +114,36 @@ public sealed class LitigationOrderDocumentService(
         // An order the source lists without a link has nothing to download: it is Not Published (terminal) until a litigation refresh
         // re-admits it with a link. It used to be left Failed — "retry later" — yet never retried, so the litigation analysis, which waits
         // for every order to be terminal, waited out the whole 7-day retention window (Lifex test, 2026-10-13).
-        if (document.Status == LitigationOrderDocumentStatus.Failed && string.IsNullOrWhiteSpace(document.Order.PdfUrl))
+        OrderSourceLocator? locator = null;
+        if (!string.IsNullOrWhiteSpace(document.Order.SourceLocator))
+        {
+            try { locator = JsonSerializer.Deserialize<OrderSourceLocator>(document.Order.SourceLocator); }
+            catch { }
+        }
+        locator ??= new OrderSourceLocator(
+            Source: document.Order.Source ?? "Bpr",
+            PdfUrl: document.Order.PdfUrl,
+            OrderType: document.Order.OrderType,
+            OrderDate: document.Order.OrderDate);
+
+        var hasLink = !string.IsNullOrWhiteSpace(locator.PdfUrl) ||
+                      !string.IsNullOrWhiteSpace(locator.OrderUrl) ||
+                      locator.FilingReferenceNumber.HasValue;
+
+        if (document.Status == LitigationOrderDocumentStatus.Failed && !hasLink)
         {
             await MarkFailedWithoutLinkNotPublishedAsync(document.LitigationOrderDocumentId, ct);
             return;
         }
-        if (!_opts.IsConfigured) return;
+
+        var client = _sourceClients.FirstOrDefault(c => c.CanHandle(locator));
+        if (client is null)
+        {
+            if (string.Equals(locator.Source, "Bpr", StringComparison.OrdinalIgnoreCase) && !_opts.IsConfigured) return;
+            logger.LogWarning("No order source adapter found for order document {Id} with source {Source}.", orderDocumentId, locator.Source);
+            return;
+        }
+        if (client is BprOrderSourceClient && !_opts.IsConfigured) return;
 
         if (!await TryClaimAsync(document, ct)) return; // already owned by a still-live attempt
         var myLeaseToken = document.LeaseToken!.Value;
@@ -87,34 +158,22 @@ public sealed class LitigationOrderDocumentService(
         var published = false;
         try
         {
-            if (string.IsNullOrWhiteSpace(document.Order.PdfUrl))
+            if (!hasLink)
             {
                 await MarkNotPublishedAsync(orderDocumentId, myLeaseToken, NoLinkReason, ct);
                 return;
             }
 
-            // Sign in only for a link on BPR's own host; a pre-signed document link needs no token.
-            var token = string.Empty;
-            try
-            {
-                if (client.OrderDocumentNeedsToken(document.Order.PdfUrl))
-                    token = await client.AuthenticateAsync(ct);
-            }
-            catch (BprLitigationException ex)
-            {
-                await MarkFailedOrExpiredAsync(orderDocumentId, myLeaseToken, retainedUntilUtc, attemptCount, $"Authentication failed: {ex.Message}", ct);
-                return;
-            }
-
-            var download = await client.DownloadOrderDocumentAsync(token, document.Order.PdfUrl, _opts.MaxOrderPdfBytes, ct);
+            var limit = _opts.MaxOrderPdfBytes > 0 ? _opts.MaxOrderPdfBytes : 20 * 1024 * 1024;
+            var download = await client.DownloadAsync(locator, limit, ct);
             if (download.NotPublished)
             {
-                await MarkNotPublishedAsync(orderDocumentId, myLeaseToken, download.Error!, ct);
+                await MarkNotPublishedAsync(orderDocumentId, myLeaseToken, download.Error ?? "Order not published at source", ct);
                 return;
             }
             if (!download.Ok)
             {
-                await MarkFailedOrExpiredAsync(orderDocumentId, myLeaseToken, retainedUntilUtc, attemptCount, download.Error!, ct);
+                await MarkFailedOrExpiredAsync(orderDocumentId, myLeaseToken, retainedUntilUtc, attemptCount, download.Error ?? "Download failed", ct);
                 return;
             }
 
@@ -147,8 +206,12 @@ public sealed class LitigationOrderDocumentService(
             }
 
             var fileHash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(fileBytes));
-            var contentType = download.ContentType ?? "application/pdf";
+            var contentType = download.ContentType ?? (isText ? "text/plain; charset=utf-8" : "application/pdf");
             var downloadedUtc = DateTime.UtcNow;
+
+            var contentHash = isText
+                ? OrderContentHasher.ComputeHtmlTextHash(download.Text)
+                : fileHash;
 
             // Extraction failure never undoes a successful download — the file is retained regardless (that
             // is the primary contract); a null TextExtractionStatus just means extraction was never
@@ -157,7 +220,13 @@ public sealed class LitigationOrderDocumentService(
             FilingDocumentProcessingStatus? textStatus = null;
             TextExtractionMethod? textMethod = null;
             DateTime? extractedUtc = null;
-            if (isText)
+            if (download.IsUnsupportedFormat)
+            {
+                textStatus = FilingDocumentProcessingStatus.UnsupportedPdf;
+                textMethod = TextExtractionMethod.None;
+                extractedUtc = DateTime.UtcNow;
+            }
+            else if (isText)
             {
                 extractedText = LitigationOrderText.AsExtractedText(download.Text!);
                 textStatus = FilingDocumentProcessingStatus.TextExtracted;
@@ -180,6 +249,49 @@ public sealed class LitigationOrderDocumentService(
                     orderDocumentId);
             }
 
+            // Version rule evaluation: check if content changed under the same identity
+            var currentHash = document.ContentHash ?? document.Order.ContentHash;
+            var currentVer = document.Version > 0 ? document.Version : (document.Order.Version > 0 ? document.Order.Version : 1);
+            var versionDecision = OrderVersionRule.Evaluate(currentHash, currentVer, contentHash);
+
+            if (versionDecision.Decision == OrderVersionDecisionType.Superseded)
+            {
+                // Archive prior document if it was already Downloaded with prior content
+                if (document.ContentHash != null && !string.Equals(document.ContentHash, contentHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    var archivedDoc = new LitigationOrderDocument
+                    {
+                        LitigationCaseOrderId = document.LitigationCaseOrderId,
+                        Status = document.Status,
+                        StoragePath = document.StoragePath,
+                        FileSizeBytes = document.FileSizeBytes,
+                        FileHash = document.FileHash,
+                        ContentType = document.ContentType,
+                        DownloadedUtc = document.DownloadedUtc,
+                        ExtractedText = document.ExtractedText,
+                        TextExtractionStatus = document.TextExtractionStatus,
+                        TextExtractionMethod = document.TextExtractionMethod,
+                        ExtractedUtc = document.ExtractedUtc,
+                        ContentHash = document.ContentHash,
+                        Version = document.Version,
+                        IsSuperseded = true,
+                        RetainedUntilUtc = document.RetainedUntilUtc,
+                        CreatedUtc = document.CreatedUtc,
+                    };
+                    db.LitigationOrderDocuments.Add(archivedDoc);
+                    await db.SaveChangesAsync(ct);
+                }
+
+                // Mark any other older documents and chunks for this order as superseded
+                await db.LitigationOrderDocuments
+                    .Where(d => d.LitigationCaseOrderId == document.LitigationCaseOrderId && d.LitigationOrderDocumentId != orderDocumentId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.IsSuperseded, true), ct);
+
+                await db.LitigationOrderChunks
+                    .Where(c => c.LitigationCaseOrderId == document.LitigationCaseOrderId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(c => c.IsSuperseded, true), ct);
+            }
+
             // The publish itself: guarded by this attempt's own lease token still being current AND
             // unexpired — never a plain SaveChangesAsync on the tracked entity. 0 rows means a takeover (or
             // simple lease timeout) has already superseded this attempt; its file must never become the
@@ -192,6 +304,9 @@ public sealed class LitigationOrderDocumentService(
                 .SetProperty(d => d.StoragePath, myPath)
                 .SetProperty(d => d.FileSizeBytes, fileBytes.LongLength)
                 .SetProperty(d => d.FileHash, fileHash)
+                .SetProperty(d => d.ContentHash, contentHash)
+                .SetProperty(d => d.Version, versionDecision.VersionNumber)
+                .SetProperty(d => d.IsSuperseded, false)
                 .SetProperty(d => d.ContentType, contentType)
                 .SetProperty(d => d.DownloadedUtc, downloadedUtc)
                 .SetProperty(d => d.FailureReason, (string?)null)
@@ -208,6 +323,14 @@ public sealed class LitigationOrderDocumentService(
                 return;   // the transaction is rolled back on dispose; nothing was stored
             }
 
+            // Sync version and content hash back to LitigationCaseOrder
+            await db.LitigationCaseOrders
+                .Where(o => o.LitigationCaseOrderId == document.LitigationCaseOrderId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(o => o.ContentHash, contentHash)
+                    .SetProperty(o => o.Version, versionDecision.VersionNumber)
+                    .SetProperty(o => o.IsSuperseded, false), ct);
+
             // Order text arriving changes what the request's litigation views and analyses read: it is a publication, so the request's live-data version moves in the same transaction.
             if (textStatus == FilingDocumentProcessingStatus.TextExtracted)
             {
@@ -221,11 +344,11 @@ public sealed class LitigationOrderDocumentService(
                 "Litigation order document {Id} downloaded and extracted ({Bytes} bytes, {Method}).",
                 orderDocumentId, fileBytes.LongLength, textMethod);
 
-            // #244/LIT-04: only enqueue for chunking once text extraction actually succeeded — a Downloaded
-            // document with no (or failed) extraction has nothing in ExtractedText for the orchestrator's own
-            // claim to find, and would just fail immediately. RecoverStaleWorkAsync (chunking side) sweeps for
-            // any document that reaches this state without ever being enqueued, so skipping here is safe.
-            if (textStatus == FilingDocumentProcessingStatus.TextExtracted)
+            // Check cross-source equivalence and collapse duplicates if applicable
+            var isCollapsedLoser = await CheckAndCollapseEquivalenceAsync(document, contentHash, textStatus, extractedText, ct);
+
+            // #244/LIT-04: only enqueue for chunking once text extraction actually succeeded and order is not a collapsed loser
+            if (!isCollapsedLoser && textStatus == FilingDocumentProcessingStatus.TextExtracted)
                 chunkingQueue.Enqueue(orderDocumentId);
         }
         finally
@@ -297,7 +420,8 @@ public sealed class LitigationOrderDocumentService(
     /// failure: a refresh that meanwhile brought a link has already moved it back to Pending.</summary>
     private Task<int> MarkFailedWithoutLinkNotPublishedAsync(long documentId, CancellationToken ct) =>
         db.LitigationOrderDocuments.Where(d => d.LitigationOrderDocumentId == documentId && d.Status == LitigationOrderDocumentStatus.Failed
-                && (d.Order!.PdfUrl == null || d.Order.PdfUrl == ""))
+                && (d.Order!.PdfUrl == null || d.Order.PdfUrl == "")
+                && (d.Order.SourceLocator == null || d.Order.SourceLocator == ""))
             .ExecuteUpdateAsync(s => s.SetProperty(d => d.Status, LitigationOrderDocumentStatus.NotPublished)
                 .SetProperty(d => d.FailureReason, NoLinkReason).SetProperty(d => d.NextAttemptUtc, (DateTime?)null), ct);
 
@@ -362,6 +486,105 @@ public sealed class LitigationOrderDocumentService(
         }
     }
 
+    private async Task<bool> CheckAndCollapseEquivalenceAsync(
+        LitigationOrderDocument document,
+        string contentHash,
+        FilingDocumentProcessingStatus? textStatus,
+        string? extractedText,
+        CancellationToken ct)
+    {
+        if (document.Order?.Case is null) return false;
+        var order = document.Order;
+        var caseId = order.LitigationCaseId;
+        var requestId = order.Case.RequestId;
+        var isVerified = await IsCaseVerifiedAsync(requestId, caseId, ct);
+        if (!isVerified) return false;
+
+        var orderDate = CaseDates.ParseDate(order.OrderDate);
+        if (!orderDate.HasValue) return false;
+
+        var otherOrders = await db.LitigationCaseOrders.AsNoTracking()
+            .Where(o => o.LitigationCaseId == caseId && o.LitigationCaseOrderId != order.LitigationCaseOrderId && o.CollapsedIntoOrderId == null && !o.IsSuperseded)
+            .ToListAsync(ct);
+
+        var hasExtracted = textStatus == FilingDocumentProcessingStatus.TextExtracted && !string.IsNullOrWhiteSpace(extractedText);
+        var currentItem = new OrderComparisonItem(
+            OrderId: order.LitigationCaseOrderId,
+            Source: order.Source ?? "Bpr",
+            OrderKey: order.OrderKey ?? "",
+            CaseId: caseId,
+            IsCaseVerified: isVerified,
+            OrderDate: orderDate,
+            ContentHash: contentHash,
+            HasExtractedText: hasExtracted);
+
+        var amILoser = false;
+        foreach (var other in otherOrders)
+        {
+            var otherDate = CaseDates.ParseDate(other.OrderDate);
+            if (otherDate != orderDate) continue;
+
+            var otherDoc = await db.LitigationOrderDocuments.AsNoTracking()
+                .Where(d => d.LitigationCaseOrderId == other.LitigationCaseOrderId && !d.IsSuperseded && d.Status == LitigationOrderDocumentStatus.Downloaded)
+                .OrderByDescending(d => d.Version)
+                .FirstOrDefaultAsync(ct);
+
+            var otherHash = other.ContentHash ?? otherDoc?.ContentHash;
+            var otherHasText = otherDoc?.TextExtractionStatus == FilingDocumentProcessingStatus.TextExtracted && !string.IsNullOrWhiteSpace(otherDoc.ExtractedText);
+
+            var otherItem = new OrderComparisonItem(
+                OrderId: other.LitigationCaseOrderId,
+                Source: other.Source ?? "Bpr",
+                OrderKey: other.OrderKey ?? "",
+                CaseId: caseId,
+                IsCaseVerified: isVerified,
+                OrderDate: otherDate,
+                ContentHash: otherHash,
+                HasExtractedText: otherHasText);
+
+            var eq = OrderEquivalence.Evaluate(currentItem, otherItem);
+            if (eq.IsEquivalent && eq.SurvivorOrderId.HasValue && eq.CollapsedOrderId.HasValue)
+            {
+                var survivorId = eq.SurvivorOrderId.Value;
+                var collapsedId = eq.CollapsedOrderId.Value;
+
+                await db.LitigationCaseOrders
+                    .Where(o => o.LitigationCaseOrderId == collapsedId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(o => o.CollapsedIntoOrderId, survivorId)
+                        .SetProperty(o => o.IsSuperseded, true), ct);
+
+                await db.LitigationOrderDocuments
+                    .Where(d => d.LitigationCaseOrderId == collapsedId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(d => d.IsSuperseded, true), ct);
+
+                await db.LitigationOrderChunks
+                    .Where(c => c.LitigationCaseOrderId == collapsedId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(c => c.IsSuperseded, true), ct);
+
+                logger.LogInformation(
+                    "Cross-source order collapse: Order {CollapsedId} collapsed into {SurvivorId} ({Reason})",
+                    collapsedId, survivorId, eq.Reason);
+
+                if (collapsedId == order.LitigationCaseOrderId)
+                {
+                    amILoser = true;
+                    break;
+                }
+            }
+        }
+
+        return amILoser;
+    }
+
+    private async Task<bool> IsCaseVerifiedAsync(long requestId, long caseId, CancellationToken ct)
+    {
+        return await db.LitigationCases.AsNoTracking()
+            .AnyAsync(c => c.LitigationCaseId == caseId && c.RequestId == requestId && c.MergedIntoCaseId == null, ct);
+    }
+
     // ── Recovery ───────────────────────────────────────────────────────────────────────────────────
 
     private static TimeSpan RetryDelay(int attemptCount) =>
@@ -400,17 +623,21 @@ public sealed class LitigationOrderDocumentService(
     /// PdfUrl is not re-attempted at all.</summary>
     public async Task<int> RecoverStaleWorkAsync(CancellationToken ct)
     {
-        if (!_opts.IsConfigured) return 0; // every attempt would fail; rows stay as-is until the client is configured
+        var hasNonBpr = _sourceClients.Any(c => c is not BprOrderSourceClient);
+        if (!_opts.IsConfigured && !hasNonBpr) return 0; // every attempt would fail; rows stay as-is until the client is configured
 
         var now = DateTime.UtcNow;
         // Rows left Failed for want of a link (before that became Not Published) would hold every litigation analysis back for up to 7 days.
         await db.LitigationOrderDocuments
-            .Where(d => d.Status == LitigationOrderDocumentStatus.Failed && (d.Order!.PdfUrl == null || d.Order.PdfUrl == ""))
+            .Where(d => d.Status == LitigationOrderDocumentStatus.Failed
+                && (d.Order!.PdfUrl == null || d.Order.PdfUrl == "")
+                && (d.Order.SourceLocator == null || d.Order.SourceLocator == ""))
             .ExecuteUpdateAsync(s => s.SetProperty(d => d.Status, LitigationOrderDocumentStatus.NotPublished)
                 .SetProperty(d => d.FailureReason, NoLinkReason).SetProperty(d => d.NextAttemptUtc, (DateTime?)null), ct);
         var nonTerminal = await db.LitigationOrderDocuments
             .Where(d => d.Status == LitigationOrderDocumentStatus.Pending || d.Status == LitigationOrderDocumentStatus.InProgress ||
-                (d.Status == LitigationOrderDocumentStatus.Failed && d.Order != null && d.Order.PdfUrl != null && d.Order.PdfUrl != ""))
+                (d.Status == LitigationOrderDocumentStatus.Failed && d.Order != null
+                    && ((d.Order.PdfUrl != null && d.Order.PdfUrl != "") || (d.Order.SourceLocator != null && d.Order.SourceLocator != ""))))
             .Select(d => new { d.LitigationOrderDocumentId, d.Status, d.LeaseExpiresUtc, d.NextAttemptUtc, d.AttemptCount, d.RetainedUntilUtc })
             .ToListAsync(ct);
 
