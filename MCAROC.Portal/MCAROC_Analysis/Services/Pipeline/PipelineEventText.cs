@@ -94,6 +94,7 @@ public static class PipelineEventText
         ["AWAITING_TRUSTED_IDENTITY"] = "not started automatically: the company was auto-selected below the spend threshold; a reviewer can start it",
         ["RESOLVED_USER_PROVIDED_CIN"] = "CIN/LLPIN supplied by the requester",
         ["RESOLVED_AUTO_SELECTED"] = "company selected automatically",
+        ["RESOLVED_UNIQUE_EXACT"] = "company selected automatically (exact, unique legal name)",
         ["RESOLVED_SOLE_ACTIVE"] = "the only active company with that name was selected automatically",
         ["RESOLVED_HUMAN_SELECTED"] = "company selected by a person",
         ["ORDER_DOWNLOAD_STALLED"] = "an order document has been waiting to download for 5+ days",

@@ -371,7 +371,8 @@ public class BorrowerIdentityLookupTests : IAsyncLifetime
             var details = new BorrowerAssignmentDetails { CompanyDetails = new() { CompanyName = name, EntityType = "LLP" } };
             var result = await new BorrowerAssignmentIdentityResolver(db).ResolveAsync(details, null, CancellationToken.None);
             Assert.Equal(llpin, result.Identifier);
-            Assert.Equal(ResolutionReasonCodes.AutoSelected, result.ReasonCode);
+            // An automatic selection; an exact, unique, active legal name gives the more specific reason (owner rule 2026-10-13).
+            Assert.Contains(result.ReasonCode, new[] { ResolutionReasonCodes.AutoSelected, ResolutionReasonCodes.UniqueExact });
             Assert.Null(details.CompanyDetails.Cin);
         }
         finally { await db.CompanyMasterRecords.Where(x => x.Identifier == llpin).ExecuteDeleteAsync(); }
