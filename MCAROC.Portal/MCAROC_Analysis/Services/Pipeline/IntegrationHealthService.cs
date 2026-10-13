@@ -43,8 +43,57 @@ public interface IIntegrationHealthService
     Task<bool> IsOpenAsync(IntegrationName name, CancellationToken ct);
 }
 
-public sealed class IntegrationHealthService(AppDbContext db) : IIntegrationHealthService
+public sealed class IntegrationHealthService : IIntegrationHealthService, IDisposable, IAsyncDisposable
 {
+    private readonly AppDbContext _scoped;
+    private readonly DbContextOptions<AppDbContext>? _options;
+    private AppDbContext? _own;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+
+    public IntegrationHealthService(AppDbContext db) : this(db, null) { }
+
+    /// <summary>With <paramref name="options"/> (as registered), the service works on <b>its own</b> context: health is reported from inside other
+    /// work (a reference-tool call, several in parallel during a filings download) whose caller is itself using the scoped context. Sharing it
+    /// failed a whole fetch with "a second operation was started on this context" (TruBoard test, 2026-10-13). Every write here is one standalone
+    /// statement, so nothing depends on the caller's context or transaction. Calls on one instance are serialised by a gate.</summary>
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    public IntegrationHealthService(AppDbContext db, DbContextOptions<AppDbContext>? options)
+    {
+        _scoped = db;
+        _options = options;
+    }
+
+    private AppDbContext db => _own ??= _options is null ? _scoped : new AppDbContext(_options);
+
+    private async Task<T> GatedAsync<T>(Func<Task<T>> action, CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        try { return await action(); }
+        finally { _gate.Release(); }
+    }
+
+    private Task GatedAsync(Func<Task> action, CancellationToken ct) => GatedAsync(async () => { await action(); return true; }, ct);
+
+    public void Dispose() => _own?.Dispose();
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_own is not null) await _own.DisposeAsync();
+    }
+
+    public Task ReportFailureAsync(IntegrationName name, DateTime callStartUtc, string? error, bool authRejected, int threshold, TimeSpan probeLease, CancellationToken ct) =>
+        GatedAsync(() => ReportFailureCoreAsync(name, callStartUtc, error, authRejected, threshold, probeLease, ct), ct);
+    public Task ReportSuccessAsync(IntegrationName name, DateTime callStartUtc, CancellationToken ct) =>
+        GatedAsync(() => ReportSuccessCoreAsync(name, callStartUtc, ct), ct);
+    public Task<bool> TryClaimHalfOpenProbeAsync(IntegrationName name, TimeSpan probeLease, CancellationToken ct) =>
+        GatedAsync(() => TryClaimHalfOpenProbeCoreAsync(name, probeLease, ct), ct);
+    public Task TryCloseAfterProbeAsync(IntegrationName name, DateTime callStartUtc, CancellationToken ct) =>
+        GatedAsync(() => TryCloseAfterProbeCoreAsync(name, callStartUtc, ct), ct);
+    public Task<IntegrationHealth?> GetAsync(IntegrationName name, CancellationToken ct) =>
+        GatedAsync(() => db.IntegrationHealths.AsNoTracking().FirstOrDefaultAsync(h => h.Name == name, ct), ct);
+    public Task<bool> IsOpenAsync(IntegrationName name, CancellationToken ct) =>
+        GatedAsync(() => IsOpenCoreAsync(name, ct), ct);
+
     /// <summary>Distant-past sentinel used to seed a new row's <c>LastTransitionUtc</c> — never <see
     /// cref="DateTime.UtcNow"/>. The stale-result fencing below rejects any write whose <c>callStartUtc</c>
     /// is before the row's current <c>LastTransitionUtc</c>, and a call's <c>callStartUtc</c> is always
@@ -72,7 +121,7 @@ VALUES ({name.ToString()}, 'Healthy', 0, NULL, NULL, NULL, {EpochSentinel}, NULL
         }
     }
 
-    public async Task ReportFailureAsync(IntegrationName name, DateTime callStartUtc, string? error, bool authRejected, int threshold, TimeSpan probeLease, CancellationToken ct)
+    private async Task ReportFailureCoreAsync(IntegrationName name, DateTime callStartUtc, string? error, bool authRejected, int threshold, TimeSpan probeLease, CancellationToken ct)
     {
         await EnsureRowExistsAsync(name, ct);
         var now = DateTime.UtcNow;
@@ -94,7 +143,7 @@ CROSS APPLY (SELECT CASE WHEN {authRejected} = 1 OR h.ConsecutiveFailures + 1 >=
 WHERE h.Name = {nameText} AND h.LastTransitionUtc <= {callStartUtc}", ct);
     }
 
-    public async Task ReportSuccessAsync(IntegrationName name, DateTime callStartUtc, CancellationToken ct)
+    private async Task ReportSuccessCoreAsync(IntegrationName name, DateTime callStartUtc, CancellationToken ct)
     {
         await EnsureRowExistsAsync(name, ct);
         var now = DateTime.UtcNow;
@@ -110,7 +159,7 @@ SET
 WHERE Name = {nameText} AND State <> 'Open' AND LastTransitionUtc <= {callStartUtc}", ct);
     }
 
-    public async Task<bool> TryClaimHalfOpenProbeAsync(IntegrationName name, TimeSpan probeLease, CancellationToken ct)
+    private async Task<bool> TryClaimHalfOpenProbeCoreAsync(IntegrationName name, TimeSpan probeLease, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         var probeAt = now.Add(probeLease);
@@ -123,7 +172,7 @@ WHERE Name = {nameText} AND State = 'Open' AND (NextProbeUtc IS NULL OR NextProb
         return rows > 0;
     }
 
-    public async Task TryCloseAfterProbeAsync(IntegrationName name, DateTime callStartUtc, CancellationToken ct)
+    private async Task TryCloseAfterProbeCoreAsync(IntegrationName name, DateTime callStartUtc, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         var nameText = name.ToString();
@@ -140,10 +189,7 @@ SET
 WHERE Name = {nameText} AND State = 'Open' AND LastTransitionUtc <= {callStartUtc}", ct);
     }
 
-    public Task<IntegrationHealth?> GetAsync(IntegrationName name, CancellationToken ct) =>
-        db.IntegrationHealths.AsNoTracking().FirstOrDefaultAsync(h => h.Name == name, ct);
-
-    public async Task<bool> IsOpenAsync(IntegrationName name, CancellationToken ct)
+    private async Task<bool> IsOpenCoreAsync(IntegrationName name, CancellationToken ct)
     {
         var state = await db.IntegrationHealths.AsNoTracking()
             .Where(h => h.Name == name)
