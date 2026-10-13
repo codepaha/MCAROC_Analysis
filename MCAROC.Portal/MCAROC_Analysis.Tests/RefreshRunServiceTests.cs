@@ -211,4 +211,33 @@ public class RefreshRunServiceTests : IAsyncLifetime
         Assert.Single(starts.Select(s => s.RunId).Distinct());
         Assert.Equal(1, starts.Count(s => !s.AlreadyRunning));
     }
+
+    [Fact]
+    public async Task Completing_a_run_publishes_every_waiting_result_before_marking_it_finished()
+    {
+        await using var db = Ctx();
+        var requestId = await RequestAsync(db);
+        var legacy = Case(requestId, "OA/" + Random.Shared.Next(10_000, 99_999) + "/2022", "Debts Recovery Tribunal Delhi (DRT 1)", "PENDING", nextHearing: "01-10-2026");
+        db.LitigationCases.Add(legacy);
+        await db.SaveChangesAsync();
+        var queue = new FetchWorkQueue(db);
+        var runs = new RefreshRunService(db, queue);
+        var start = await runs.StartAsync(requestId, default);
+
+        // What an agent leaves behind: a verified projection that says "disposed", a verified link, and its item done.
+        var caseId = await db.Set<ModuleCase>().Where(c => c.LegacyLitigationCaseId == legacy.LitigationCaseId).Select(c => c.CaseId).SingleAsync();
+        await new LiveProjectionStore(db).PublishAsync(new ObservationInput(caseId, ObservationSource.DrtPortal, ObservationOutcome.Found, true, DateTime.UtcNow,
+            new ParsedCaseSnapshot("DISPOSED", null, "Debts Recovery Tribunal Delhi (DRT 1)", null, null, null, null, null, null, 2)), default);
+        await new RequestLinkStore(db).UpsertAsync(requestId, caseId, new PartyMatchResult(PartyMatchOutcome.Verified, "exact", "RUN TEST COMPANY", null), "respondent", false, null, default);
+        await db.Set<ModuleFetchWorkItem>().Where(w => w.RunId == start.RunId).ExecuteUpdateAsync(u => u.SetProperty(w => w.Status, (int)FetchWorkStatus.Succeeded));
+        var versionBefore = await RequestLiveData.ReadAsync(db, requestId, default);
+
+        Assert.True(await runs.CompleteIfDoneAsync(start.RunId, requestId, default));
+
+        await using var check = Ctx();
+        Assert.Equal("DISPOSED", (await check.LitigationCases.AsNoTracking().SingleAsync(c => c.LitigationCaseId == legacy.LitigationCaseId)).CaseStatus);   // published, not left waiting for a batch
+        Assert.True(await RequestLiveData.ReadAsync(check, requestId, default) > versionBefore);
+        Assert.NotNull((await new RefreshRunService(check, new FetchWorkQueue(check)).ProgressAsync(start.RunId, default))!.FinishedUtc);
+        Assert.False(await new RefreshRunService(check, new FetchWorkQueue(check)).CompleteIfDoneAsync(start.RunId, requestId, default));   // once only
+    }
 }

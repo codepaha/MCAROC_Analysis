@@ -73,8 +73,10 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         }
     }
 
-    private PipelineReconciler Reconciler(AppDbContext db, PipelineOptions options, IPipelineActions? actions) =>
-        new(db, new PipelineSnapshotReader(db, new ConfigurationBuilder().Build(), Options.Create(Bpr),
+    private PipelineReconciler Reconciler(AppDbContext db, PipelineOptions options, IPipelineActions? actions, bool courtAgents = false) =>
+        new(db, new PipelineSnapshotReader(db, courtAgents
+                ? new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["LitigationPortals:Agents:Enabled"] = "true" }).Build()
+                : new ConfigurationBuilder().Build(), Options.Create(Bpr),
                 Options.Create(new MCAROC_Analysis.Services.AutoFetch.ReferenceToolOptions())),
             _time, NullLogger<PipelineReconciler>.Instance, new StaticOptionsMonitor(options), actions,
             SlotLeases(db));
@@ -94,10 +96,10 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
             autoFetch, new MCAROC_Analysis.Services.AutoFetch.AutoFetchQueue());
     }
 
-    private async Task<bool> ReconcileAsync(long runId, PipelineOptions options, IPipelineActions? actions = null, PipelineOptions? adminOptions = null)
+    private async Task<bool> ReconcileAsync(long runId, PipelineOptions options, IPipelineActions? actions = null, PipelineOptions? adminOptions = null, bool courtAgents = false)
     {
         await using var db = CreateContext();
-        return await Reconciler(db, options, actions ?? RealActions(db, adminOptions ?? options)).ReconcileAsync(runId, CancellationToken.None);
+        return await Reconciler(db, options, actions ?? RealActions(db, adminOptions ?? options), courtAgents).ReconcileAsync(runId, CancellationToken.None);
     }
 
     private void NextTick() => _time.Advance(PipelineReconciler.MinReconcileInterval + TimeSpan.FromSeconds(1));
@@ -829,6 +831,14 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
             RetryCalls++;
             return throws is not null ? Task.FromException<PipelineActionResult>(throws) : Task.FromResult(result!);
         }
+
+        public int CourtUpdateCalls { get; private set; }
+
+        public Task<PipelineActionResult> StartCourtUpdateAsync(long requestId, string correlationId, CancellationToken ct)
+        {
+            CourtUpdateCalls++;
+            return Task.FromResult(new PipelineActionResult(true, false, 1, null, null));
+        }
     }
 
     private sealed class FakeTime(DateTimeOffset start) : TimeProvider
@@ -843,5 +853,86 @@ public sealed class PipelineEnforceTests : IAsyncLifetime
         public PipelineOptions CurrentValue => value;
         public PipelineOptions Get(string? name) => value;
         public IDisposable? OnChange(Action<PipelineOptions, string?> listener) => null;
+    }
+
+    private static readonly PipelineOptions EnforcingCourtUpdate = new()
+    {
+        Enabled = true, Mode = PipelineMode.Enforce, Enforce = { Dossier = true, CourtUpdate = true }, Policy = { LitigationSearch = true, CourtUpdate = true }
+    };
+
+    private static async Task SeedCompletedSearchAsync(long requestId)
+    {
+        await using var seed = CreateContext();
+        var job = new LitigationSearchJob { RequestId = requestId, KeywordsJson = "[]", Status = LitigationSearchJobStatus.Completed, CreatedUtc = DateTime.UtcNow };
+        seed.LitigationSearchJobs.Add(job);
+        await seed.SaveChangesAsync();
+        seed.LitigationReportSnapshots.Add(new LitigationReportSnapshot
+        {
+            LitigationSearchJobId = job.LitigationSearchJobId, RequestId = requestId, ReportHash = Guid.NewGuid().ToString("N")[..16],
+            Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CreatedUtc = DateTime.UtcNow
+        });
+        await seed.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task The_court_update_starts_itself_once_the_litigation_search_is_done()
+    {
+        var (requestId, runId) = await SeedIngestedRequestWithRunAsync(adoptOptions: EnforcingCourtUpdate);
+        await SeedCompletedSearchAsync(requestId);
+        var actions = new RecordingActions(new PipelineActionResult(true, false, 1, null, null));
+
+        // (A real start creates the run, which every later tick observes; this fake creates none, so one tick is the whole test.)
+        Assert.True(await ReconcileAsync(runId, EnforcingCourtUpdate, actions, courtAgents: true));
+
+        Assert.Equal(1, actions.CourtUpdateCalls);                                                // no button: the coordinator started it
+        await using var db = CreateContext();
+        var row = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.CourtUpdate);
+        Assert.Equal(PipelineStageStateKind.Running, row.State);
+    }
+
+    [Fact]
+    public async Task The_court_update_is_never_started_when_no_fetch_agent_would_work_it()
+    {
+        var (requestId, runId) = await SeedIngestedRequestWithRunAsync(adoptOptions: EnforcingCourtUpdate);
+        await SeedCompletedSearchAsync(requestId);
+        var actions = new RecordingActions(new PipelineActionResult(true, false, 1, null, null));
+
+        Assert.True(await ReconcileAsync(runId, EnforcingCourtUpdate, actions, courtAgents: false));
+
+        Assert.Equal(0, actions.CourtUpdateCalls);
+        await using var db = CreateContext();
+        var row = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.CourtUpdate);
+        Assert.Equal("COURT_AGENTS_OFF", row.ReasonCode);
+    }
+
+    [Fact]
+    public async Task A_finished_court_update_renders_the_dossier_again()
+    {
+        var (requestId, runId) = await SeedIngestedRequestWithRunAsync(adoptOptions: EnforcingCourtUpdate);
+        await SeedCompletedSearchAsync(requestId);
+        long courtRunId;
+        await using (var seed = CreateContext())
+        {
+            var courtRun = new MCAROC_Analysis.Services.LitigationModule.Store.ModuleRefreshRun { RequestId = requestId, StartedUtc = DateTime.UtcNow, EligibleAtStart = 3, LastAgentHeartbeatUtc = DateTime.UtcNow };
+            seed.Set<MCAROC_Analysis.Services.LitigationModule.Store.ModuleRefreshRun>().Add(courtRun);
+            await seed.SaveChangesAsync();
+            courtRunId = courtRun.RunId;
+        }
+        var actions = new RecordingActions(new PipelineActionResult(true, false, 1, null, null));
+
+        Assert.True(await ReconcileAsync(runId, EnforcingCourtUpdate, actions, courtAgents: true));
+        var afterFirstTick = actions.DossierCalls;                                                // the dossier stage's own first render
+        Assert.Equal(0, actions.CourtUpdateCalls);                                                // a run is already open: observed, not started again
+
+        await using (var finish = CreateContext())
+            await finish.Set<MCAROC_Analysis.Services.LitigationModule.Store.ModuleRefreshRun>().Where(r => r.RunId == courtRunId)
+                .ExecuteUpdateAsync(u => u.SetProperty(r => r.FinishedUtc, DateTime.UtcNow));
+        NextTick();
+        Assert.True(await ReconcileAsync(runId, EnforcingCourtUpdate, actions, courtAgents: true));
+
+        Assert.Equal(afterFirstTick + 1, actions.DossierCalls);                                   // rendered again on the finished court data
+        NextTick();
+        await ReconcileAsync(runId, EnforcingCourtUpdate, actions, courtAgents: true);            // the run is complete now: nothing more happens
+        Assert.Equal(afterFirstTick + 1, actions.DossierCalls);                                   // and only once
     }
 }

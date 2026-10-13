@@ -259,6 +259,11 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
             // correctness requirement, so missing that case is an accepted, documented gap (plan §4.3).
             if (stage == PipelineStage.Dossier && enforceDossier && verdict.IsDone && stateChanged)
                 preRenderDossier = true;
+            // A finished court update changed the request's live data (its results are all published before the run is marked finished): render the
+            // downloadable dossier again so it is current without anyone asking (end-to-end automation). The file name carries the evidence version, so
+            // this produces a new file rather than serving the old one.
+            if (stage == PipelineStage.CourtUpdate && enforceDossier && verdict.IsDone && stateChanged)
+                preRenderDossier = true;
         }
         await db.SaveChangesAsync(ct);
 

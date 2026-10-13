@@ -68,7 +68,7 @@ public sealed class LitigationFetchAgentWorker(
                 using var scope = scopes.CreateScope();
                 var runs = scope.ServiceProvider.GetRequiredService<RefreshRunService>();
                 foreach (var (runId, requestId) in await runs.OpenRunsAsync(ct))
-                    if (await runs.FinishIfDoneAsync(runId, ct))
+                    if (await runs.CompleteIfDoneAsync(runId, requestId, ct))
                         logger.LogInformation("Court update run {RunId} for request {RequestId} finished.", runId, requestId);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
