@@ -22,29 +22,22 @@ public class PipelineConcurrencyConfigurationTests
     }
 
     [Fact]
-    public void FilingProcessingWorker_sizes_its_three_semaphores_from_configured_options()
+    public void FilingProcessingWorker_sizes_its_three_worker_pools_from_configured_options()
     {
-        var options = Options.Create(new LargeArchiveUploadOptions
+        var counts = FilingProcessingWorker.WorkerCounts(new LargeArchiveUploadOptions
         {
             MaxConcurrentUnpacks = 3,
             MaxConcurrentDocumentProcessing = 7,
             MaxConcurrentAiExtraction = 5
         });
-        var worker = new FilingProcessingWorker(scopeFactory: null!, queue: new FilingProcessingQueue(), NullLogger<FilingProcessingWorker>.Instance, options);
 
-        Assert.Equal(3, SemaphoreCount(worker, "_unpackConcurrency"));
-        Assert.Equal(7, SemaphoreCount(worker, "_documentConcurrency"));
-        Assert.Equal(5, SemaphoreCount(worker, "_extractionConcurrency"));
+        Assert.Equal((3, 7, 5), counts);
     }
 
     [Fact]
-    public void FilingProcessingWorker_defaults_match_the_original_hardcoded_values_when_unconfigured()
+    public void FilingProcessingWorker_defaults_match_the_original_values_when_unconfigured()
     {
-        var worker = new FilingProcessingWorker(scopeFactory: null!, queue: new FilingProcessingQueue(), NullLogger<FilingProcessingWorker>.Instance, options: null);
-
-        Assert.Equal(1, SemaphoreCount(worker, "_unpackConcurrency"));
-        Assert.Equal(4, SemaphoreCount(worker, "_documentConcurrency"));
-        Assert.Equal(2, SemaphoreCount(worker, "_extractionConcurrency"));
+        Assert.Equal((1, 4, 2), FilingProcessingWorker.WorkerCounts(null));
     }
 
     [Fact]

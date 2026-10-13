@@ -143,7 +143,7 @@ public class FilingBatchProcessor(
                 .Select(d => d.FilingDocumentId)
                 .ToListAsync(cts.Token);
             foreach (var id in documentIds)
-                queue.Enqueue(new ProcessDocumentWorkItem(id));
+                queue.Enqueue(new ProcessDocumentWorkItem(id) { Lane = batchId });
         }
         catch (Exception ex)
         {
@@ -445,7 +445,7 @@ public class FilingBatchProcessor(
                 logger.LogWarning(ex, "Retrying document {DocumentId} (attempt {Attempt})", filingDocumentId, document.RetryCount + 1);
                 document.ProcessingStatus = FilingDocumentProcessingStatus.Discovered;
                 await db.SaveChangesAsync(ct);
-                queue.Enqueue(new ProcessDocumentWorkItem(filingDocumentId));
+                queue.Enqueue(new ProcessDocumentWorkItem(filingDocumentId) { Lane = document.BatchId });
             }
             else
             {
@@ -465,7 +465,10 @@ public class FilingBatchProcessor(
                 || d.ProcessingStatus == FilingDocumentProcessingStatus.TextExtracting), ct);
 
         if (pendingCount == 0)
-            queue.Enqueue(new ExtractFilingWorkItem(filingId));
+        {
+            var lane = await db.McaFilingDocuments.Where(d => d.FilingId == filingId).Select(d => d.BatchId).FirstOrDefaultAsync(ct);
+            queue.Enqueue(new ExtractFilingWorkItem(filingId) { Lane = lane });
+        }
     }
 
     /// <summary>Resets any AiExtractionStatus=Pending document in a filing back to NotApplicable, and
@@ -810,10 +813,10 @@ public class FilingBatchProcessor(
                 (d.ProcessingStatus == FilingDocumentProcessingStatus.Discovered
                     || d.ProcessingStatus == FilingDocumentProcessingStatus.Classified
                     || d.ProcessingStatus == FilingDocumentProcessingStatus.TextExtracting))
-            .Select(d => d.FilingDocumentId)
+            .Select(d => new { d.FilingDocumentId, d.BatchId })
             .ToListAsync(ct);
-        foreach (var id in staleDocuments)
-            queue.Enqueue(new ProcessDocumentWorkItem(id));
+        foreach (var d in staleDocuments)
+            queue.Enqueue(new ProcessDocumentWorkItem(d.FilingDocumentId) { Lane = d.BatchId });
 
         // The gap that actually bit in review: a document reaching ProcessingStatus=Completed with
         // AiExtractionStatus=Pending (queued for AI) or InProgress (claimed, Gemini call was in flight)
@@ -866,18 +869,19 @@ public class FilingBatchProcessor(
         foreach (var batchId in batchIdsToRecheck)
             await MaybeCompleteBatchAsync(batchId, ct);
 
-        var filingsNeedingExtraction = await db.McaFilingDocuments
+        var filingLanes = (await db.McaFilingDocuments
             .Where(d => d.DuplicateOfDocumentId == null && d.AiExtractionStatus == AiExtractionStatus.Pending)
-            .Select(d => d.FilingId)
+            .Select(d => new { d.FilingId, d.BatchId })
             .Distinct()
-            .ToListAsync(ct);
+            .ToListAsync(ct)).GroupBy(x => x.FilingId).ToDictionary(g => g.Key, g => g.First().BatchId);
+        var filingsNeedingExtraction = filingLanes.Keys.ToList();
         var alreadyExtractedFilingIds = await db.McaFilingExtractions
             .Where(e => e.FilingId != null && filingsNeedingExtraction.Contains(e.FilingId.Value))
             .Select(e => e.FilingId!.Value)
             .ToListAsync(ct);
         var filingIdsToEnqueue = filingsNeedingExtraction.Except(alreadyExtractedFilingIds).ToList();
         foreach (var id in filingIdsToEnqueue)
-            queue.Enqueue(new ExtractFilingWorkItem(id));
+            queue.Enqueue(new ExtractFilingWorkItem(id) { Lane = filingLanes[id] });
 
         return staleDocuments.Count + stuckBatches.Count + filingIdsToEnqueue.Count;
     }
