@@ -110,7 +110,7 @@ public class ReferenceToolClientTests : IDisposable
         Assert.Equal("PHPSESSID=abc; user=x", search.Headers.GetValues("Cookie").Single());
         var query = System.Web.HttpUtility.ParseQueryString(search.RequestUri!.Query);
         Assert.Equal("3.1.6", query["v"]);
-        Assert.Equal("8.1.26", query["cv"]);
+        Assert.Equal("8.1.28", query["cv"]);
         var payload = DecodePayload(query["qp"]!);
         Assert.Equal("getNameHints", payload.GetProperty("action").GetString());
         Assert.Equal("lodha", payload.GetProperty("q").GetString());
@@ -370,8 +370,8 @@ public class ReferenceToolClientTests : IDisposable
         handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
         handler.OnPath("server/user/login.php", req =>
         {
-            if (req.RequestUri!.Query.Contains("cv=8.1.26"))
-                return new HttpResponseMessage((HttpStatusCode)426) { Content = new StringContent("{\"version\":\"8.1.26\",\"current_version\":\"8.1.28\",\"app\":\"core\"}") };
+            if (!req.RequestUri!.Query.Contains("cv=8.1.30"))   // a release after the configured version
+                return new HttpResponseMessage((HttpStatusCode)426) { Content = new StringContent("{\"version\":\"8.1.28\",\"current_version\":\"8.1.30\",\"app\":\"core\"}") };
             var resp = Json("{\"id\":265271}");
             resp.Headers.Add("Set-Cookie", "PHPSESSID=after-upgrade; path=/");
             return resp;
@@ -383,7 +383,7 @@ public class ReferenceToolClientTests : IDisposable
         Assert.True(login.IsValid);
         var logins = handler.Requests.Where(r => r.RequestUri!.AbsolutePath.EndsWith("login.php")).ToList();
         Assert.Equal(2, logins.Count);                                                           // the refused one, then exactly one retry
-        Assert.Contains("cv=8.1.28", logins[1].RequestUri!.Query);
+        Assert.Contains("cv=8.1.30", logins[1].RequestUri!.Query);
     }
 
     [Fact]
@@ -431,6 +431,32 @@ public class ReferenceToolClientTests : IDisposable
 
         var ex = await Assert.ThrowsAsync<ReferenceToolException>(() => client.AddAssetAsync(1, "bid-1", "TEST COMPANY PRIVATE LIMITED", CancellationToken.None));
         Assert.Contains("refused", ex.Message);
+    }
+
+    [Fact]
+    public async Task A_company_unlocked_under_any_team_of_the_account_is_unlocked_whatever_team_is_listed_first()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        // The shape the tool answered for a company unlocked on 9 Oct under two of the account's three teams, with the third listed first.
+        handler.OnPath("server/user/service.php", _ => Json("{\"teams\":[{\"teamId\":309931,\"addedAt\":null,\"creditUsed\":true},"
+            + "{\"teamId\":284869,\"addedAt\":\"2026-10-09T10:27:28+05:30\",\"creditUsed\":true},{\"teamId\":290914,\"addedAt\":\"2026-10-09T10:27:28+05:30\",\"creditUsed\":true}]}"));
+        var client = NewClient(handler);
+
+        var status = await client.GetAssetStatusAsync("bid-1", CancellationToken.None);
+
+        Assert.NotNull(status.AddedAt);                                                          // no paid unlock is asked for
+        Assert.Equal(new DateTimeOffset(2026, 10, 9, 10, 27, 28, TimeSpan.FromHours(5.5)), status.AddedAt);
+        Assert.Equal(309931, status.TeamId);
+    }
+
+    [Fact]
+    public async Task A_company_no_team_holds_is_locked()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        handler.OnPath("server/user/service.php", _ => Json("{\"teams\":[{\"teamId\":1,\"addedAt\":null},{\"teamId\":2,\"addedAt\":null}]}"));
+        Assert.Null((await NewClient(handler).GetAssetStatusAsync("bid-1", CancellationToken.None)).AddedAt);
     }
 
     private static ReferenceToolClient NewClient(StubHandler handler, bool configured = true, long? maxResponseBytes = null, string username = "", string password = "")

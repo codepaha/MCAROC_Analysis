@@ -579,7 +579,8 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
     // ── Unlock / refresh lifecycle (docs/reference-tool-refresh-unlock-contract.md) ─────────────────
     // Every call here is free; the only paid call (addAsset) belongs to the approval-gated unlock (#266).
 
-    /// <summary><c>getAssetTeams</c> — the authoritative locked/unlocked check.</summary>
+    /// <summary><c>getAssetTeams</c> — the authoritative locked/unlocked check. Unlocked when any of the account's teams holds the company (the earliest
+    /// date is reported); the first team is the one an unlock would be made for.</summary>
     public Task<ReferenceAssetStatus> GetAssetStatusAsync(string bid, CancellationToken ct)
     {
         EnsureConfigured();
@@ -588,9 +589,15 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
             using var doc = await GetJsonAsync("server/user/service.php", new { action = "getAssetTeams", bid }, "asset status", ct);
             if (!doc.RootElement.TryGetProperty("teams", out var teams) || teams.ValueKind != JsonValueKind.Array || teams.GetArrayLength() == 0)
                 throw new ReferenceToolException("The reference tool's asset-status response had no teams.", ReferenceToolFailureKind.ContractChanged);
-            var team = teams[0];
-            long? teamId = team.TryGetProperty("teamId", out var t) && t.ValueKind == JsonValueKind.Number && t.TryGetInt64(out var id) ? id : null;
-            return new ReferenceAssetStatus(teamId, ParseTimestamp(Text(team, "addedAt")));
+            // The account can hold several teams. The company is unlocked for us if ANY of them holds it: reading only the first team took an
+            // already-unlocked company for locked whenever the tool listed a team without it first, and asked for a paid unlock it did not need.
+            // The first team stays the one an unlock would be made for.
+            var first = teams[0];
+            long? teamId = first.TryGetProperty("teamId", out var t) && t.ValueKind == JsonValueKind.Number && t.TryGetInt64(out var id) ? id : null;
+            DateTimeOffset? addedAt = null;
+            foreach (var team in teams.EnumerateArray())
+                if (ParseTimestamp(Text(team, "addedAt")) is { } at && (addedAt is null || at < addedAt)) addedAt = at;
+            return new ReferenceAssetStatus(teamId, addedAt);
         }, ct);
     }
 
