@@ -139,6 +139,11 @@ builder.Services.AddScoped<IPaidCallAdmission, PaidCallAdmissionService>();
 builder.Services.AddScoped<LitigationReuseService>();
 builder.Services.Configure<LitigationKeywordOptions>(builder.Configuration.GetSection(LitigationKeywordOptions.SectionName));
 builder.Services.AddScoped<CompanyNameSuggestionService>();
+// #499: stored filing documents are classified again when the classifier's rules change (labels only, no AI).
+builder.Services.Configure<MCAROC_Analysis.Services.McaFilings.FilingReclassificationOptions>(
+    builder.Configuration.GetSection(MCAROC_Analysis.Services.McaFilings.FilingReclassificationOptions.SectionName));
+builder.Services.AddScoped<MCAROC_Analysis.Services.McaFilings.FilingReclassifier>();
+builder.Services.AddHostedService<MCAROC_Analysis.Services.McaFilings.FilingReclassificationWorker>();
 // Whether each vendor case is the company's (#489, decision a): rules first, then a cached judgement; only attributed cases are shown.
 builder.Services.Configure<MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttributionOptions>(
     builder.Configuration.GetSection(MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttributionOptions.SectionName));

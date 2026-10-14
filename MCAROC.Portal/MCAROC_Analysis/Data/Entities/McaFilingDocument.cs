@@ -34,6 +34,8 @@ public class McaFilingDocument
     public ClassificationConfidence ClassificationConfidence { get; set; }
     public string ClassificationMethod { get; set; } = string.Empty;
     public string? MatchedRule { get; set; }
+    /// <summary>The <c>FilingClassifier.Version</c> that set the classification above; an older one is classified again by <c>FilingReclassifier</c> (#499).</summary>
+    public int ClassifierVersion { get; set; }
 
     // Processing — ProcessingStatus is the single source of truth for pipeline stage.
     public FilingDocumentProcessingStatus ProcessingStatus { get; set; } = FilingDocumentProcessingStatus.Discovered;

@@ -388,6 +388,7 @@ public class FilingBatchProcessor(
                 document.ClassificationConfidence = classification.Confidence;
                 document.ClassificationMethod = classification.Method;
                 document.MatchedRule = classification.MatchedRule;
+                document.ClassifierVersion = FilingClassifier.Version;
                 if (classification.Category == FilingCategory.Unclassified)
                 {
                     document.ManualReviewRequired = true;

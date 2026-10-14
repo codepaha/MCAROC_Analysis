@@ -38,7 +38,8 @@ public static class ChargeCandidateExtractor
         var sourceFolder = !string.IsNullOrEmpty(nestedDir) ? Path.GetFileName(nestedDir) : string.Empty;
         var originalFileName = Path.GetFileName(entry.NestedEntryRelativePath);
 
-        var classification = FilingClassifier.Classify(
+        // The pilot's own frozen classifier: its baselines were recorded with it (#499 changed the production rules).
+        var classification = PilotFilingClassifierV1.Classify(
             outerCategoryFolder: outerCategoryFolder,
             sourceFolder: sourceFolder,
             originalFileName: originalFileName,
