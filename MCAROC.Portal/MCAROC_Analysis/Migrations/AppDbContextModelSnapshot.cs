@@ -3719,6 +3719,55 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("LitigationCaseSourceReports");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationNameSpelling", b =>
+                {
+                    b.Property<long>("LitigationNameSpellingId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("LitigationNameSpellingId"));
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ExpansionsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Language")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("nvarchar(8)");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("NameKey")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<string>("PromptVersion")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("RejectedJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("SpellingsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("LitigationNameSpellingId");
+
+                    b.HasIndex("NameKey", "Language", "PromptVersion")
+                        .IsUnique();
+
+                    b.ToTable("LitigationNameSpellings");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationOrderChunk", b =>
                 {
                     b.Property<long>("LitigationOrderChunkId")

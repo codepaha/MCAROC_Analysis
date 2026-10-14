@@ -27,12 +27,15 @@ public sealed class LitigationStartService(
     LitigationSearchQueue searchQueue,
     LitigationAiAnalysisOrchestrator analysis,
     IOptions<BprLitigationOptions>? bprOptions = null,
-    LitigationReuseService? reuse = null)
+    LitigationReuseService? reuse = null,
+    LitigationKeywordSuggester? keywordSuggester = null)
 {
     /// <summary>Eligibility and keyword planning, shared by the reviewer's button and the pipeline's automatic
     /// start so the two can't drift. Returns the problem as text when the request can't be searched.</summary>
+    /// <param name="suggester">Adds the generated keywords (#489: name forms, Hindi spellings, initials, phonetic spellings). Without it only the
+    /// registered and former names and their legal-suffix forms are searched.</param>
     public static async Task<(LitigationSearchPlan? Plan, string? Problem)> PlanSearchAsync(
-        AppDbContext db, McaRequest request, BprLitigationOptions opts, CancellationToken ct)
+        AppDbContext db, McaRequest request, BprLitigationOptions opts, CancellationToken ct, LitigationKeywordSuggester? suggester = null)
     {
         if (!opts.IsConfigured)
             return (null, "BPR Litigation API is not configured on this instance.");
@@ -47,7 +50,9 @@ public sealed class LitigationStartService(
             ? await db.CompanyNameHistories.Where(x => x.IngestionRunId == runId && !string.IsNullOrWhiteSpace(x.PreviousName))
                 .Select(x => x.PreviousName).ToListAsync(ct)
             : [];
-        var keywords = LitigationKeywordPlanner.Build(request.CompanyName, historicalNames);
+        var keywords = suggester is null
+            ? LitigationKeywordPlanner.Build(request.CompanyName, historicalNames)
+            : await suggester.SuggestAsync(request.CompanyName, historicalNames, request.RequestId, ct);
         var appCustomerId = !string.IsNullOrWhiteSpace(request.RequestNumber)
             ? request.RequestNumber.Trim()
             : $"REQ-{request.RequestId}";
@@ -64,7 +69,7 @@ public sealed class LitigationStartService(
         if (request is null) return LitigationStartResult.Ineligible("The request no longer exists.");
         if (string.IsNullOrWhiteSpace(request.Cin ?? request.Llpin))
             return LitigationStartResult.Ineligible("The request has no CIN/LLPIN; start the litigation search by hand.");
-        var (plan, problem) = await PlanSearchAsync(db, request, bprOptions?.Value ?? new BprLitigationOptions(), ct);
+        var (plan, problem) = await PlanSearchAsync(db, request, bprOptions?.Value ?? new BprLitigationOptions(), ct, keywordSuggester);
         if (plan is null) return LitigationStartResult.Ineligible(problem!);
         return await StartSearchAsync(request, plan.Keywords, plan.EntityType, plan.ApplicationCustomerId, PaidCallTrigger.Auto, ct,
             correlationId, onlyIfNoJob: true);

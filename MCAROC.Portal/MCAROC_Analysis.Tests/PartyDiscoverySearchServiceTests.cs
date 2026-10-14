@@ -32,6 +32,18 @@ public sealed class PartyDiscoverySearchServiceTests
     }
 
     [Fact]
+    public async Task Suggested_search_terms_replace_the_queried_names_but_not_the_names_matched()
+    {
+        // #489: the portals are searched with the suggested Latin keywords (here a "Corp" form); a party is still accepted only on the registered name.
+        var drt = new MockDrtDiscoveryClient();
+        var service = new PartyDiscoverySearchService(drt, new MockConsumerDiscoveryClient(), NullLogger<PartyDiscoverySearchService>.Instance);
+        var result = await service.DiscoverDrtCandidatesAsync(["Bharat Petroleum Corporation Limited"], null, [1], default,
+            ["Bharat Petroleum Corporation Limited", "Bharat Petroleum Corp Ltd"]);
+        Assert.Equal(["Bharat Petroleum Corporation Limited", "Bharat Petroleum Corp Ltd"], drt.Queries.Distinct().ToList());
+        Assert.All(result.Candidates.Where(c => c.IsAccepted), c => Assert.Equal(PartyMatchOutcome.Verified, c.MatchResult.Outcome));
+    }
+
+    [Fact]
     public async Task DiscoverConsumerCandidatesAsync_defaults_to_searching_all_commissions_including_districts()
     {
         var consumer = new MockConsumerDiscoveryClient();

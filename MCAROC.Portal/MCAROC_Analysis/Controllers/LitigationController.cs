@@ -78,7 +78,8 @@ public class LitigationController(
         var request = await db.Requests.FirstOrDefaultAsync(r => r.RequestId == id, ct);
         if (request is null) return NotFound();
 
-        var (plan, problem) = await LitigationStartService.PlanSearchAsync(db, request, _opts, ct);
+        var (plan, problem) = await LitigationStartService.PlanSearchAsync(db, request, _opts, ct,
+            HttpContext?.RequestServices?.GetService<LitigationKeywordSuggester>());
         if (plan is null)
             return BadRequest(problem);
 

@@ -29,13 +29,15 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
         IEnumerable<string> companyNames,
         IEnumerable<string>? formerNames = null,
         IReadOnlyList<int>? tribunalIds = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyList<string>? searchTerms = null)
     {
         var namesList = companyNames.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var formerList = (formerNames ?? []).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var primaryName = namesList.FirstOrDefault() ?? formerList.FirstOrDefault() ?? "Unknown";
 
-        var queryNames = namesList.Concat(formerList).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var queryNames = (searchTerms is { Count: > 0 } ? searchTerms : namesList.Concat(formerList))
+            .Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (queryNames.Count == 0)
         {
             return new PartyDiscoveryResult(primaryName, [], 0, 0, 0, 0, ["No company names provided for discovery"]);
@@ -150,13 +152,15 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
         IReadOnlyList<(int CommissionTypeId, int CommissionId)>? commissions = null,
         DateOnly? fromDate = null,
         DateOnly? toDate = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyList<string>? searchTerms = null)
     {
         var namesList = companyNames.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var formerList = (formerNames ?? []).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var primaryName = namesList.FirstOrDefault() ?? formerList.FirstOrDefault() ?? "Unknown";
 
-        var queryNames = namesList.Concat(formerList).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var queryNames = (searchTerms is { Count: > 0 } ? searchTerms : namesList.Concat(formerList))
+            .Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (queryNames.Count == 0)
         {
             return new PartyDiscoveryResult(primaryName, [], 0, 0, 0, 0, ["No company names provided for discovery"]);
@@ -261,10 +265,11 @@ public sealed class PartyDiscoverySearchService : IPartyDiscoverySearchService
     public async Task<PartyDiscoveryResult> DiscoverAllCandidatesAsync(
         IEnumerable<string> companyNames,
         IEnumerable<string>? formerNames = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyList<string>? searchTerms = null)
     {
-        var drtTask = DiscoverDrtCandidatesAsync(companyNames, formerNames, null, ct);
-        var consumerTask = DiscoverConsumerCandidatesAsync(companyNames, formerNames, null, null, null, ct);
+        var drtTask = DiscoverDrtCandidatesAsync(companyNames, formerNames, null, ct, searchTerms);
+        var consumerTask = DiscoverConsumerCandidatesAsync(companyNames, formerNames, null, null, null, ct, searchTerms);
 
         await Task.WhenAll(drtTask, consumerTask);
 
