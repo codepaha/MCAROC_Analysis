@@ -204,6 +204,7 @@ public class StructuredFactsProvider(AppDbContext db)
 
         var cases = await db.LitigationCaseSourceReports.AsNoTracking()
             .Where(l => l.LitigationReportSnapshotId == snapshotId && l.Case!.MergedIntoCaseId == null)
+            .Where(MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttribution.IsShownLink)   // #489: only the company's cases
             .Select(l => l.Case!).ToListAsync(ct);
         if (cases.Count == 0) return [];
 

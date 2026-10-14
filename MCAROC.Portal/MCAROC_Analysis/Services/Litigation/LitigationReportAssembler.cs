@@ -80,6 +80,7 @@ public class LitigationReportAssembler(
         var snapshotId = authoritativeSnapshot.LitigationReportSnapshotId;
         var caseIdsQuery = db.LitigationCaseSourceReports
             .Where(sr => sr.LitigationReportSnapshotId == snapshotId && sr.Case!.MergedIntoCaseId == null)
+            .Where(MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttribution.IsShownLink)   // #489: only the company's cases
             .Select(sr => sr.LitigationCaseId)
             .Distinct();
 

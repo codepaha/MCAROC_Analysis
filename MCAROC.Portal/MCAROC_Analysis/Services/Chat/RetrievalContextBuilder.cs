@@ -219,7 +219,8 @@ public class RetrievalContextBuilder
         if (snapshotId is null) return [];
 
         var cases = await _db.LitigationCaseSourceReports.AsNoTracking()
-            .Where(l => l.LitigationReportSnapshotId == snapshotId && l.Case!.MergedIntoCaseId == null).Select(l => l.Case!).ToListAsync(ct);
+            .Where(l => l.LitigationReportSnapshotId == snapshotId && l.Case!.MergedIntoCaseId == null)
+            .Where(MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttribution.IsShownLink).Select(l => l.Case!).ToListAsync(ct);   // #489: only the company's cases
         var names = await _structuredFacts.CompanyNamesAsync(requestId, request.CompanyName, request.LatestCompletedIngestionRunId, ct);
         var (listed, _) = LitigationCaseListSelector.Select(cases, filter, names);
         var ids = listed.Select(c => c.LitigationCaseId).ToList();
@@ -232,7 +233,7 @@ public class RetrievalContextBuilder
     {
         if (LitigationCaseReference.Extract(question).Count == 0) return [];
         var cases = await _db.LitigationCases.AsNoTracking().Include(c => c.Orders)
-            .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null).ToListAsync(ct);
+            .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null).Where(MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttribution.IsShown).ToListAsync(ct);
         return LitigationCaseReference.FindReferencedCases(question, cases).Take(MaxReferencedCases).ToList();
     }
 

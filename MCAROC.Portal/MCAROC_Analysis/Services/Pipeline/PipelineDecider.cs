@@ -289,6 +289,10 @@ public static class PipelineDecider
                 LitigationSearchJobStatus.Failed => Attention("LITIGATION_SEARCH_FAILED", job.FailureReason, job.JobId),
                 LitigationSearchJobStatus.Completed => job.SnapshotStatus switch
                 {
+                    LitigationReportSnapshotStatus.Completed when job.AttributionOutstanding > 0 =>
+                        job.AttributionWaitingSinceUtc is { } since && now - since > AttributionStallWindow
+                            ? Attention("ATTRIBUTION_STALLED", $"{job.AttributionOutstanding} case(s) have waited over {AttributionStallWindow.TotalHours:0} hours for the judgement of whether a party is the company (is the AI service configured and reachable?). They are retried automatically.", job.SnapshotId)
+                            : Running(job.SnapshotId, "ATTRIBUTING"),
                     LitigationReportSnapshotStatus.Completed => job.HasStalledOrderDownload
                         ? Attention("ORDER_DOWNLOAD_STALLED", "An order document has been waiting to download for 5 or more days.", job.SnapshotId)
                         : Ok(job.SnapshotId),
@@ -315,6 +319,9 @@ public static class PipelineDecider
         return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: ReadyToStart,
             ReasonDetail: "Ready to start. The coordinator starts it itself only in Enforce mode with Enforce:Litigation on.");
     }
+
+    /// <summary>How long cases may wait for an attribution judgement before the stage asks for attention (#489). The worker keeps retrying either way.</summary>
+    public static readonly TimeSpan AttributionStallWindow = TimeSpan.FromHours(2);
 
     /// <summary>How long without an agent report, with work still to do, before the court update reads as paused (plan 4.8).</summary>
     public static readonly TimeSpan CourtUpdateHeartbeatWindow = TimeSpan.FromMinutes(10);

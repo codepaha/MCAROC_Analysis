@@ -250,7 +250,15 @@ public sealed class LitigationSourceCoverageViewModel
     public int PendingOrders { get; set; }
     public int FailedOrders { get; set; }
     public int ExpiredOrders { get; set; }
+
+    /// <summary>#489: cases the search returned that are not counted, each with the party and the reason (not this company's, or could not be confirmed).</summary>
+    public List<SetAsideCase> SetAside { get; set; } = [];
+
+    /// <summary>#489: cases still being checked against the company's names; counted once confirmed.</summary>
+    public int AttributionWaitingCount { get; set; }
 }
+
+public sealed record SetAsideCase(long LitigationCaseId, string? CaseNumber, string? Court, LitigationAttributionOutcome Outcome, string? Party, string? Reason);
 
 public sealed record LitigationSnapshotSummary(long SnapshotId, DateTime RetrievedUtc, string ReportHash, int CasesPersistedCount, BprReportFormat Format);
 

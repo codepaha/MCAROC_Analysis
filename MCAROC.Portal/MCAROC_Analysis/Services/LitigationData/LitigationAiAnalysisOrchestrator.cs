@@ -74,7 +74,8 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         {
             var requestId = await db.LitigationAiAnalysisRuns.Where(x => x.LitigationAiAnalysisRunId == runId && x.LeaseToken == token).Select(x => x.RequestId).SingleAsync(ct);
             using var usageScope = AiUsageContext.Begin(requestId);
-            var cases = await db.LitigationCases.Include(x => x.Orders).Where(x => x.RequestId == requestId && x.MergedIntoCaseId == null).ToListAsync(ct);
+            // #489: only the company's cases are analysed (and paid for).
+            var cases = await db.LitigationCases.Include(x => x.Orders).Where(x => x.RequestId == requestId && x.MergedIntoCaseId == null).Where(Attribution.LitigationAttribution.IsShown).ToListAsync(ct);
             var chunks = await LiveChunks(db, db.LitigationOrderChunks, requestId).ToListAsync(ct);
             var context = await LoadAnalysisContextAsync(requestId, ct);
             _breaker = new LitigationOutageBreaker(options.Value.OutageAfterConsecutiveFailures);
@@ -144,17 +145,18 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
     public static IQueryable<LitigationOrderChunk> LiveChunks(AppDbContext db, IQueryable<LitigationOrderChunk> chunks, long requestId) =>
         chunks.Where(x => x.RequestId == requestId
             && !x.IsSuperseded
-            && db.LitigationCases.Any(c => c.LitigationCaseId == x.LitigationCaseId && c.MergedIntoCaseId == null)
+            && db.LitigationCases.Any(c => c.LitigationCaseId == x.LitigationCaseId && c.MergedIntoCaseId == null
+                && (c.AttributionOutcome == null || c.AttributionOutcome == LitigationAttributionOutcome.Attributed))
             && !db.LitigationCaseOrders.Any(o => o.LitigationCaseOrderId == x.LitigationCaseOrderId && (o.CollapsedIntoOrderId != null || o.IsSuperseded)));
 
     public async Task<bool> IsUpToDateAsync(long requestId, CancellationToken ct) =>
-        await db.LitigationCases.AsNoTracking().AnyAsync(x => x.RequestId == requestId && x.MergedIntoCaseId == null, ct) && !await NeedsAnalysisAsync(requestId, ct);
+        await db.LitigationCases.AsNoTracking().Where(Attribution.LitigationAttribution.IsShown).AnyAsync(x => x.RequestId == requestId && x.MergedIntoCaseId == null, ct) && !await NeedsAnalysisAsync(requestId, ct);
 
     /// <summary>False when starting a run would only repeat work already done: every case's evidence matches an
     /// analysis already on file and a portfolio synthesis exists. Lets the start path refuse without spending.</summary>
     public async Task<bool> NeedsAnalysisAsync(long requestId, CancellationToken ct)
     {
-        var cases = await db.LitigationCases.AsNoTracking().Include(x => x.Orders).Where(x => x.RequestId == requestId && x.MergedIntoCaseId == null).ToListAsync(ct);
+        var cases = await db.LitigationCases.AsNoTracking().Include(x => x.Orders).Where(x => x.RequestId == requestId && x.MergedIntoCaseId == null).Where(Attribution.LitigationAttribution.IsShown).ToListAsync(ct);
         if (cases.Count == 0) return false;
         // InsufficientEvidence is a finished, deterministic portfolio outcome (no case had usable order text), so it
         // counts as "done" too; only a Pending/Failed or missing portfolio calls for another run.

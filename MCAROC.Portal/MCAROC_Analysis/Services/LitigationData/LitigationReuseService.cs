@@ -141,7 +141,10 @@ public sealed class LitigationReuseService(
                 CaseStage = c.CaseStage, CaseStatus = c.CaseStatus, Act = c.Act, FilingDate = c.FilingDate, LastHearingDate = c.LastHearingDate,
                 NextHearingDate = c.NextHearingDate, DecisionDate = c.DecisionDate, State = c.State, District = c.District,
                 PetitionersJson = c.PetitionersJson, RespondentsJson = c.RespondentsJson, PetitionerAdvocatesJson = c.PetitionerAdvocatesJson,
-                RespondentAdvocatesJson = c.RespondentAdvocatesJson, FirstSeenUtc = c.FirstSeenUtc, LastSeenUtc = c.LastSeenUtc
+                RespondentAdvocatesJson = c.RespondentAdvocatesJson, FirstSeenUtc = c.FirstSeenUtc, LastSeenUtc = c.LastSeenUtc,
+                // #489: the same company's report, so the same attribution (a case not yet assessed is assessed for this request as for any other).
+                AttributionOutcome = c.AttributionOutcome, AttributionRule = c.AttributionRule, AttributionParty = c.AttributionParty,
+                AttributionReason = c.AttributionReason, AttributionDecidedUtc = c.AttributionDecidedUtc
             };
             db.LitigationCases.Add(copy);
             await db.SaveChangesAsync(ct);

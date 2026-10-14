@@ -102,4 +102,5 @@ public sealed record FilingFacts(long BatchId, FilingBatchStatus Status, string?
 /// whether the import itself is still alive.</param>
 public sealed record LitigationSearchFacts(
     long JobId, LitigationSearchJobStatus Status, string? FailureReason, long? SnapshotId, LitigationReportSnapshotStatus? SnapshotStatus,
-    bool OrdersFullyProcessed = true, bool HasStalledOrderDownload = false, DateTime? LeaseExpiresUtc = null, DateTime? SnapshotLeaseExpiresUtc = null);
+    bool OrdersFullyProcessed = true, bool HasStalledOrderDownload = false, DateTime? LeaseExpiresUtc = null, DateTime? SnapshotLeaseExpiresUtc = null,
+    int AttributionOutstanding = 0, DateTime? AttributionWaitingSinceUtc = null);
