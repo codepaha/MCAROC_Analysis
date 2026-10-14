@@ -107,16 +107,17 @@ public sealed class QuestionRepositoryService(AppDbContext db, EmbeddingService 
     /// </summary>
     public static async Task<IReadOnlyList<string>> FrequentQuestionsAsync(AppDbContext db, QuestionRepositoryOptions opts, int max, CancellationToken ct)
     {
+        // Every condition in the query, before the limit, so groups that fail it never crowd out eligible ones below them (review of #511).
         var groups = await db.ChatQuestionGroups.AsNoTracking()
-            .Where(g => g.ClientCount >= opts.SuggestMinClients && g.AskedCount > 0)
+            .Where(g => g.ClientCount >= opts.SuggestMinClients && g.AskedCount > 0
+                && g.AnsweredWithEvidenceCount >= opts.SuggestMinEvidenceShare * g.AskedCount
+                && !g.CanonicalQuestion.Replace(QuestionMasker.Company, "").Contains("["))
             .OrderByDescending(g => g.ClientCount).ThenByDescending(g => g.AskedCount)
-            .Select(g => new { g.CanonicalQuestion, g.AskedCount, g.AnsweredWithEvidenceCount }).Take(50).ToListAsync(ct);
+            .Select(g => g.CanonicalQuestion).Take(max).ToListAsync(ct);
         return groups
-            .Where(g => (double)g.AnsweredWithEvidenceCount / g.AskedCount >= opts.SuggestMinEvidenceShare)
-            .Select(g => g.CanonicalQuestion.Replace(QuestionMasker.Company, "the company", StringComparison.Ordinal))
-            .Where(q => !q.Contains('['))
+            .Select(q => q.Replace(QuestionMasker.Company, "the company", StringComparison.Ordinal))
             .Select(q => q.Length > 0 ? char.ToUpperInvariant(q[0]) + q[1..] : q)
-            .Take(max).ToList();
+            .ToList();
     }
 
     /// <summary>The names to mask for one request: the company's current and former names and its directors'.</summary>

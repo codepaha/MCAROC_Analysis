@@ -196,4 +196,33 @@ public class QuestionRepositoryServiceTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
     }
+
+    [Fact]
+    public async Task Ineligible_groups_at_the_top_do_not_hide_an_eligible_one_below()
+    {
+        // Review of #511: the limit applies after the evidence and placeholder filters.
+        var tag = Guid.NewGuid().ToString("N")[..6];
+        await using var db = Ctx();
+        ChatQuestionGroup Group(string q, int clients, int evidence) => new()
+        {
+            CanonicalQuestion = q, Centroid = new SqlVector<float>(RandomUnit()), ClientCount = clients, AskedCount = 10, AnsweredWithEvidenceCount = evidence,
+            FirstAskedUtc = DateTime.UtcNow, LastAskedUtc = DateTime.UtcNow
+        };
+        var groups = Enumerable.Range(0, 8).Select(i => Group($"Weak answer {tag} {i}?", clients: 1_000_000, evidence: 2))
+            .Append(Group($"Ask about [person] {tag}?", clients: 1_000_000, evidence: 10))
+            .Append(Group($"Strong answer {tag}?", clients: 3, evidence: 10)).ToList();
+        db.ChatQuestionGroups.AddRange(groups);
+        await db.SaveChangesAsync();
+        try
+        {
+            var s = await QuestionRepositoryService.FrequentQuestionsAsync(db, new QuestionRepositoryOptions(), 3, default);
+            Assert.DoesNotContain(s, q => q.Contains(tag) && !q.StartsWith("Strong", StringComparison.Ordinal));
+            Assert.Contains($"Strong answer {tag}?", await QuestionRepositoryService.FrequentQuestionsAsync(db, new QuestionRepositoryOptions(), 10_000, default));
+        }
+        finally
+        {
+            db.ChatQuestionGroups.RemoveRange(groups);
+            await db.SaveChangesAsync();
+        }
+    }
 }
