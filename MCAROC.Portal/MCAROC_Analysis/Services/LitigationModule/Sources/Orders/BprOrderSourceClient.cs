@@ -43,7 +43,9 @@ public sealed class BprOrderSourceClient : IOrderSourceClient
 
         try
         {
-            var token = await _client.AuthenticateAsync(ct);
+            var token = _client.OrderDocumentNeedsToken(url)
+                ? await _client.AuthenticateAsync(ct)
+                : string.Empty;
             var configuredLimit = _options?.Value?.MaxOrderPdfBytes;
             var limit = configuredLimit is > 0
                 ? Math.Min(maxBytes, configuredLimit.Value)

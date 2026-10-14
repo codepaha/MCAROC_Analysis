@@ -530,16 +530,49 @@ public sealed class LitigationCasePersistenceService(
                 continue;
             }
 
+            string? orderKey = null;
+            if (!string.IsNullOrWhiteSpace(order.PdfUrl) && !string.IsNullOrWhiteSpace(order.OrderDate) && !string.IsNullOrWhiteSpace(order.OrderType))
+            {
+                orderKey = MCAROC_Analysis.Services.LitigationModule.Orders.OrderKeyBuilder.ForBpr(order.PdfUrl, order.OrderDate, order.OrderType);
+            }
+            else
+            {
+                orderKey = $"{(order.PdfUrl ?? "").Trim()}|{(order.OrderDate ?? "").Trim()}|{(order.OrderType ?? "").Trim()}";
+            }
+
+            if (orderKey != null && orderKey.Length > 800)
+            {
+                orderKey = orderKey[..800];
+            }
+
             var newOrder = new LitigationCaseOrder
             {
-                Case = litigationCase, PdfUrl = order.PdfUrl, OrderDate = order.OrderDate, OrderType = order.OrderType, CreatedUtc = now
+                Case = litigationCase,
+                Source = "Bpr",
+                SourceLocator = System.Text.Json.JsonSerializer.Serialize(new MCAROC_Analysis.Services.LitigationModule.Sources.Orders.OrderSourceLocator(
+                    Source: "Bpr",
+                    PdfUrl: order.PdfUrl,
+                    OrderDate: order.OrderDate,
+                    OrderType: order.OrderType)),
+                OrderKey = orderKey,
+                Version = 1,
+                IsSuperseded = false,
+                PdfUrl = order.PdfUrl,
+                OrderDate = order.OrderDate,
+                OrderType = order.OrderType,
+                CreatedUtc = now
             };
             db.LitigationCaseOrders.Add(newOrder);
             added.Add(newOrder);
 
             var newDocument = new LitigationOrderDocument
             {
-                Order = newOrder, Status = LitigationOrderDocumentStatus.Pending, RetainedUntilUtc = retainedUntilUtc, CreatedUtc = now
+                Order = newOrder,
+                Version = 1,
+                IsSuperseded = false,
+                Status = LitigationOrderDocumentStatus.Pending,
+                RetainedUntilUtc = retainedUntilUtc,
+                CreatedUtc = now
             };
             db.LitigationOrderDocuments.Add(newDocument);
             added.Add(newDocument);
@@ -552,6 +585,14 @@ public sealed class LitigationCasePersistenceService(
 
     private static bool IsSameOrder(LitigationCaseOrder existing, BprLitigationOrder candidate)
     {
+        // 0. OrderKey match if both present
+        if (!string.IsNullOrWhiteSpace(existing.OrderKey) && !string.IsNullOrWhiteSpace(candidate.PdfUrl) && !string.IsNullOrWhiteSpace(candidate.OrderDate) && !string.IsNullOrWhiteSpace(candidate.OrderType))
+        {
+            var candidateKey = MCAROC_Analysis.Services.LitigationModule.Orders.OrderKeyBuilder.ForBpr(candidate.PdfUrl, candidate.OrderDate, candidate.OrderType);
+            if (string.Equals(existing.OrderKey, candidateKey, StringComparison.Ordinal))
+                return true;
+        }
+
         // 1. Exact match on (PdfUrl, OrderDate, OrderType)
         if (existing.PdfUrl == candidate.PdfUrl && existing.OrderDate == candidate.OrderDate && existing.OrderType == candidate.OrderType)
             return true;

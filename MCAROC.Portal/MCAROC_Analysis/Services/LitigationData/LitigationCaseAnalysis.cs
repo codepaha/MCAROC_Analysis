@@ -37,7 +37,7 @@ public static class LitigationCaseAnalysisInputBuilder
         string targetEntity, IReadOnlyCollection<string> targetNames, DateOnly asOf, IReadOnlySet<long>? onlyOrderIds = null,
         IReadOnlySet<long>? withoutTextOrderIds = null)
     {
-        var ordered = c.Orders.Where(o => onlyOrderIds is null || onlyOrderIds.Contains(o.LitigationCaseOrderId))
+        var ordered = c.Orders.Where(o => o.CollapsedIntoOrderId == null && !o.IsSuperseded && (onlyOrderIds is null || onlyOrderIds.Contains(o.LitigationCaseOrderId)))
             .OrderByDescending(o => LitigationCaseAges.ParseDate(o.OrderDate) ?? DateOnly.MinValue)
             .ThenByDescending(o => o.LitigationCaseOrderId).ToList();
         var budget = MaxCaseChars;

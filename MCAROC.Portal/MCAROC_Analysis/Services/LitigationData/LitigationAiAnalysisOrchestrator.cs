@@ -143,8 +143,9 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
 
     public static IQueryable<LitigationOrderChunk> LiveChunks(AppDbContext db, IQueryable<LitigationOrderChunk> chunks, long requestId) =>
         chunks.Where(x => x.RequestId == requestId
+            && !x.IsSuperseded
             && db.LitigationCases.Any(c => c.LitigationCaseId == x.LitigationCaseId && c.MergedIntoCaseId == null)
-            && !db.LitigationCaseOrders.Any(o => o.LitigationCaseOrderId == x.LitigationCaseOrderId && o.CollapsedIntoOrderId != null));
+            && !db.LitigationCaseOrders.Any(o => o.LitigationCaseOrderId == x.LitigationCaseOrderId && (o.CollapsedIntoOrderId != null || o.IsSuperseded)));
 
     public async Task<bool> IsUpToDateAsync(long requestId, CancellationToken ct) =>
         await db.LitigationCases.AsNoTracking().AnyAsync(x => x.RequestId == requestId && x.MergedIntoCaseId == null, ct) && !await NeedsAnalysisAsync(requestId, ct);

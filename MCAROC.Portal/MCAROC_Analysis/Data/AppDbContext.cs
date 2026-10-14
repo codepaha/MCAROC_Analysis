@@ -348,6 +348,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // Unique, not just indexed — same concurrent-import backstop reasoning as LitigationCase above.
             // A signed storage link: the longest in a real 837-order report was 489 characters, over the default 450.
             // 700 characters keeps the unique key below SQL Server's 1,700-byte index limit with a typical date and type.
+            e.Property(x => x.Source).HasMaxLength(50);
+            e.Property(x => x.SourceLocator).HasMaxLength(2000);
+            e.Property(x => x.OrderKey).HasMaxLength(800);
+            e.Property(x => x.ContentHash).HasMaxLength(64);
+            e.Property(x => x.Version).HasDefaultValue(1);
+            e.Property(x => x.IsSuperseded).HasDefaultValue(false);
+            e.HasIndex(x => new { x.LitigationCaseId, x.OrderKey, x.Version }).HasFilter("[OrderKey] IS NOT NULL");
             e.Property(x => x.PdfUrl).HasMaxLength(700);
             e.HasIndex(x => new { x.LitigationCaseId, x.PdfUrl, x.OrderDate, x.OrderType }).IsUnique();
             e.HasOne(x => x.Case).WithMany(c => c.Orders).HasForeignKey(x => x.LitigationCaseId).OnDelete(DeleteBehavior.Cascade);
@@ -396,14 +403,16 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<LitigationOrderDocument>(e =>
         {
             e.HasKey(x => x.LitigationOrderDocumentId);
-            // 1:1 with LitigationCaseOrder — unique, not just indexed, so EnsureDocumentAsync's create-if-
-            // missing is race-safe against a concurrent creator the same way EnsureSnapshotAsync's own unique
-            // index is (see LitigationCasePersistenceService's remarks).
-            e.HasIndex(x => x.LitigationCaseOrderId).IsUnique();
+            e.HasIndex(x => x.LitigationCaseOrderId);
+            e.HasIndex(x => new { x.LitigationCaseOrderId, x.Version }).IsUnique();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.LeaseOwner).HasMaxLength(100);
             e.Property(x => x.StoragePath).HasMaxLength(500);
             e.Property(x => x.FileHash).HasMaxLength(64);
+            e.Property(x => x.ContentHash).HasMaxLength(64);
+            e.Property(x => x.Version).HasDefaultValue(1);
+            e.Property(x => x.IsSuperseded).HasDefaultValue(false);
+            e.HasIndex(x => new { x.LitigationCaseOrderId, x.IsSuperseded });
             e.Property(x => x.ContentType).HasMaxLength(100);
             e.Property(x => x.FailureReason).HasMaxLength(1000);
             e.Property(x => x.TextExtractionStatus).HasConversion<string>().HasMaxLength(30);
@@ -431,6 +440,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasIndex(x => x.LitigationOrderDocumentId);
             e.HasIndex(x => x.LitigationCaseOrderId);
             e.HasIndex(x => new { x.RequestId, x.LitigationCaseId });
+            e.Property(x => x.IsSuperseded).HasDefaultValue(false);
+            e.HasIndex(x => new { x.RequestId, x.IsSuperseded });
             e.Property(x => x.CaseNumber).HasMaxLength(100);
             e.Property(x => x.Cnr).HasMaxLength(20);
             e.Property(x => x.Court).HasMaxLength(200);

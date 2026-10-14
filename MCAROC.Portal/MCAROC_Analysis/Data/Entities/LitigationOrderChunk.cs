@@ -31,6 +31,7 @@ public class LitigationOrderChunk
     public string? Court { get; set; }
     public string? OrderType { get; set; }
     public string? OrderDate { get; set; }
+    public bool IsSuperseded { get; set; }
 
     public int ChunkIndex { get; set; }
 

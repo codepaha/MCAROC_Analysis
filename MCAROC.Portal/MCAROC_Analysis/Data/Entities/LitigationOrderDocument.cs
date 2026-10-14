@@ -86,6 +86,9 @@ public sealed class LitigationOrderDocument
     public string? StoragePath { get; set; }
     public long? FileSizeBytes { get; set; }
     public string? FileHash { get; set; }
+    public string? ContentHash { get; set; }
+    public int Version { get; set; } = 1;
+    public bool IsSuperseded { get; set; }
     public string? ContentType { get; set; }
     public DateTime? DownloadedUtc { get; set; }
 

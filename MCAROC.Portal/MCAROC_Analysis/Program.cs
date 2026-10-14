@@ -189,6 +189,10 @@ builder.Services.AddHostedService<LitigationCasePersistenceWorker>();
 // #243 LIT-03 — all-orders retrieval, text retention, ZIP delivery. Reuses the already-registered
 // PdfTextExtractor/IStorageReservationManager (McaFilings pipeline) rather than standing up parallel infra.
 builder.Services.AddSingleton<LitigationOrderDocumentQueue>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.LitigationModule.Sources.Orders.IOrderSourceClient, MCAROC_Analysis.Services.LitigationModule.Sources.Orders.BprOrderSourceClient>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.LitigationModule.Sources.Orders.IOrderSourceClient, MCAROC_Analysis.Services.LitigationModule.Sources.Orders.DrtOrderSourceClient>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.LitigationModule.Sources.Orders.IOrderSourceClient, MCAROC_Analysis.Services.LitigationModule.Sources.Orders.ConsumerOrderSourceClient>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.LitigationModule.Orders.OrderIdentityBackfillService>();
 builder.Services.AddScoped<LitigationOrderDocumentService>();
 builder.Services.AddHostedService<LitigationOrderDocumentWorker>();
 // #244 LIT-04 — chunk/embed each order document's extracted text for the MCA ROC Copilot. Reuses the

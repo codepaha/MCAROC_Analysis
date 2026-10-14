@@ -87,6 +87,13 @@ public sealed class LitigationCaseOrder
     public long LitigationCaseId { get; set; }
     public LitigationCase? Case { get; set; }
 
+    public string? Source { get; set; }
+    public string? SourceLocator { get; set; }
+    public string? OrderKey { get; set; }
+    public string? ContentHash { get; set; }
+    public int Version { get; set; } = 1;
+    public bool IsSuperseded { get; set; }
+
     public string? PdfUrl { get; set; }
     public string? OrderDate { get; set; }
     public string? OrderType { get; set; }
