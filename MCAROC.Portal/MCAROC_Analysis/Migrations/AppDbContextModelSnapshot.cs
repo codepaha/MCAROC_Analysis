@@ -4570,6 +4570,12 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<DateTime?>("AiClassifiedUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<int>("AiClassifyAttempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("AiClassifyNextAttemptUtc")
+                        .HasColumnType("datetime2");
+
                     b.Property<string>("AiExtractionStatus")
                         .IsRequired()
                         .HasMaxLength(20)

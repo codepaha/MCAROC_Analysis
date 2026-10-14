@@ -38,6 +38,10 @@ public class McaFilingDocument
     public int ClassifierVersion { get; set; }
     /// <summary>When the AI fallback looked at this document (#499), whatever it answered; null = not tried. A failed call leaves it null, so it is tried again.</summary>
     public DateTime? AiClassifiedUtc { get; set; }
+    /// <summary>Failed AI fallback calls for this document; after <c>FilingAiClassifier.MaxAttempts</c> it is given up (marked tried).</summary>
+    public int AiClassifyAttempts { get; set; }
+    /// <summary>Not before this time is a failed AI fallback tried again, so a failing document never holds back the ones after it (review of #504).</summary>
+    public DateTime? AiClassifyNextAttemptUtc { get; set; }
 
     // Processing — ProcessingStatus is the single source of truth for pipeline stage.
     public FilingDocumentProcessingStatus ProcessingStatus { get; set; } = FilingDocumentProcessingStatus.Discovered;

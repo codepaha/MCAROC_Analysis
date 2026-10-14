@@ -66,12 +66,18 @@ public class FilingAiClassifierTests : IAsyncLifetime
 
     /// <summary>Answers every call; counts only the calls about this test's PDF (its text carries the token), since the shared test database can hold other
     /// tests' unplaced documents.</summary>
-    private sealed class ScriptedClient(LitigationAiCallResult answer, string token) : ILitigationAiAnalysisClient
+    private sealed class ScriptedClient(LitigationAiCallResult answer, string token, string? failFor = null) : ILitigationAiAnalysisClient
     {
         public int Calls { get; private set; }
+        public int FailedCalls { get; private set; }
         public Task<LitigationAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct, string? modelId = null)
         {
             Assert.StartsWith(FilingAiClassifier.PromptMarker, prompt);
+            if (failFor is not null && prompt.Contains(failFor))
+            {
+                FailedCalls++;
+                return Task.FromResult(new LitigationAiCallResult(false, "", "503 UNAVAILABLE"));
+            }
             if (prompt.Contains(token)) Calls++;
             return Task.FromResult(answer);
         }
@@ -167,12 +173,13 @@ public class FilingAiClassifierTests : IAsyncLifetime
         {
             var failing = new ScriptedClient(new LitigationAiCallResult(false, "", "503 UNAVAILABLE"), token);
             await DrainAsync(failing);
-            Assert.True(failing.Calls >= 1);
-            Assert.True(failing.Calls <= 10);                      // at most one call per pass, never one per copy
+            Assert.Equal(1, failing.Calls);                        // one call; its copy waits, and it is not retried at once
             await DrainAsync(null);
             await using var verify = Ctx();
             var d = await verify.McaFilingDocuments.AsNoTracking().SingleAsync(x => x.FilingDocumentId == a);
             Assert.Null(d.AiClassifiedUtc);                       // tried again on a later pass
+            Assert.Equal(1, d.AiClassifyAttempts);
+            Assert.True(d.AiClassifyNextAttemptUtc > DateTime.UtcNow);
             Assert.Equal("OuterFolderFallback", d.ClassificationMethod);
         }
         finally { File.Delete(path); }
@@ -207,6 +214,50 @@ public class FilingAiClassifierTests : IAsyncLifetime
             Assert.Equal(0, client.Calls);
             await using var verify = Ctx();
             Assert.Null((await verify.McaFilingDocuments.AsNoTracking().SingleAsync(d => d.FilingDocumentId == a)).AiClassifiedUtc);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task A_document_whose_call_keeps_failing_does_not_hold_back_the_documents_after_it()
+    {
+        // Review of #504: the first document fails every time; the one queued after it must still be typed.
+        var (failingDoc, _, failingPath, failingToken) = await SeedAsync();
+        var (laterDoc, _, laterPath, laterToken) = await SeedAsync();
+        try
+        {
+            var client = new ScriptedClient(ChargeCertificateAnswer, laterToken, failFor: failingToken);
+            await DrainAsync(client);
+
+            await using var verify = Ctx();
+            var later = await verify.McaFilingDocuments.AsNoTracking().SingleAsync(d => d.FilingDocumentId == laterDoc);
+            Assert.Equal("Certificate of Registration of Charge", later.FormType);
+            var failing = await verify.McaFilingDocuments.AsNoTracking().SingleAsync(d => d.FilingDocumentId == failingDoc);
+            Assert.Null(failing.AiClassifiedUtc);
+            Assert.True(failing.AiClassifyNextAttemptUtc > DateTime.UtcNow);   // scheduled, not retried in the same drain
+            Assert.Equal(1, client.FailedCalls);
+        }
+        finally { File.Delete(failingPath); File.Delete(laterPath); }
+    }
+
+    [Fact]
+    public async Task A_document_that_fails_every_attempt_is_given_up_and_costs_nothing_more()
+    {
+        var (a, b, path, token) = await SeedAsync();
+        try
+        {
+            await using (var db = Ctx())   // its last allowed attempt is due; its copy is given up the same way
+                await db.McaFilingDocuments.Where(d => d.FilingDocumentId == a || d.FilingDocumentId == b).ExecuteUpdateAsync(u => u
+                    .SetProperty(d => d.AiClassifyAttempts, FilingAiClassifier.MaxAttempts - 1)
+                    .SetProperty(d => d.AiClassifyNextAttemptUtc, DateTime.UtcNow.AddMinutes(-1)));
+            var client = new ScriptedClient(ChargeCertificateAnswer, token, failFor: token);
+            await DrainAsync(client);
+
+            await using var verify = Ctx();
+            var d = await verify.McaFilingDocuments.AsNoTracking().SingleAsync(x => x.FilingDocumentId == a);
+            Assert.NotNull(d.AiClassifiedUtc);                       // given up: never asked about again
+            Assert.Equal(FilingAiClassifier.MaxAttempts, d.AiClassifyAttempts);
+            Assert.Equal("OuterFolderFallback", d.ClassificationMethod);   // keeps its rule classification
         }
         finally { File.Delete(path); }
     }

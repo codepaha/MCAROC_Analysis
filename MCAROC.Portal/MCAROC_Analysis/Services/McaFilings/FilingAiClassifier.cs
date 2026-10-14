@@ -32,17 +32,25 @@ public sealed partial class FilingAiClassifier(AppDbContext db, IServiceProvider
 
     private static readonly string[] Unplaced = ["NoMatch", "OuterFolderFallback"];
 
+    /// <summary>After this many failed calls a document is given up (marked tried), so a document that always fails never costs more.</summary>
+    public const int MaxAttempts = 5;
+    /// <summary>The wait before the next attempt after the 1st, 2nd, 3rd and later failures.</summary>
+    internal static readonly TimeSpan[] RetryDelays = [TimeSpan.FromMinutes(10), TimeSpan.FromHours(1), TimeSpan.FromHours(6), TimeSpan.FromDays(1)];
+
     /// <summary>Classifies up to <paramref name="batchSize"/> unplaced documents, making at most what is left of <paramref name="maxCallsPerDay"/> calls (counted
     /// over the last 24 hours from the AI usage records). Returns how many were settled (tried, typed or not), how many got a type, and how many calls were
-    /// made. 0 settled means nothing more can be done now (none left, the day's calls used up, no AI client, or every call failed): stop until the next pass.
+    /// made. 0 settled means nothing more can be done now (none due, the day's calls used up, no AI client, or every call failed — failed ones are scheduled for later): stop until the next pass.
     /// <para>Cost (owner, 2026-10-14: no wasted calls): one call per distinct PDF ever — a copy reuses the first copy's answer, typed or not, whether
     /// stored earlier or in this same batch; nothing is sent for a page with almost no text; only the top of the page is sent.</para></summary>
     public async Task<(int Seen, int Typed, int Calls)> ClassifyBatchAsync(int batchSize, CancellationToken ct, int maxCallsPerDay = int.MaxValue)
     {
+        var now = DateTime.UtcNow;
+        // Only documents that are due: one whose call failed waits for its next attempt, so it never holds back the documents after it.
         var docs = await db.McaFilingDocuments
             .Where(d => d.AiClassifiedUtc == null && Unplaced.Contains(d.ClassificationMethod) && d.DuplicateOfDocumentId == null
-                && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed && d.ExtractedTextPath != null)
-            .OrderBy(d => d.FilingDocumentId).Take(batchSize)
+                && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed && d.ExtractedTextPath != null
+                && (d.AiClassifyNextAttemptUtc == null || d.AiClassifyNextAttemptUtc <= now))
+            .OrderBy(d => d.AiClassifyAttempts).ThenBy(d => d.FilingDocumentId).Take(batchSize)
             .Select(d => new { Doc = d, d.Filing!.OuterCategoryFolder })
             .ToListAsync(ct);
         if (docs.Count == 0) return (0, 0, 0);
@@ -85,9 +93,26 @@ public sealed partial class FilingAiClassifier(AppDbContext db, IServiceProvider
                 callsLeft--;
                 if (!call.Success)
                 {
-                    logger.LogWarning("Document type fallback for document {DocumentId} failed ({Reason}); tried again later", d.FilingDocumentId, call.FailureReason);
                     if (d.FileHash is { Length: > 0 } fh) failed.Add(fh);
-                    continue;   // not marked: tried again on a later pass
+                    d.AiClassifyAttempts++;
+                    if (d.AiClassifyAttempts >= MaxAttempts)
+                    {
+                        // Given up: marked tried, so it costs nothing more; it keeps its rule classification.
+                        logger.LogWarning("Document type fallback for document {DocumentId} failed {Attempts} times ({Reason}); given up", d.FilingDocumentId, d.AiClassifyAttempts, call.FailureReason);
+                        d.AiClassifiedUtc = DateTime.UtcNow;
+                        settled++;
+                    }
+                    else
+                    {
+                        var next = DateTime.UtcNow + RetryDelays[Math.Min(d.AiClassifyAttempts - 1, RetryDelays.Length - 1)];
+                        d.AiClassifyNextAttemptUtc = next;
+                        // Its copies (same PDF) wait with it: otherwise the next batch would call again for a copy.
+                        if (d.FileHash is { Length: > 0 } copyHash)
+                            await db.McaFilingDocuments.Where(o => o.FileHash == copyHash && o.FilingDocumentId != d.FilingDocumentId && o.AiClassifiedUtc == null)
+                                .ExecuteUpdateAsync(u => u.SetProperty(o => o.AiClassifyNextAttemptUtc, next), ct);
+                        logger.LogWarning("Document type fallback for document {DocumentId} failed ({Reason}); tried again after {Next}", d.FilingDocumentId, call.FailureReason, next);
+                    }
+                    continue;
                 }
                 result = Check(call.RawResponse, top);
             }
