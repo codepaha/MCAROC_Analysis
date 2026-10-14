@@ -10,8 +10,10 @@ using MCAROC_Analysis.Services.LitigationModule.Normalisation;
 using MCAROC_Analysis.Services.LitigationModule.Orders;
 using MCAROC_Analysis.Services.LitigationModule.Sources.Orders;
 using MCAROC_Analysis.Services.McaFilings;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -277,135 +279,140 @@ public class OrderIdentityPersistenceAndEquivalenceTests : IAsyncLifetime
     [Fact]
     public async Task Changed_content_under_same_identity_creates_new_version()
     {
-        await using var db = CreateContext();
-        var (_, caseRow) = await SeedCaseAsync(db, "S3");
-
-        var date = "2025-07-01";
-        var oldHash = OrderContentHasher.ComputeBytesHash(Encoding.UTF8.GetBytes("Original order text with preliminary directions"));
-        var newHash = OrderContentHasher.ComputeBytesHash(Encoding.UTF8.GetBytes("Corrected order text after review with modified directions"));
-
-        var order = new LitigationCaseOrder
+        var tempDir = Path.Combine(Path.GetTempPath(), "order-ver-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
         {
-            Case = caseRow,
-            Source = "Bpr",
-            OrderDate = date,
-            OrderType = "Order",
-            OrderKey = OrderKeyBuilder.ForBpr("https://bpr.example/order_v1.pdf", date, "Order"),
-            ContentHash = oldHash,
-            Version = 1,
-            IsSuperseded = false,
-            PdfUrl = "https://bpr.example/order_v1.pdf",
-            CreatedUtc = DateTime.UtcNow
-        };
-        db.LitigationCaseOrders.Add(order);
-        await db.SaveChangesAsync();
+            await using var db = CreateContext();
+            var (_, caseRow) = await SeedCaseAsync(db, "S3");
 
-        var docV1 = new LitigationOrderDocument
+            var date = "2025-07-01";
+            var textV1 = "Original order text with preliminary directions and orders";
+            var textV2 = "Corrected order text after review with modified directions and orders";
+            var oldHash = OrderContentHasher.ComputeHtmlTextHash(textV1);
+            var newHash = OrderContentHasher.ComputeHtmlTextHash(textV2);
+
+            var currentText = textV1;
+            var client = new TestOrderSourceClient
+            {
+                DownloadHandler = _ => OrderSourceDownloadResult.OrderText(currentText)
+            };
+
+            var order = new LitigationCaseOrder
+            {
+                Case = caseRow,
+                Source = "Test",
+                OrderDate = date,
+                OrderType = "Order",
+                OrderKey = $"https://example.com/order1|{date}|Order",
+                PdfUrl = "https://example.com/order1",
+                CreatedUtc = DateTime.UtcNow
+            };
+            db.LitigationCaseOrders.Add(order);
+            await db.SaveChangesAsync();
+
+            var doc = new LitigationOrderDocument
+            {
+                LitigationCaseOrderId = order.LitigationCaseOrderId,
+                Status = LitigationOrderDocumentStatus.Pending,
+                RetainedUntilUtc = DateTime.UtcNow.AddDays(7),
+                CreatedUtc = DateTime.UtcNow
+            };
+            db.LitigationOrderDocuments.Add(doc);
+            await db.SaveChangesAsync();
+
+            // 1. Initial download and publication of version 1 through the service
+            var service1 = CreateOrderDocService(db, client, tempDir);
+            await service1.DownloadAndExtractAsync(doc.LitigationOrderDocumentId, CancellationToken.None);
+
+            await using (var verifyV1 = CreateContext())
+            {
+                var v1Doc = await verifyV1.LitigationOrderDocuments.SingleAsync(d => d.LitigationOrderDocumentId == doc.LitigationOrderDocumentId);
+                Assert.Equal(LitigationOrderDocumentStatus.Downloaded, v1Doc.Status);
+                Assert.Equal(1, v1Doc.Version);
+                Assert.Equal(oldHash, v1Doc.ContentHash);
+                Assert.False(v1Doc.IsSuperseded);
+            }
+
+            // Seed a chunk associated with version 1
+            var chunkV1 = new LitigationOrderChunk
+            {
+                RequestId = caseRow.RequestId,
+                LitigationCaseId = caseRow.LitigationCaseId,
+                LitigationCaseOrderId = order.LitigationCaseOrderId,
+                LitigationOrderDocumentId = doc.LitigationOrderDocumentId,
+                ChunkIndex = 0,
+                ChunkText = "Original order text chunk",
+                IsSuperseded = false,
+                Embedding = new SqlVector<float>(new float[768]),
+                EmbeddingModel = "test",
+                EmbeddingDimensions = 768,
+                ChunkingVersion = "1.0",
+                CreatedDate = DateTime.UtcNow
+            };
+            db.LitigationOrderChunks.Add(chunkV1);
+            await db.SaveChangesAsync();
+
+            // 2. Source changes content: publication of version 2 through the service
+            currentText = textV2;
+            await using (var updateDb = CreateContext())
+            {
+                await updateDb.LitigationOrderDocuments
+                    .Where(d => d.LitigationOrderDocumentId == doc.LitigationOrderDocumentId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.Status, LitigationOrderDocumentStatus.Pending));
+            }
+
+            await using (var runDb = CreateContext())
+            {
+                var service2 = CreateOrderDocService(runDb, client, tempDir);
+                await service2.DownloadAndExtractAsync(doc.LitigationOrderDocumentId, CancellationToken.None);
+            }
+
+            // 3. Verify actual changed-content publication:
+            await using var verify = CreateContext();
+
+            // Original order updated to version 2
+            var reloadedOrder = await verify.LitigationCaseOrders.FindAsync(order.LitigationCaseOrderId);
+            Assert.NotNull(reloadedOrder);
+            Assert.Equal(2, reloadedOrder!.Version);
+            Assert.Equal(newHash, reloadedOrder.ContentHash);
+            Assert.False(reloadedOrder.IsSuperseded);
+
+            // Exactly 2 documents exist: version 2 active, version 1 archived and superseded
+            var allDocs = await verify.LitigationOrderDocuments
+                .Where(d => d.LitigationCaseOrderId == order.LitigationCaseOrderId)
+                .OrderBy(d => d.Version)
+                .ToListAsync();
+
+            Assert.Equal(2, allDocs.Count);
+
+            // Archived version 1
+            Assert.Equal(1, allDocs[0].Version);
+            Assert.True(allDocs[0].IsSuperseded);
+            Assert.Equal(oldHash, allDocs[0].ContentHash);
+            Assert.Equal(LitigationOrderDocumentStatus.Downloaded, allDocs[0].Status);
+
+            // Active version 2 (the original doc row updated in place)
+            Assert.Equal(2, allDocs[1].Version);
+            Assert.False(allDocs[1].IsSuperseded);
+            Assert.Equal(newHash, allDocs[1].ContentHash);
+            Assert.Equal(doc.LitigationOrderDocumentId, allDocs[1].LitigationOrderDocumentId);
+            Assert.Equal(LitigationOrderDocumentStatus.Downloaded, allDocs[1].Status);
+
+            // Chunk from version 1 was marked superseded
+            var reloadedChunk = await verify.LitigationOrderChunks.FindAsync(chunkV1.LitigationOrderChunkId);
+            Assert.NotNull(reloadedChunk);
+            Assert.True(reloadedChunk!.IsSuperseded);
+
+            // Document retriever filters out superseded chunk
+            var retriever = new LitigationDocumentRetriever(verify, ChatRetrievalOptions.Default);
+            var activeChunks = await retriever.GetLatestOrderChunksAsync(caseRow.RequestId, [caseRow.LitigationCaseId], 10, 10, CancellationToken.None);
+            Assert.Empty(activeChunks);
+        }
+        finally
         {
-            LitigationCaseOrderId = order.LitigationCaseOrderId,
-            Status = LitigationOrderDocumentStatus.Downloaded,
-            ContentHash = oldHash,
-            Version = 1,
-            IsSuperseded = false,
-            FileHash = oldHash,
-            ExtractedText = "Original order text with preliminary directions",
-            TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted,
-            RetainedUntilUtc = DateTime.UtcNow.AddDays(7),
-            CreatedUtc = DateTime.UtcNow
-        };
-        db.LitigationOrderDocuments.Add(docV1);
-        await db.SaveChangesAsync();
-
-        var chunkV1 = new LitigationOrderChunk
-        {
-            RequestId = caseRow.RequestId,
-            LitigationCaseId = caseRow.LitigationCaseId,
-            LitigationCaseOrderId = order.LitigationCaseOrderId,
-            LitigationOrderDocumentId = docV1.LitigationOrderDocumentId,
-            ChunkIndex = 0,
-            ChunkText = "Original order text chunk",
-            IsSuperseded = false,
-            Embedding = new SqlVector<float>(new float[768]),
-            EmbeddingModel = "test",
-            EmbeddingDimensions = 768,
-            ChunkingVersion = "1.0",
-            CreatedDate = DateTime.UtcNow
-        };
-        db.LitigationOrderChunks.Add(chunkV1);
-        await db.SaveChangesAsync();
-
-        // Simulate downloading a new version with changed content under the same order identity
-        var decision = OrderVersionRule.Evaluate(order.ContentHash, order.Version, newHash);
-        Assert.Equal(OrderVersionDecisionType.Superseded, decision.Decision);
-        Assert.Equal(2, decision.VersionNumber);
-        Assert.True(decision.PreviousMarkedSuperseded);
-
-        // Mark previous document and chunks superseded
-        await db.LitigationOrderDocuments
-            .Where(d => d.LitigationCaseOrderId == order.LitigationCaseOrderId)
-            .ExecuteUpdateAsync(s => s.SetProperty(d => d.IsSuperseded, true));
-
-        await db.LitigationOrderChunks
-            .Where(c => c.LitigationCaseOrderId == order.LitigationCaseOrderId)
-            .ExecuteUpdateAsync(s => s.SetProperty(c => c.IsSuperseded, true));
-
-        // Create new document version
-        var docV2 = new LitigationOrderDocument
-        {
-            LitigationCaseOrderId = order.LitigationCaseOrderId,
-            Status = LitigationOrderDocumentStatus.Downloaded,
-            ContentHash = newHash,
-            Version = decision.VersionNumber,
-            IsSuperseded = false,
-            FileHash = newHash,
-            ExtractedText = "Corrected order text after review with modified directions",
-            TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted,
-            RetainedUntilUtc = DateTime.UtcNow.AddDays(7),
-            CreatedUtc = DateTime.UtcNow
-        };
-        db.LitigationOrderDocuments.Add(docV2);
-
-        order.Version = decision.VersionNumber;
-        order.ContentHash = newHash;
-        await db.SaveChangesAsync();
-
-        var chunkV2 = new LitigationOrderChunk
-        {
-            RequestId = caseRow.RequestId,
-            LitigationCaseId = caseRow.LitigationCaseId,
-            LitigationCaseOrderId = order.LitigationCaseOrderId,
-            LitigationOrderDocumentId = docV2.LitigationOrderDocumentId,
-            ChunkIndex = 0,
-            ChunkText = "Corrected order text chunk",
-            IsSuperseded = false,
-            Embedding = new SqlVector<float>(new float[768]),
-            EmbeddingModel = "test",
-            EmbeddingDimensions = 768,
-            ChunkingVersion = "1.0",
-            CreatedDate = DateTime.UtcNow
-        };
-        db.LitigationOrderChunks.Add(chunkV2);
-        await db.SaveChangesAsync();
-
-        // Verify retrieval filters out superseded chunks
-        await using var verify = CreateContext();
-        var retriever = new LitigationDocumentRetriever(verify, ChatRetrievalOptions.Default);
-        var activeChunks = await retriever.GetLatestOrderChunksAsync(caseRow.RequestId, [caseRow.LitigationCaseId], 10, 10, CancellationToken.None);
-
-        Assert.Single(activeChunks);
-        Assert.Equal("Corrected order text chunk", activeChunks[0].ChunkText);
-        Assert.False(activeChunks[0].IsSuperseded);
-
-        var allDocs = await verify.LitigationOrderDocuments
-            .Where(d => d.LitigationCaseOrderId == order.LitigationCaseOrderId)
-            .OrderBy(d => d.Version)
-            .ToListAsync();
-
-        Assert.Equal(2, allDocs.Count);
-        Assert.True(allDocs[0].IsSuperseded); // Version 1 kept, marked superseded
-        Assert.Equal(1, allDocs[0].Version);
-        Assert.False(allDocs[1].IsSuperseded); // Version 2 active
-        Assert.Equal(2, allDocs[1].Version);
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
+        }
     }
 
     [Fact]
@@ -614,6 +621,131 @@ public class OrderIdentityPersistenceAndEquivalenceTests : IAsyncLifetime
             .ToListAsync();
 
         Assert.Empty(liveOrderChunks); // 0 extra live chunks from the collapsed order
+    }
+
+    [Fact]
+    public async Task Backfill_retains_unknown_documents_without_collapsing()
+    {
+        await using var db = CreateContext();
+        var (_, caseRow) = await SeedCaseAsync(db, "S6");
+
+        var date = "2025-09-01";
+
+        var order1 = new LitigationCaseOrder
+        {
+            Case = caseRow,
+            Source = "Bpr",
+            OrderDate = date,
+            OrderType = "Daily Order",
+            OrderKey = OrderKeyBuilder.ForBpr("https://vendor.example/u1.pdf", date, "Daily Order"),
+            PdfUrl = "https://vendor.example/u1.pdf",
+            CreatedUtc = DateTime.UtcNow
+        };
+
+        var order2 = new LitigationCaseOrder
+        {
+            Case = caseRow,
+            Source = "Bpr",
+            OrderDate = date,
+            OrderType = "Daily Order",
+            OrderKey = OrderKeyBuilder.ForBpr("https://vendor.example/u2.pdf", date, "Daily Order"),
+            PdfUrl = "https://vendor.example/u2.pdf",
+            CreatedUtc = DateTime.UtcNow
+        };
+
+        db.LitigationCaseOrders.AddRange(order1, order2);
+        await db.SaveChangesAsync();
+
+        // Downloaded documents that have NO extracted text, NO file hash, and NO file on disk
+        var doc1 = new LitigationOrderDocument
+        {
+            LitigationCaseOrderId = order1.LitigationCaseOrderId,
+            Status = LitigationOrderDocumentStatus.Downloaded,
+            ContentHash = null,
+            FileHash = null,
+            ExtractedText = null,
+            RetainedUntilUtc = DateTime.UtcNow.AddDays(7),
+            CreatedUtc = DateTime.UtcNow
+        };
+
+        var doc2 = new LitigationOrderDocument
+        {
+            LitigationCaseOrderId = order2.LitigationCaseOrderId,
+            Status = LitigationOrderDocumentStatus.Downloaded,
+            ContentHash = null,
+            FileHash = null,
+            ExtractedText = null,
+            RetainedUntilUtc = DateTime.UtcNow.AddDays(7),
+            CreatedUtc = DateTime.UtcNow
+        };
+
+        db.LitigationOrderDocuments.AddRange(doc1, doc2);
+        await db.SaveChangesAsync();
+
+        // Run backfill service
+        var backfill = new OrderIdentityBackfillService(db, NullLogger<OrderIdentityBackfillService>.Instance);
+        await backfill.BackfillAsync(caseRow.LitigationCaseId);
+
+        await using var verify = CreateContext();
+        var reloaded1 = await verify.LitigationCaseOrders.FindAsync(order1.LitigationCaseOrderId);
+        var reloaded2 = await verify.LitigationCaseOrders.FindAsync(order2.LitigationCaseOrderId);
+
+        Assert.NotNull(reloaded1);
+        Assert.NotNull(reloaded2);
+
+        // Neither order collapsed: content is unknown so both survive
+        Assert.Null(reloaded1!.CollapsedIntoOrderId);
+        Assert.False(reloaded1.IsSuperseded);
+        Assert.Null(reloaded1.ContentHash);
+
+        Assert.Null(reloaded2!.CollapsedIntoOrderId);
+        Assert.False(reloaded2.IsSuperseded);
+        Assert.Null(reloaded2.ContentHash);
+    }
+
+    private static LitigationOrderDocumentService CreateOrderDocService(
+        AppDbContext db,
+        IOrderSourceClient sourceClient,
+        string tempDir)
+    {
+        var reservations = new StorageReservationManager(db, Options.Create(new LargeArchiveUploadOptions()), NullLogger<StorageReservationManager>.Instance);
+        var extractor = new PdfTextExtractor(NullLogger<PdfTextExtractor>.Instance, tesseractExePath: @"C:\not-installed\tesseract.exe");
+        var opts = new BprLitigationOptions
+        {
+            BaseUrl = "https://bpr.example/",
+            Id = "app",
+            SecretKey = "secret",
+            OrderRetentionDays = 7,
+            MaxOrderPdfBytes = 50 * 1024 * 1024
+        };
+        return new LitigationOrderDocumentService(
+            db,
+            [sourceClient],
+            reservations,
+            extractor,
+            new LitigationOrderDocumentQueue(),
+            new LitigationOrderChunkingQueue(),
+            Options.Create(opts),
+            new FakeEnv(tempDir),
+            NullLogger<LitigationOrderDocumentService>.Instance);
+    }
+
+    private sealed class FakeEnv(string contentRoot) : IWebHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = "Test";
+        public string ApplicationName { get; set; } = "Tests";
+        public string WebRootPath { get; set; } = contentRoot;
+        public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
+        public string ContentRootPath { get; set; } = contentRoot;
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+    }
+
+    private sealed class TestOrderSourceClient : IOrderSourceClient
+    {
+        public Func<OrderSourceLocator, OrderSourceDownloadResult> DownloadHandler { get; set; } = _ => OrderSourceDownloadResult.Failed("Not configured");
+        public bool CanHandle(OrderSourceLocator locator) => true;
+        public Task<OrderSourceDownloadResult> DownloadAsync(OrderSourceLocator locator, long maxBytes = 20971520, CancellationToken ct = default) =>
+            Task.FromResult(DownloadHandler(locator));
     }
 }
 

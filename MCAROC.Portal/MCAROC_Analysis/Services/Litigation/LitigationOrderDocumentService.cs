@@ -254,44 +254,6 @@ public sealed class LitigationOrderDocumentService
             var currentVer = document.Version > 0 ? document.Version : (document.Order.Version > 0 ? document.Order.Version : 1);
             var versionDecision = OrderVersionRule.Evaluate(currentHash, currentVer, contentHash);
 
-            if (versionDecision.Decision == OrderVersionDecisionType.Superseded)
-            {
-                // Archive prior document if it was already Downloaded with prior content
-                if (document.ContentHash != null && !string.Equals(document.ContentHash, contentHash, StringComparison.OrdinalIgnoreCase))
-                {
-                    var archivedDoc = new LitigationOrderDocument
-                    {
-                        LitigationCaseOrderId = document.LitigationCaseOrderId,
-                        Status = document.Status,
-                        StoragePath = document.StoragePath,
-                        FileSizeBytes = document.FileSizeBytes,
-                        FileHash = document.FileHash,
-                        ContentType = document.ContentType,
-                        DownloadedUtc = document.DownloadedUtc,
-                        ExtractedText = document.ExtractedText,
-                        TextExtractionStatus = document.TextExtractionStatus,
-                        TextExtractionMethod = document.TextExtractionMethod,
-                        ExtractedUtc = document.ExtractedUtc,
-                        ContentHash = document.ContentHash,
-                        Version = document.Version,
-                        IsSuperseded = true,
-                        RetainedUntilUtc = document.RetainedUntilUtc,
-                        CreatedUtc = document.CreatedUtc,
-                    };
-                    db.LitigationOrderDocuments.Add(archivedDoc);
-                    await db.SaveChangesAsync(ct);
-                }
-
-                // Mark any other older documents and chunks for this order as superseded
-                await db.LitigationOrderDocuments
-                    .Where(d => d.LitigationCaseOrderId == document.LitigationCaseOrderId && d.LitigationOrderDocumentId != orderDocumentId)
-                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.IsSuperseded, true), ct);
-
-                await db.LitigationOrderChunks
-                    .Where(c => c.LitigationCaseOrderId == document.LitigationCaseOrderId)
-                    .ExecuteUpdateAsync(s => s.SetProperty(c => c.IsSuperseded, true), ct);
-            }
-
             // The publish itself: guarded by this attempt's own lease token still being current AND
             // unexpired — never a plain SaveChangesAsync on the tracked entity. 0 rows means a takeover (or
             // simple lease timeout) has already superseded this attempt; its file must never become the
@@ -299,6 +261,9 @@ public sealed class LitigationOrderDocumentService
             // The publish and the request's live-data version move in ONE transaction: the text is stored only together with the bump, so a stop between them cannot leave the
             // caches on the old version (a retry would find the text already stored and not bump again).
             await using var publication = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+
+            // 1. Update the current document row FIRST. Moving this row from currentVer to versionDecision.VersionNumber
+            // frees the unique (LitigationCaseOrderId, Version) index slot so an archived copy at currentVer can be inserted.
             var claimed = await LeaseGuarded(orderDocumentId, myLeaseToken).ExecuteUpdateAsync(s => s
                 .SetProperty(d => d.Status, LitigationOrderDocumentStatus.Downloaded)
                 .SetProperty(d => d.StoragePath, myPath)
@@ -321,6 +286,53 @@ public sealed class LitigationOrderDocumentService
                     "Litigation order document {Id} lost its lease before its download could be published — discarding this attempt's own file.",
                     orderDocumentId);
                 return;   // the transaction is rolled back on dispose; nothing was stored
+            }
+
+            // 2. If content changed under the same identity, archive the prior version and supersede earlier chunks
+            if (versionDecision.Decision == OrderVersionDecisionType.Superseded)
+            {
+                // Archive prior document if it was already Downloaded with prior content
+                if (document.ContentHash != null && !string.Equals(document.ContentHash, contentHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    var archivedDoc = new LitigationOrderDocument
+                    {
+                        LitigationCaseOrderId = document.LitigationCaseOrderId,
+                        Status = LitigationOrderDocumentStatus.Downloaded,
+                        StoragePath = document.StoragePath,
+                        FileSizeBytes = document.FileSizeBytes,
+                        FileHash = document.FileHash,
+                        ContentType = document.ContentType,
+                        DownloadedUtc = document.DownloadedUtc,
+                        ExtractedText = document.ExtractedText,
+                        TextExtractionStatus = document.TextExtractionStatus,
+                        TextExtractionMethod = document.TextExtractionMethod,
+                        ExtractedUtc = document.ExtractedUtc,
+                        ContentHash = document.ContentHash,
+                        Version = currentVer,
+                        IsSuperseded = true,
+                        RetainedUntilUtc = document.RetainedUntilUtc,
+                        CreatedUtc = document.CreatedUtc,
+                    };
+
+                    // Detach document to ensure SaveChangesAsync only saves archivedDoc and doesn't issue phantom updates
+                    db.Entry(document).State = EntityState.Detached;
+                    if (document.Order is not null)
+                    {
+                        db.Entry(document.Order).State = EntityState.Detached;
+                    }
+
+                    db.LitigationOrderDocuments.Add(archivedDoc);
+                    await db.SaveChangesAsync(ct);
+                }
+
+                // Mark any other older documents and chunks for this order as superseded
+                await db.LitigationOrderDocuments
+                    .Where(d => d.LitigationCaseOrderId == document.LitigationCaseOrderId && d.LitigationOrderDocumentId != orderDocumentId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.IsSuperseded, true), ct);
+
+                await db.LitigationOrderChunks
+                    .Where(c => c.LitigationCaseOrderId == document.LitigationCaseOrderId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(c => c.IsSuperseded, true), ct);
             }
 
             // Sync version and content hash back to LitigationCaseOrder
