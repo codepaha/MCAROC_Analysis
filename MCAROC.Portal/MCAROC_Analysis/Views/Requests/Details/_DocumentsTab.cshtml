@@ -147,6 +147,11 @@
                     {
                         <div class="pi-metric"><span>@(kv.Key == FilingCategory.Unclassified ? "Other" : kv.Key.ToString())</span><strong>@kv.Value</strong><small>document(s)</small></div>
                     }
+                    @{ var filedTotal = Model.FilingCategoryCounts.Values.Sum(); }
+                    <div class="pi-metric" data-metric="document-types" title="Documents whose specific type is identified; the others can be found by name but not by type.">
+                        <span>Document type identified</span><strong>@Model.FilingTypedCount / @filedTotal</strong>
+                        <small>@(filedTotal - Model.FilingTypedCount) not yet identified</small>
+                    </div>
                     <div class="pi-metric"><span>AI extraction</span><strong>@Model.AiSuccessCount / @(Model.AiSuccessCount + Model.AiFailedCount)</strong><small>filing(s) succeeded</small></div>
                     <div class="pi-metric">
                         <span>Search Index</span>

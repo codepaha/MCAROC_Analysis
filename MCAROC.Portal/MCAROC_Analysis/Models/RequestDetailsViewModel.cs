@@ -120,6 +120,8 @@ public class RequestDetailsViewModel
     /// <summary>Projected IDs for validating chat citations without materializing filing bodies.</summary>
     public HashSet<long>? AuthoritativeDocumentIds { get; set; }
     public Dictionary<FilingCategory, int> FilingCategoryCounts { get; set; } = [];
+    /// <summary>#499: filed documents whose specific type is known (a chat request for a document type finds only these).</summary>
+    public int FilingTypedCount { get; set; }
     public Dictionary<TextExtractionMethod, int> TextExtractionMethodCounts { get; set; } = [];
     public int AiSuccessCount { get; set; }
     public int AiFailedCount { get; set; }

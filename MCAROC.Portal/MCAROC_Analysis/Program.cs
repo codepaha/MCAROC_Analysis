@@ -409,6 +409,7 @@ builder.Services.AddSingleton<MCAROC_Analysis.Services.PropertyParticulars.Charg
 builder.Services.AddHostedService<FullTextSearchStartupCheck>();
 builder.Services.AddScoped<RetrievalContextBuilder>();
 builder.Services.AddScoped<ChatService>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.Chat.DocumentFinder>();   // #499: document requests answered from the index
 
 // Phase 7 — client "Due Diligence Dossier" (assembled model shared by the PDF and the portal).
 builder.Services.AddMemoryCache(o => o.SizeLimit = 256);

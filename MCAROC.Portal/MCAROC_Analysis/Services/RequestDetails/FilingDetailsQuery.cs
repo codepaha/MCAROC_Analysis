@@ -20,6 +20,7 @@ public sealed class FilingDetailsQuery(AppDbContext db)
             .GroupBy(d => new { d.Category, d.TextExtractionMethod })
             .Select(g => new { g.Key.Category, g.Key.TextExtractionMethod, Count = g.Count(),
                 Manual = g.Count(d => d.ManualReviewRequired),
+                Typed = g.Count(d => d.FormType != null),
                 Chunkable = g.Count(d => d.ProcessingStatus == FilingDocumentProcessingStatus.Completed),
                 Chunked = g.Count(d => d.ProcessingStatus == FilingDocumentProcessingStatus.Completed && d.ChunkingStatus == ChunkingStatus.Chunked),
                 Failed = g.Count(d => d.ProcessingStatus == FilingDocumentProcessingStatus.Completed && d.ChunkingStatus == ChunkingStatus.Failed) })
@@ -29,6 +30,7 @@ public sealed class FilingDetailsQuery(AppDbContext db)
             vm.FilingCategoryCounts[group.Category] = vm.FilingCategoryCounts.GetValueOrDefault(group.Category) + group.Count;
             vm.TextExtractionMethodCounts[group.TextExtractionMethod] = vm.TextExtractionMethodCounts.GetValueOrDefault(group.TextExtractionMethod) + group.Count;
             vm.ManualReviewFilingCount += group.Manual;
+            vm.FilingTypedCount += group.Typed;
             vm.AuthoritativeBatchChunkableCount += group.Chunkable;
             vm.AuthoritativeBatchChunkedCount += group.Chunked;
             vm.AuthoritativeBatchChunkingFailedCount += group.Failed;
