@@ -112,6 +112,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<CalculationArtifactHold> CalculationArtifactHolds => Set<CalculationArtifactHold>();
     public DbSet<CalculationAiAuditRun> CalculationAiAuditRuns => Set<CalculationAiAuditRun>();
     public DbSet<AiUsageRecord> AiUsageRecords => Set<AiUsageRecord>();
+    public DbSet<ChatQuestionGroup> ChatQuestionGroups => Set<ChatQuestionGroup>();
+    public DbSet<ChatQuestionEntry> ChatQuestionEntries => Set<ChatQuestionEntry>();
     public DbSet<LitigationNameSpelling> LitigationNameSpellings => Set<LitigationNameSpelling>();
     public DbSet<LitigationPartyVerdict> LitigationPartyVerdicts => Set<LitigationPartyVerdict>();
     public DbSet<CalculationAssuranceOverrideAudit> CalculationAssuranceOverrideAudits => Set<CalculationAssuranceOverrideAudit>();
@@ -1154,6 +1156,24 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.PromptVersion).HasMaxLength(40);
             e.Property(x => x.Model).HasMaxLength(100);
             e.HasIndex(x => new { x.NameKey, x.Language, x.PromptVersion }).IsUnique();
+        });
+
+        modelBuilder.Entity<ChatQuestionGroup>(e =>
+        {
+            e.HasKey(x => x.ChatQuestionGroupId);
+            e.Property(x => x.CanonicalQuestion).HasMaxLength(1000);
+            e.Property(x => x.Centroid).HasColumnType("vector(768)");
+            e.HasIndex(x => x.AskedCount);
+        });
+
+        modelBuilder.Entity<ChatQuestionEntry>(e =>
+        {
+            e.HasKey(x => x.ChatQuestionEntryId);
+            e.Property(x => x.MaskedText).HasMaxLength(1000);
+            e.Property(x => x.Embedding).HasColumnType("vector(768)");
+            e.HasIndex(x => x.ChatMessageId).IsUnique();
+            e.HasIndex(x => new { x.ChatQuestionGroupId, x.ClientId });
+            e.HasOne(x => x.Group).WithMany(g => g.Entries).HasForeignKey(x => x.ChatQuestionGroupId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<AiUsageRecord>(e =>

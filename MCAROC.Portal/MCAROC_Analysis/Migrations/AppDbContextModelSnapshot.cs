@@ -1337,6 +1337,97 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("ChatMessages");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChatQuestionEntry", b =>
+                {
+                    b.Property<long>("ChatQuestionEntryId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ChatQuestionEntryId"));
+
+                    b.Property<bool>("AnsweredFromIndex")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("AnsweredWithEvidence")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("AskedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("ChatMessageId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("ChatQuestionGroupId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("ClientId")
+                        .HasColumnType("bigint");
+
+                    b.Property<SqlVector<float>>("Embedding")
+                        .HasColumnType("vector(768)");
+
+                    b.Property<string>("MaskedText")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime>("ProcessedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ChatQuestionEntryId");
+
+                    b.HasIndex("ChatMessageId")
+                        .IsUnique();
+
+                    b.HasIndex("ChatQuestionGroupId", "ClientId");
+
+                    b.ToTable("ChatQuestionEntries");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChatQuestionGroup", b =>
+                {
+                    b.Property<long>("ChatQuestionGroupId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ChatQuestionGroupId"));
+
+                    b.Property<int>("AnsweredFromIndexCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("AnsweredWithEvidenceCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("AskedCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("CanonicalQuestion")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<SqlVector<float>>("Centroid")
+                        .HasColumnType("vector(768)");
+
+                    b.Property<int>("ClientCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("FirstAskedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("LastAskedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("ChatQuestionGroupId");
+
+                    b.HasIndex("AskedCount");
+
+                    b.ToTable("ChatQuestionGroups");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChatSession", b =>
                 {
                     b.Property<long>("ChatSessionId")
@@ -7722,6 +7813,17 @@ namespace MCAROC_Analysis.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChatQuestionEntry", b =>
+                {
+                    b.HasOne("MCAROC_Analysis.Data.Entities.ChatQuestionGroup", "Group")
+                        .WithMany("Entries")
+                        .HasForeignKey("ChatQuestionGroupId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Group");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChatSession", b =>
                 {
                     b.HasOne("MCAROC_Analysis.Data.Entities.McaRequest", null)
@@ -8206,6 +8308,11 @@ namespace MCAROC_Analysis.Migrations
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.Analyst", b =>
                 {
                     b.Navigation("Assignments");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChatQuestionGroup", b =>
+                {
+                    b.Navigation("Entries");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.ChatSession", b =>
