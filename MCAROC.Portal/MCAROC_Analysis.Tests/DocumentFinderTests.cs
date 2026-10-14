@@ -30,6 +30,9 @@ public class DocumentFinderTests : IAsyncLifetime
     [InlineData("What does the MoA say about borrowing powers?")]                     // about its content: the usual retrieval answers
     [InlineData("When was the charge with SBI satisfied?")]
     [InlineData("Show me the litigation summary")]                                    // asks for something, but no document type
+    [InlineData("Show me what the charge registration certificate says about the interest rate")]   // asks about content (review of #506)
+    [InlineData("Give me the amount in the latest charge certificate")]
+    [InlineData("Show the details of the board resolution on borrowing")]
     public void Other_questions_are_not_document_requests(string question) => Assert.Null(DocumentFinder.Parse(question));
 
     [Fact]
@@ -77,7 +80,10 @@ public class DocumentFinderTests : IAsyncLifetime
         };
         var older = Doc("Certificate of Registration of Charge-12032015.pdf", "Certificate of Registration of Charge");
         var newer = Doc("Certificate of Registration of Charge-25102019.pdf", "Certificate of Registration of Charge");
-        db.McaFilingDocuments.AddRange(older, newer, Doc("Form 8-180314.pdf", "Form 8"), Doc("Optional Attachment-(1).pdf", null));
+        var folderOnly = Doc("Optional Attachment-(2).pdf", null);
+        folderOnly.Category = FilingCategory.Charge;           // placed by its folder: a category, but no type
+        folderOnly.ClassificationMethod = "OuterFolderFallback";
+        db.McaFilingDocuments.AddRange(older, newer, Doc("Form 8-180314.pdf", "Form 8"), Doc("Optional Attachment-(1).pdf", null), folderOnly);
         await db.SaveChangesAsync();
         return (request.RequestId, older.FilingDocumentId, newer.FilingDocumentId);
     }
@@ -107,7 +113,7 @@ public class DocumentFinderTests : IAsyncLifetime
         Assert.NotNull(answer);
         Assert.Empty(answer!.CitedSources);
         Assert.Contains("contain no certificate of incorporation on change of name", answer.Answer);
-        Assert.Contains("1 document(s)", answer.Answer);   // the unclassified attachment
+        Assert.Contains("2 document(s)", answer.Answer);   // the unclassified attachment and the folder-only one (review of #506)
     }
 
     [Fact]

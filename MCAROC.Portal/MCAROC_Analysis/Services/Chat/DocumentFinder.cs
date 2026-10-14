@@ -61,6 +61,8 @@ public sealed partial class DocumentFinder(AppDbContext db)
     {
         var q = question.ToLowerInvariant();
         if (!AsksForDocument().IsMatch(q)) return null;
+        // "Show me what the charge certificate says about the interest rate" asks about its content: the usual retrieval answers that (review of #506).
+        if (AsksAboutContent().IsMatch(q)) return null;
         foreach (var (phrase, formTypes, label) in Synonyms)
             if (phrase.IsMatch(q))
             {
@@ -91,8 +93,9 @@ public sealed partial class DocumentFinder(AppDbContext db)
 
         if (found.Count == 0)
         {
+            // Every document without a specific type, folder-only ones included (they have a category but no type): any of them may be it (review of #506).
             var unclassified = await db.McaFilingDocuments.AsNoTracking()
-                .CountAsync(d => d.BatchId == batch.BatchId && d.DuplicateOfDocumentId == null && d.RetiredUtc == null && d.Category == FilingCategory.Unclassified, ct);
+                .CountAsync(d => d.BatchId == batch.BatchId && d.DuplicateOfDocumentId == null && d.RetiredUtc == null && d.FormType == null, ct);
             var text = $"The company's MCA filings contain no {asked.Asked}{(asked.Year is { } y ? $" from {y}" : "")}."
                 + (unclassified > 0 ? $" ({unclassified} document(s) in the filings could not be identified by type; one of them may be it.)" : "");
             return new ChatCompletionResult(text, false, []);
@@ -124,6 +127,10 @@ public sealed partial class DocumentFinder(AppDbContext db)
 
     [GeneratedRegex(@"\b(show|give|send|fetch|get|download|open|share|provide|attach|display|pull up|find|list|where (is|are|can i find)|copy of|copies of|i need|i want|need the|need a)\b", RegexOptions.CultureInvariant)]
     private static partial Regex AsksForDocument();
+
+    /// <summary>Words that make a question about what a document says rather than a request for the document itself.</summary>
+    [GeneratedRegex(@"\b(what|which|how|why|when|who|whom|whose|says?|said|saying|mentions?|mentioned|about|states?|stated|stating|explain|summar\w*|terms?|amounts?|rates?|clauses?|details?|contents?|according)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex AsksAboutContent();
 
     [GeneratedRegex(@"\b(19[5-9]\d|20\d{2})\b", RegexOptions.CultureInvariant)]
     private static partial Regex Year();
