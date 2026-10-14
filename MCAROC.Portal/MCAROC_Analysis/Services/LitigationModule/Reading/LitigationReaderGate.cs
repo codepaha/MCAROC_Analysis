@@ -23,6 +23,12 @@ public sealed class LitigationReaderOptions
 
     /// <summary>The charge-to-case comparison: which cases the charges are compared against.</summary>
     public LitigationReaderMode ChargeLinks { get; set; } = LitigationReaderMode.Legacy;
+
+    /// <summary>The SBI pre-login workspace (Tab 2): whether the workspace cases are read from the module scope.</summary>
+    public LitigationReaderMode PreLoginWorkspace { get; set; } = LitigationReaderMode.Legacy;
+
+    /// <summary>The SBI pre-login report generation: whether report cases and overlays are read from the module scope.</summary>
+    public LitigationReaderMode PreLoginReport { get; set; } = LitigationReaderMode.Legacy;
 }
 
 /// <summary>Which definition of "the request's cases" a read uses once the gate has decided.</summary>
@@ -53,6 +59,34 @@ public sealed class LitigationReaderGate(AppDbContext db, IOptions<LitigationRea
     public Task<CaseSetSource> ResolveChargeLinksAsync(long requestId, CancellationToken ct) => ResolveAsync("charge links", options.Value.ChargeLinks, requestId, ct);
 
     public Task<CaseSetSource> ResolveCasePageAsync(long requestId, CancellationToken ct) => ResolveAsync("case page", options.Value.CasePage, requestId, ct);
+
+    public Task<CaseSetSource> ResolvePreLoginWorkspaceAsync(long jobId, CancellationToken ct) => ResolvePreLoginAsync("pre-login workspace", options.Value.PreLoginWorkspace, jobId, ct);
+
+    public Task<CaseSetSource> ResolvePreLoginReportAsync(long jobId, CancellationToken ct) => ResolvePreLoginAsync("pre-login report", options.Value.PreLoginReport, jobId, ct);
+
+    private async Task<CaseSetSource> ResolvePreLoginAsync(string consumer, LitigationReaderMode mode, long jobId, CancellationToken ct)
+    {
+        if (mode == LitigationReaderMode.Legacy) return CaseSetSource.Legacy;
+
+        var scopeExists = await db.Set<Store.ModuleScope>().AsNoTracking()
+            .AnyAsync(s => s.Kind == Store.ModuleScopeKind.Assignment && s.ExternalId == jobId, ct);
+        if (!scopeExists)
+        {
+            logger?.LogWarning("Litigation {Consumer} for pre-login job {JobId} is served from legacy: module scope does not exist.", consumer, jobId);
+            return CaseSetSource.Legacy;
+        }
+
+        if (mode == LitigationReaderMode.Module) return CaseSetSource.Module;
+
+        var parity = await PreLogin.PreLoginModuleParity.CheckAsync(db, jobId, ct);
+        if (!parity.IsClean)
+        {
+            logger?.LogWarning("Litigation {Consumer} shadow discrepancy for pre-login job {JobId}: {Discrepancies}",
+                consumer, jobId, string.Join("; ", parity.Discrepancies));
+        }
+
+        return CaseSetSource.Legacy;
+    }
 
     private async Task<CaseSetSource> ResolveAsync(string consumer, LitigationReaderMode mode, long requestId, CancellationToken ct)
     {

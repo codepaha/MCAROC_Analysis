@@ -71,6 +71,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<PreLoginReportJob> PreLoginReportJobs => Set<PreLoginReportJob>();
     public DbSet<PreLoginLitigationTarget> PreLoginLitigationTargets => Set<PreLoginLitigationTarget>();
     public DbSet<PreLoginLitigationReconciliationEvent> PreLoginLitigationReconciliationEvents => Set<PreLoginLitigationReconciliationEvent>();
+    public DbSet<PreLoginAttributionDecision> PreLoginAttributionDecisions => Set<PreLoginAttributionDecision>();
     public DbSet<AutoFetchJob> AutoFetchJobs => Set<AutoFetchJob>();
 
     // Pipeline automation (epic #262)
@@ -192,6 +193,20 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.PreviousStatus).HasMaxLength(30);
             e.Property(x => x.PreviousVendorJobId).HasMaxLength(100);
             e.Property(x => x.SuppliedVendorJobId).HasMaxLength(100);
+        });
+
+        modelBuilder.Entity<PreLoginAttributionDecision>(e =>
+        {
+            e.HasKey(x => x.PreLoginAttributionDecisionId);
+            e.HasIndex(x => new { x.PreLoginReportJobId, x.CaseRowId });
+            e.HasIndex(x => new { x.ScopeCaseId, x.DecidedUtc });
+            e.HasIndex(x => new { x.TargetId, x.Action });
+            e.Property(x => x.CaseRowId).HasMaxLength(64);
+            e.Property(x => x.TargetKind).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.PartyName).HasMaxLength(500);
+            e.Property(x => x.ReasonKind).HasMaxLength(64);
+            e.Property(x => x.Action).HasConversion<string>().HasMaxLength(32);
+            e.Property(x => x.DecidedBy).HasMaxLength(128);
         });
 
         modelBuilder.Entity<AutoFetchJob>(e =>

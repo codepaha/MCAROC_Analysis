@@ -5320,6 +5320,66 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("PipelineStageStates");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.PreLoginAttributionDecision", b =>
+                {
+                    b.Property<long>("PreLoginAttributionDecisionId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("PreLoginAttributionDecisionId"));
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("CaseRowId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("DecidedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime>("DecidedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("PartyName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<long>("PreLoginReportJobId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ReasonKind")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("ScopeCaseId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("TargetId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("TargetKind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("PreLoginAttributionDecisionId");
+
+                    b.HasIndex("PreLoginReportJobId", "CaseRowId");
+
+                    b.HasIndex("ScopeCaseId", "DecidedUtc");
+
+                    b.HasIndex("TargetId", "Action");
+
+                    b.ToTable("PreLoginAttributionDecisions");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.PreLoginLitigationReconciliationEvent", b =>
                 {
                     b.Property<long>("PreLoginLitigationReconciliationEventId")
@@ -7342,6 +7402,22 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<string>("AnalystNote")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("AttributionOutcome")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("AttributionParty")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("AttributionReason")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("AttributionRule")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
                     b.Property<long>("CaseId")
                         .HasColumnType("bigint");
 
@@ -7373,12 +7449,17 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<long>("ScopeId")
                         .HasColumnType("bigint");
 
+                    b.Property<long?>("TargetId")
+                        .HasColumnType("bigint");
+
                     b.Property<DateTime?>("UpdatedUtc")
                         .HasColumnType("datetime2");
 
                     b.HasKey("ScopeCaseId");
 
                     b.HasIndex("CaseId");
+
+                    b.HasIndex("TargetId");
 
                     b.HasIndex("ScopeId", "Alias")
                         .IsUnique();

@@ -155,12 +155,13 @@ public class LitigationModuleReaderTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task An_assignment_scope_is_not_served_yet() =>
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
-        {
-            await using var db = Ctx();
-            await new LitigationModuleReader(db).GetCasesAsync(new ScopeRef(ModuleScopeKind.Assignment, 1), new CaseFilter(), new PageRequest(), default);
-        });
+    public async Task An_assignment_scope_is_served()
+    {
+        await using var db = Ctx();
+        var page = await new LitigationModuleReader(db).GetCasesAsync(new ScopeRef(ModuleScopeKind.Assignment, 999999), new CaseFilter(), new PageRequest(), default);
+        Assert.NotNull(page);
+        Assert.Empty(page.Items);
+    }
 
     [Fact]
     public async Task Parity_explains_exactly_the_cases_the_latest_feed_dropped()
