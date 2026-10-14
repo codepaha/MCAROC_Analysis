@@ -124,6 +124,12 @@ public static partial class FilingClassifier
         R("articles of association", @"articles of association", FilingCategory.Constitutional, "AoA"),
     ];
 
+    /// <summary>Every document type the rules can give, with its category: the closed list the AI fallback must choose from (#499), so a type it gives
+    /// is always one the rules know, and its category comes from here, never from the AI.</summary>
+    public static IReadOnlyDictionary<string, FilingCategory> KnownTypes { get; } =
+        FilenameRules.Concat(TextHeaderRules).Concat(CharterTitleRules)
+            .GroupBy(r => r.FormType, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First().Category, StringComparer.Ordinal);
+
     public static ClassificationResult Classify(string outerCategoryFolder, string sourceFolder, string originalFileName, string? firstPageText)
     {
         var name = NormaliseName(originalFileName);

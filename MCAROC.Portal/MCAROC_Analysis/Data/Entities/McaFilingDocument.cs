@@ -36,6 +36,8 @@ public class McaFilingDocument
     public string? MatchedRule { get; set; }
     /// <summary>The <c>FilingClassifier.Version</c> that set the classification above; an older one is classified again by <c>FilingReclassifier</c> (#499).</summary>
     public int ClassifierVersion { get; set; }
+    /// <summary>When the AI fallback looked at this document (#499), whatever it answered; null = not tried. A failed call leaves it null, so it is tried again.</summary>
+    public DateTime? AiClassifiedUtc { get; set; }
 
     // Processing — ProcessingStatus is the single source of truth for pipeline stage.
     public FilingDocumentProcessingStatus ProcessingStatus { get; set; } = FilingDocumentProcessingStatus.Discovered;

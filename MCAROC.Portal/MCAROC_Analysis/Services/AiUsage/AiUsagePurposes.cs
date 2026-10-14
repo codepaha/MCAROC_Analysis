@@ -19,4 +19,5 @@ public static class AiUsagePurposes
     public const string GroundedSearch = "GroundedSearch";
     public const string KeywordSuggestion = "LitigationKeywordSuggestion";
     public const string LitigationAttribution = "LitigationAttribution";
+    public const string DocumentClassification = "DocumentClassification";
 }
