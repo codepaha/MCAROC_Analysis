@@ -64,6 +64,10 @@ public sealed class RequestDetailsQuery(AppDbContext db, DossierCache dossierCac
                 .ToListAsync(ct);
         }
 
+        // A suggestion that cannot be built must never take the page down: no suggestions then.
+        try { vm.ChatSuggestions = await new MCAROC_Analysis.Services.Chat.ChatSuggestions(db).BuildAsync(id, vm.Request.LatestCompletedIngestionRunId, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { vm.ChatSuggestions = []; }
+
         await new LitigationDetailsQuery(db, bprOptions, litigationAnalysis, orderOutcomes, readerGate, courtRefreshStatus)
             .LoadAsync(vm, court, status, page, outcome, focusCase, ct, search, pageSize, compactLitigation);
 

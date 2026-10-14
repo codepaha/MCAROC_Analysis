@@ -1,14 +1,8 @@
 @model RequestDetailsViewModel
 @{
     var r = Model.Request;
-    var chatSuggestions = new[]
-    {
-        "Who are the current directors?",
-        "Which directors have resigned?",
-        "List all open charges.",
-        "Are there any delayed EPFO payments?",
-        "What is the company's main object per the MoA?"
-    };
+    // #499: built from what this request holds, so a suggestion is always answerable.
+    var chatSuggestions = Model.ChatSuggestions;
 
     var authoritativeBatchId = Model.FilingBatch?.BatchId;
     var validDocIds = Model.AuthoritativeDocumentIds ?? (authoritativeBatchId is null
@@ -203,12 +197,15 @@
     </div>
 
     <div class="mca-chat-footer">
+        @if (chatSuggestions.Count > 0)
+        {
         <div class="mca-chat-suggestions" id="mcaChatSuggestions">
             @foreach (var s in chatSuggestions)
             {
                 <button type="button" class="btn btn-sm btn-outline-secondary mca-suggestion-btn">@s</button>
             }
         </div>
+        }
 
         <form id="mcaChatForm" data-request-id="@r.RequestId" autocomplete="off">
             @Html.AntiForgeryToken()
