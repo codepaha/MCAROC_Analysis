@@ -336,6 +336,19 @@ public sealed class PreLoginAttributionService(
 
         if (openSuggestions.Count == 0) return 0;
 
+        var targetIds = openSuggestions
+            .Where(sc => sc.TargetId.HasValue)
+            .Select(sc => sc.TargetId!.Value)
+            .Distinct()
+            .ToList();
+
+        var targetKinds = targetIds.Count > 0
+            ? await db.PreLoginLitigationTargets
+                .AsNoTracking()
+                .Where(t => targetIds.Contains(t.PreLoginLitigationTargetId))
+                .ToDictionaryAsync(t => t.PreLoginLitigationTargetId, t => t.TargetKind, ct)
+            : new Dictionary<long, PreLoginTargetKind>();
+
         var now = DateTime.UtcNow;
         foreach (var sc in openSuggestions)
         {
@@ -347,13 +360,17 @@ public sealed class PreLoginAttributionService(
             sc.IncludedInReport = false;
             sc.UpdatedUtc = now;
 
+            var targetKind = sc.TargetId.HasValue && targetKinds.TryGetValue(sc.TargetId.Value, out var tk)
+                ? tk
+                : PreLoginTargetKind.Borrower;
+
             db.PreLoginAttributionDecisions.Add(new PreLoginAttributionDecision
             {
                 ScopeCaseId = sc.ScopeCaseId,
                 PreLoginReportJobId = jobId,
                 CaseRowId = sc.Alias,
                 TargetId = sc.TargetId ?? 0,
-                TargetKind = PreLoginTargetKind.Borrower,
+                TargetKind = targetKind,
                 PartyName = Truncate(sc.AttributionParty ?? string.Empty, 500)!,
                 ReasonKind = sc.AttributionRule ?? "not-the-target",
                 Action = PreLoginAttributionAction.AutomaticallyApplied,
@@ -382,13 +399,15 @@ public sealed class PreLoginAttributionService(
         sc.IncludedInReport = false;
         sc.UpdatedUtc = DateTime.UtcNow;
 
+        var targetKind = await ResolveTargetKindAsync(sc.TargetId, ct);
+
         db.PreLoginAttributionDecisions.Add(new PreLoginAttributionDecision
         {
             ScopeCaseId = sc.ScopeCaseId,
             PreLoginReportJobId = scope.ExternalId,
             CaseRowId = sc.Alias,
             TargetId = sc.TargetId ?? 0,
-            TargetKind = PreLoginTargetKind.Borrower,
+            TargetKind = targetKind,
             PartyName = Truncate(sc.AttributionParty ?? string.Empty, 500)!,
             ReasonKind = sc.AttributionRule ?? "suggestion-accepted",
             Action = PreLoginAttributionAction.Accepted,
@@ -412,13 +431,15 @@ public sealed class PreLoginAttributionService(
         sc.IncludedInReport = true;
         sc.UpdatedUtc = DateTime.UtcNow;
 
+        var targetKind = await ResolveTargetKindAsync(sc.TargetId, ct);
+
         db.PreLoginAttributionDecisions.Add(new PreLoginAttributionDecision
         {
             ScopeCaseId = sc.ScopeCaseId,
             PreLoginReportJobId = scope.ExternalId,
             CaseRowId = sc.Alias,
             TargetId = sc.TargetId ?? 0,
-            TargetKind = PreLoginTargetKind.Borrower,
+            TargetKind = targetKind,
             PartyName = Truncate(sc.AttributionParty ?? string.Empty, 500)!,
             ReasonKind = sc.AttributionRule ?? "suggestion-rejected",
             Action = PreLoginAttributionAction.Rejected,
@@ -442,13 +463,15 @@ public sealed class PreLoginAttributionService(
         sc.IncludedInReport = true;
         sc.UpdatedUtc = DateTime.UtcNow;
 
+        var targetKind = await ResolveTargetKindAsync(sc.TargetId, ct);
+
         db.PreLoginAttributionDecisions.Add(new PreLoginAttributionDecision
         {
             ScopeCaseId = sc.ScopeCaseId,
             PreLoginReportJobId = scope.ExternalId,
             CaseRowId = sc.Alias,
             TargetId = sc.TargetId ?? 0,
-            TargetKind = PreLoginTargetKind.Borrower,
+            TargetKind = targetKind,
             PartyName = Truncate(sc.AttributionParty ?? string.Empty, 500)!,
             ReasonKind = sc.AttributionRule ?? "auto-exclusion-undone",
             Action = PreLoginAttributionAction.Undone,
@@ -468,13 +491,15 @@ public sealed class PreLoginAttributionService(
         var scope = await db.Set<ModuleScope>().FirstOrDefaultAsync(s => s.ScopeId == sc.ScopeId, ct);
         if (scope is null) return;
 
+        var targetKind = await ResolveTargetKindAsync(sc.TargetId, ct);
+
         db.PreLoginAttributionDecisions.Add(new PreLoginAttributionDecision
         {
             ScopeCaseId = sc.ScopeCaseId,
             PreLoginReportJobId = scope.ExternalId,
             CaseRowId = sc.Alias,
             TargetId = sc.TargetId ?? 0,
-            TargetKind = PreLoginTargetKind.Borrower,
+            TargetKind = targetKind,
             PartyName = Truncate(sc.AttributionParty ?? string.Empty, 500)!,
             ReasonKind = sc.AttributionRule ?? reason ?? "analyst-miss",
             Action = PreLoginAttributionAction.AnalystMiss,
@@ -483,6 +508,15 @@ public sealed class PreLoginAttributionService(
         });
 
         await db.SaveChangesAsync(ct);
+    }
+
+    private async Task<PreLoginTargetKind> ResolveTargetKindAsync(long? targetId, CancellationToken ct)
+    {
+        if (!targetId.HasValue || targetId.Value <= 0) return PreLoginTargetKind.Borrower;
+        var target = await db.PreLoginLitigationTargets
+            .AsNoTracking()
+            .FirstOrDefaultAsync(t => t.PreLoginLitigationTargetId == targetId.Value, ct);
+        return target?.TargetKind ?? PreLoginTargetKind.Borrower;
     }
 
     public async Task<PreLoginTrustReport> GetTrustReportAsync(long? jobId = null, CancellationToken ct = default)
@@ -513,14 +547,14 @@ public sealed class PreLoginAttributionService(
             totalMisses += miss;
 
             var correct = accepted + (autoApplied - undone);
-            var denominator = accepted + autoApplied + rejected + miss;
+            var denominator = accepted + autoApplied + rejected;
             var precision = denominator > 0 ? (double)Math.Max(0, correct) / denominator : 1.0;
 
             rows.Add(new TrustReportRow(g.Key, suggested, accepted, rejected, autoApplied, undone, miss, Math.Round(precision, 4)));
         }
 
         var totalCorrect = totalAccepted + (totalAutoApplied - totalUndone);
-        var totalDenominator = totalAccepted + totalAutoApplied + totalRejected + totalMisses;
+        var totalDenominator = totalAccepted + totalAutoApplied + totalRejected;
         var overallPrecision = totalDenominator > 0 ? (double)Math.Max(0, totalCorrect) / totalDenominator : 1.0;
 
         return new PreLoginTrustReport(jobId, rows, decisions.Count, Math.Round(overallPrecision, 4));

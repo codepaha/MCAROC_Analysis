@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.LitigationModule.Store;
@@ -117,9 +118,7 @@ public sealed class PreLoginAssignmentBackfillService(AppDbContext db, ILogger<P
             long? targetId = null;
             if (directorTargets.Count > 0 && !string.IsNullOrWhiteSpace(c.CaseDetails))
             {
-                var matchedDirector = directorTargets.FirstOrDefault(dt =>
-                    !string.IsNullOrWhiteSpace(dt.TargetName) &&
-                    c.CaseDetails.Contains(dt.TargetName, StringComparison.OrdinalIgnoreCase));
+                var matchedDirector = MatchDirectorTarget(directorTargets, c.CaseDetails);
                 if (matchedDirector is not null) targetId = matchedDirector.PreLoginLitigationTargetId;
             }
             targetId ??= borrowerTarget?.PreLoginLitigationTargetId;
@@ -213,5 +212,53 @@ public sealed class PreLoginAssignmentBackfillService(AppDbContext db, ILogger<P
         }
 
         return new BackfillSummary(jobIds.Count, totalCases, errors);
+    }
+
+    internal static PreLoginLitigationTarget? MatchDirectorTarget(
+        IReadOnlyList<PreLoginLitigationTarget> directorTargets,
+        string? caseDetails)
+    {
+        if (directorTargets.Count == 0 || string.IsNullOrWhiteSpace(caseDetails))
+            return null;
+
+        // 1. Match explicit director marker: "Director: <name> (name-match only)" or "Director: <name>"
+        var markerMatch = Regex.Match(caseDetails, @"Director:\s*([^(|\r\n]+?)(?:\s*\(name-match only\)|\s*\||$)", RegexOptions.IgnoreCase);
+        if (markerMatch.Success)
+        {
+            var extractedName = markerMatch.Groups[1].Value.Trim();
+            var directMatch = directorTargets.FirstOrDefault(dt =>
+                !string.IsNullOrWhiteSpace(dt.TargetName) &&
+                string.Equals(dt.TargetName.Trim(), extractedName, StringComparison.OrdinalIgnoreCase));
+            if (directMatch is not null) return directMatch;
+
+            // Also check if extracted name matches normalized whole name of any director, evaluating longer names first
+            var sortedDirectors = directorTargets
+                .Where(dt => !string.IsNullOrWhiteSpace(dt.TargetName))
+                .OrderByDescending(dt => dt.TargetName.Trim().Length);
+
+            foreach (var dt in sortedDirectors)
+            {
+                if (Regex.IsMatch(extractedName, $@"\b{Regex.Escape(dt.TargetName.Trim())}\b", RegexOptions.IgnoreCase))
+                {
+                    return dt;
+                }
+            }
+        }
+
+        // 2. Fallback to whole-name boundary matching across caseDetails, longest names first to prevent substring overlap (e.g. 'Ann' matching 'Ann Long')
+        var targetsByLength = directorTargets
+            .Where(dt => !string.IsNullOrWhiteSpace(dt.TargetName))
+            .OrderByDescending(dt => dt.TargetName.Trim().Length);
+
+        foreach (var dt in targetsByLength)
+        {
+            var pattern = $@"\b{Regex.Escape(dt.TargetName.Trim())}\b";
+            if (Regex.IsMatch(caseDetails, pattern, RegexOptions.IgnoreCase))
+            {
+                return dt;
+            }
+        }
+
+        return null;
     }
 }

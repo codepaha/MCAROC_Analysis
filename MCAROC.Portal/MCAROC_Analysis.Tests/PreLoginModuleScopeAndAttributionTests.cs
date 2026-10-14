@@ -337,10 +337,13 @@ public class PreLoginModuleScopeAndAttributionTests : IAsyncLifetime
         Assert.True(otherBodyRow.Suggested >= 2);
         Assert.Equal(1, otherBodyRow.Accepted);
         Assert.Equal(1, otherBodyRow.Rejected);
+        Assert.Equal(0.5, otherBodyRow.Precision); // 1 / (1 + 1), miss is not in precision denominator!
 
         var missRow = report.Rows.FirstOrDefault(r => r.ReasonKind == "exact");
         Assert.NotNull(missRow);
         Assert.Equal(1, missRow.AnalystMiss);
+
+        Assert.Equal(0.5, report.OverallPrecision); // miss does not penalize precision denominator
     }
 
     [Fact]
@@ -418,6 +421,119 @@ public class PreLoginModuleScopeAndAttributionTests : IAsyncLifetime
         var gateShadow = new LitigationReaderGate(db, optShadow, Options.Create(new LitigationBridgeOptions()));
         Assert.Equal(CaseSetSource.Legacy, await gateShadow.ResolvePreLoginWorkspaceAsync(job.PreLoginReportJobId, default));
         Assert.Equal(CaseSetSource.Legacy, await gateShadow.ResolvePreLoginReportAsync(job.PreLoginReportJobId, default));
+    }
+
+    [Fact]
+    public async Task Director_Target_Matching_Handles_Overlapping_Names_And_Audit_Records_Director_Kind()
+    {
+        await using var db = Ctx();
+        var job = new PreLoginReportJob
+        {
+            Cin = "U" + Guid.NewGuid().ToString("N")[..20].ToUpperInvariant(),
+            SubmittedCompanyName = "Overlap Holdings Ltd",
+            Format = "standard",
+            Status = PreLoginReportJobStatus.Completed,
+            CreatedUtc = DateTime.UtcNow,
+            DataVersion = 1
+        };
+        db.PreLoginReportJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var borrower = new PreLoginLitigationTarget
+        {
+            PreLoginReportJobId = job.PreLoginReportJobId,
+            TargetKind = PreLoginTargetKind.Borrower,
+            TargetIndex = 0,
+            TargetName = "Overlap Holdings Ltd",
+            Status = "Completed",
+            CreatedUtc = DateTime.UtcNow
+        };
+        var dirAnn = new PreLoginLitigationTarget
+        {
+            PreLoginReportJobId = job.PreLoginReportJobId,
+            TargetKind = PreLoginTargetKind.Director,
+            TargetIndex = 1,
+            TargetName = "Ann",
+            Status = "Completed",
+            CreatedUtc = DateTime.UtcNow
+        };
+        var dirAnnLong = new PreLoginLitigationTarget
+        {
+            PreLoginReportJobId = job.PreLoginReportJobId,
+            TargetKind = PreLoginTargetKind.Director,
+            TargetIndex = 2,
+            TargetName = "Ann Long",
+            Status = "Completed",
+            CreatedUtc = DateTime.UtcNow
+        };
+        db.PreLoginLitigationTargets.AddRange(borrower, dirAnn, dirAnnLong);
+        await db.SaveChangesAsync();
+
+        var cases = new List<LegalCaseRecord>
+        {
+            // Case 1: Explicit marker with longer name "Ann Long"
+            new("highcourt", "Delhi High Court", "CNR801", "WP/801/2023", "WP", "2023", "PENDING", "-", "2023-01-01", "Delhi", "Delhi",
+                "Director: Ann Long (name-match only) | Commercial Suit", "2023-05-01", "Pending", CaseRowId: "C-1",
+                Petitioner: "BANK", Respondent: "Ann Long"),
+            // Case 2: Explicit marker with shorter name "Ann"
+            new("highcourt", "Delhi High Court", "CNR802", "WP/802/2023", "WP", "2023", "PENDING", "-", "2023-01-01", "Delhi", "Delhi",
+                "Director: Ann (name-match only) | Commercial Suit", "2023-05-01", "Pending", CaseRowId: "C-2",
+                Petitioner: "BANK", Respondent: "Ann"),
+            // Case 3: Without explicit marker, mentions "Ann Long" in case details
+            new("district", "City Court", "CNR803", "CS/803/2023", "CS", "2023", "PENDING", "-", "2023-01-01", "Delhi", "Delhi",
+                "Civil Suit against Ann Long by Lender", "2023-05-01", "Pending", CaseRowId: "C-3",
+                Petitioner: "LENDER", Respondent: "Ann Long"),
+            // Case 4: Without explicit marker, mentions "Ann" as a distinct whole word
+            new("district", "City Court", "CNR804", "CS/804/2023", "CS", "2023", "PENDING", "-", "2023-01-01", "Delhi", "Delhi",
+                "Civil Suit against Ann by Lender", "2023-05-01", "Pending", CaseRowId: "C-4",
+                Petitioner: "LENDER", Respondent: "Ann"),
+            // Case 5: Mentions "Annette" (contains "Ann", but not as whole name) -> should NOT match Ann, should fallback to Borrower
+            new("district", "City Court", "CNR805", "CS/805/2023", "CS", "2023", "PENDING", "-", "2023-01-01", "Delhi", "Delhi",
+                "Civil Suit against Annette by Lender", "2023-05-01", "Pending", CaseRowId: "C-5",
+                Petitioner: "LENDER", Respondent: "Annette")
+        };
+
+        job.DataJson = JsonSerializer.Serialize(new InstaReportData(
+            new InstaCompany("Overlap Holdings Ltd", "-", "U12345", "Company", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"),
+            [], [],
+            new InstaLegalCases(0, 0, 0, 0, 0, 0, 0, 0, 0, cases, cases.Count + 1)));
+        await db.SaveChangesAsync();
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        var r = await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+        Assert.Equal(5, r.CasesBackfilled);
+
+        var scope = await db.Set<ModuleScope>().FirstAsync(s => s.Kind == ModuleScopeKind.Assignment && s.ExternalId == job.PreLoginReportJobId);
+        var scCases = await db.Set<ModuleScopeCase>().Where(sc => sc.ScopeId == scope.ScopeId).ToDictionaryAsync(sc => sc.Alias);
+
+        // Case 1 matched "Ann Long" despite "Ann" also being a target
+        Assert.Equal(dirAnnLong.PreLoginLitigationTargetId, scCases["C-1"].TargetId);
+        // Case 2 matched "Ann"
+        Assert.Equal(dirAnn.PreLoginLitigationTargetId, scCases["C-2"].TargetId);
+        // Case 3 matched "Ann Long" by longest-match whole-name rule
+        Assert.Equal(dirAnnLong.PreLoginLitigationTargetId, scCases["C-3"].TargetId);
+        // Case 4 matched "Ann" by whole-name rule
+        Assert.Equal(dirAnn.PreLoginLitigationTargetId, scCases["C-4"].TargetId);
+        // Case 5 "Annette" did NOT match "Ann" and fell back to borrower
+        Assert.Equal(borrower.PreLoginLitigationTargetId, scCases["C-5"].TargetId);
+
+        // Verify audit decisions record PreLoginTargetKind.Director for director cases
+        var opt = Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, opt, new ServiceCollection().BuildServiceProvider());
+
+        // Simulate analyst accept on director case C-1
+        var sc1 = scCases["C-1"];
+        sc1.AttributionParty = "Some Corp";
+        sc1.AttributionReason = "Different party";
+        sc1.AttributionRule = "rule-1";
+        await db.SaveChangesAsync();
+
+        await attributionService.AcceptSuggestionAsync(sc1.ScopeCaseId, "Analyst1");
+
+        var decision = await db.PreLoginAttributionDecisions.FirstOrDefaultAsync(d => d.ScopeCaseId == sc1.ScopeCaseId && d.Action == PreLoginAttributionAction.Accepted);
+        Assert.NotNull(decision);
+        Assert.Equal(PreLoginTargetKind.Director, decision.TargetKind);
+        Assert.Equal(dirAnnLong.PreLoginLitigationTargetId, decision.TargetId);
     }
 }
 
