@@ -81,7 +81,7 @@ public sealed class PreLoginAttributionService(
 
         var borrowerTarget = targets.Values.FirstOrDefault(t => t.TargetKind == PreLoginTargetKind.Borrower);
 
-        var job = await db.PreLoginReportJobs.AsNoTracking()
+        var job = await db.PreLoginReportJobs
             .FirstOrDefaultAsync(j => j.PreLoginReportJobId == jobId, ct);
 
         if (job is null || string.IsNullOrWhiteSpace(job.DataJson))
@@ -217,6 +217,16 @@ public sealed class PreLoginAttributionService(
                         notCompany++;
                     }
                 }
+            }
+        }
+
+        if (mode == PreLoginAttributionMode.Apply && autoExcluded > 0)
+        {
+            var autoExcludedScopeCases = scopeCases.Where(sc => sc.IsExcluded).ToList();
+            if (autoExcludedScopeCases.Count > 0)
+            {
+                var exclusionMap = autoExcludedScopeCases.ToDictionary(sc => sc.Alias, sc => sc.ExclusionReason);
+                SyncCasesToDataJson(job, exclusionMap);
             }
         }
 
@@ -392,6 +402,13 @@ public sealed class PreLoginAttributionService(
                 DecidedBy = decidedBy,
                 DecidedUtc = now
             });
+        }
+
+        var job = await db.PreLoginReportJobs.FirstOrDefaultAsync(j => j.PreLoginReportJobId == jobId, ct);
+        if (job != null)
+        {
+            var exclusionMap = openSuggestions.ToDictionary(sc => sc.Alias, sc => sc.ExclusionReason);
+            SyncCasesToDataJson(job, exclusionMap);
         }
 
         await db.SaveChangesAsync(ct);
@@ -795,22 +812,36 @@ public sealed class PreLoginAttributionService(
 
     private static void SyncCaseToDataJson(PreLoginReportJob job, string caseRowId, bool isExcluded, string? exclusionReason)
     {
-        if (string.IsNullOrWhiteSpace(job.DataJson)) return;
+        SyncCasesToDataJson(job, new Dictionary<string, string?> { [caseRowId] = exclusionReason }, isExcludedDefault: isExcluded);
+    }
+
+    private static void SyncCasesToDataJson(PreLoginReportJob job, IReadOnlyDictionary<string, string?> exclusionMap, bool isExcludedDefault = true)
+    {
+        if (string.IsNullOrWhiteSpace(job.DataJson) || exclusionMap.Count == 0) return;
         try
         {
             var data = JsonSerializer.Deserialize<InstaReportData>(job.DataJson);
             if (data?.LegalCases?.Cases is null) return;
 
             var cases = data.LegalCases.Cases.ToList();
-            var idx = cases.FindIndex(c => string.Equals(c.CaseRowId, caseRowId, StringComparison.OrdinalIgnoreCase));
-            if (idx >= 0)
+            bool modified = false;
+
+            for (int i = 0; i < cases.Count; i++)
             {
-                var existing = cases[idx];
-                cases[idx] = existing with
+                var existing = cases[i];
+                if (exclusionMap.TryGetValue(existing.CaseRowId, out var reason))
                 {
-                    IsExcludedFromReport = isExcluded,
-                    ExclusionReason = isExcluded ? (exclusionReason ?? existing.ExclusionReason) : null
-                };
+                    cases[i] = existing with
+                    {
+                        IsExcludedFromReport = isExcludedDefault,
+                        ExclusionReason = isExcludedDefault ? (reason ?? existing.ExclusionReason) : null
+                    };
+                    modified = true;
+                }
+            }
+
+            if (modified)
+            {
                 var updatedLegalCases = LegalCaseFileParser.ToInstaLegalCases(cases) with { NextCaseRowIdIndex = data.LegalCases.NextCaseRowIdIndex };
                 var updatedData = data with { LegalCases = updatedLegalCases };
                 job.DataJson = JsonSerializer.Serialize(updatedData);

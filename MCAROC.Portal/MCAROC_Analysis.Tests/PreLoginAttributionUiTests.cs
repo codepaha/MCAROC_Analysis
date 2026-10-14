@@ -174,6 +174,14 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
         var runResult = await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
         Assert.True(runResult.AutoExcluded >= 1);
 
+        // Verify automatic exclusion was mirrored to job.DataJson immediately
+        var jobAfterApply = await db.PreLoginReportJobs.FirstOrDefaultAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+        Assert.NotNull(jobAfterApply);
+        var dataAfterApply = JsonSerializer.Deserialize<InstaReportData>(jobAfterApply.DataJson);
+        var c4Auto = Assert.Single(dataAfterApply!.LegalCases!.Cases, c => c.CaseRowId == "C-4");
+        Assert.True(c4Auto.IsExcludedFromReport);
+        Assert.StartsWith("[Auto]", c4Auto.ExclusionReason);
+
         // Verify GetAutoExcludedCasesAsync returns C-4
         var autoList = await attributionService.GetAutoExcludedCasesAsync(job.PreLoginReportJobId);
         var autoItem = Assert.Single(autoList);
@@ -199,6 +207,42 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
         // Verify AutoExcluded list now empty
         var autoListAfter = await attributionService.GetAutoExcludedCasesAsync(job.PreLoginReportJobId);
         Assert.Empty(autoListAfter);
+    }
+
+    [Fact]
+    public async Task ApplyOpenSuggestionsAsync_Mirrors_Exclusions_To_Legacy_DataJson()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            new("district", "Saket Court", "CNR6", "CS/600/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "EPSILON EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-6", Petitioner: "EPSILON EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+        };
+        var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "EPSILON ENTERPRISES LIMITED", "Eve Jackson", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        // 1. Run in Suggest mode
+        var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, options, new ServiceCollection().BuildServiceProvider());
+        await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        // DataJson should NOT be excluded yet
+        var jobSuggest = await db.PreLoginReportJobs.FirstOrDefaultAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+        var dataSuggest = JsonSerializer.Deserialize<InstaReportData>(jobSuggest!.DataJson);
+        Assert.False(dataSuggest!.LegalCases!.Cases[0].IsExcludedFromReport);
+
+        // 2. Switch to Apply and apply open suggestions
+        var appliedCount = await attributionService.ApplyOpenSuggestionsAsync(job.PreLoginReportJobId, "Admin");
+        Assert.Equal(1, appliedCount);
+
+        // Verify mirrored into legacy DataJson
+        var jobApplied = await db.PreLoginReportJobs.FirstOrDefaultAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+        Assert.NotNull(jobApplied);
+        var dataApplied = JsonSerializer.Deserialize<InstaReportData>(jobApplied.DataJson);
+        var c6 = Assert.Single(dataApplied!.LegalCases!.Cases, c => c.CaseRowId == "C-6");
+        Assert.True(c6.IsExcludedFromReport);
+        Assert.StartsWith("[Auto]", c6.ExclusionReason);
     }
 
     [Fact]
