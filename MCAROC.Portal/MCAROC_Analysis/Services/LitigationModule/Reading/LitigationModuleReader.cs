@@ -4,6 +4,7 @@ using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.LitigationModule.Normalisation;
 using MCAROC_Analysis.Services.LitigationModule.Store;
+using MCAROC_Analysis.Services.PreLoginReports;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.LitigationModule.Reading;
@@ -48,6 +49,11 @@ public sealed class LitigationModuleReader(AppDbContext db)
 
     public async Task<ModuleCasePage> GetCasesAsync(ScopeRef scope, CaseFilter filter, PageRequest page, CancellationToken ct)
     {
+        if (scope.Kind == ModuleScopeKind.Assignment)
+        {
+            return await GetAssignmentCasesAsync(scope.ExternalId, filter, page, ct);
+        }
+
         var requestId = RequireRequest(scope);
         var scopeId = await db.Set<ModuleScope>().AsNoTracking().Where(s => s.Kind == scope.Kind && s.ExternalId == scope.ExternalId)
             .Select(s => (long?)s.ScopeId).FirstOrDefaultAsync(ct);
@@ -99,6 +105,12 @@ public sealed class LitigationModuleReader(AppDbContext db)
     /// <summary>One case of the scope, or null when it is not in the scope's retained set.</summary>
     public async Task<ModuleCaseSummary?> GetCaseAsync(ScopeRef scope, long legacyLitigationCaseId, CancellationToken ct)
     {
+        if (scope.Kind == ModuleScopeKind.Assignment)
+        {
+            var p = await GetAssignmentCasesAsync(scope.ExternalId, new CaseFilter(IncludeHidden: true), new PageRequest(legacyLitigationCaseId - 1, 1), ct);
+            return p.Items.FirstOrDefault(i => i.LegacyLitigationCaseId == legacyLitigationCaseId);
+        }
+
         var requestId = RequireRequest(scope);
         if (!await RetainedSet(requestId).AnyAsync(c => c.LitigationCaseId == legacyLitigationCaseId, ct)) return null;
         var page = await GetCasesAsync(scope, new CaseFilter(IncludeHidden: true), new PageRequest(legacyLitigationCaseId - 1, 1), ct);
@@ -117,6 +129,17 @@ public sealed class LitigationModuleReader(AppDbContext db)
     /// <summary>The ids of the scope's retained cases as one query (hidden ones left out unless asked for), for consumers that build their own projections over the set.</summary>
     public async Task<IQueryable<long>> ScopeCaseIdsAsync(ScopeRef scope, bool includeHidden, CancellationToken ct)
     {
+        if (scope.Kind == ModuleScopeKind.Assignment)
+        {
+            var assignmentScopeId = await db.Set<ModuleScope>().AsNoTracking()
+                .Where(s => s.Kind == scope.Kind && s.ExternalId == scope.ExternalId)
+                .Select(s => (long?)s.ScopeId).FirstOrDefaultAsync(ct);
+            var q = db.Set<ModuleScopeCase>().AsNoTracking()
+                .Where(sc => sc.ScopeId == assignmentScopeId);
+            if (!includeHidden) q = q.Where(sc => !sc.IsHidden);
+            return q.Select(sc => sc.CaseId);
+        }
+
         var requestId = RequireRequest(scope);
         var scopeId = await db.Set<ModuleScope>().AsNoTracking().Where(s => s.Kind == scope.Kind && s.ExternalId == scope.ExternalId)
             .Select(s => (long?)s.ScopeId).FirstOrDefaultAsync(ct);
@@ -124,6 +147,143 @@ public sealed class LitigationModuleReader(AppDbContext db)
         if (includeHidden) return all.Select(c => c.LitigationCaseId);
         var hidden = HiddenLegacyIds(scopeId);
         return all.Where(c => !hidden.Contains(c.LitigationCaseId)).Select(c => c.LitigationCaseId);
+    }
+
+    private async Task<ModuleCasePage> GetAssignmentCasesAsync(long jobId, CaseFilter filter, PageRequest page, CancellationToken ct)
+    {
+        var scope = await db.Set<ModuleScope>().AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Kind == ModuleScopeKind.Assignment && s.ExternalId == jobId, ct);
+        if (scope is null)
+        {
+            return new ModuleCasePage([], null, new ModuleCaseCounts(0, 0, 0, 0, 0, 0));
+        }
+
+        var job = await db.PreLoginReportJobs.AsNoTracking()
+            .FirstOrDefaultAsync(j => j.PreLoginReportJobId == jobId, ct);
+
+        InstaReportData? data = null;
+        if (!string.IsNullOrWhiteSpace(job?.DataJson))
+        {
+            try { data = System.Text.Json.JsonSerializer.Deserialize<InstaReportData>(job.DataJson); }
+            catch { }
+        }
+
+        var legacyCaseMap = (data?.LegalCases?.Cases ?? [])
+            .Where(c => !string.IsNullOrWhiteSpace(c.CaseRowId))
+            .ToDictionary(c => c.CaseRowId, StringComparer.OrdinalIgnoreCase);
+
+        var scopeCases = await (from sc in db.Set<ModuleScopeCase>().AsNoTracking()
+            join mc in db.Set<ModuleCase>().AsNoTracking() on sc.CaseId equals mc.CaseId
+            where sc.ScopeId == scope.ScopeId
+            select new { sc, mc }).ToListAsync(ct);
+
+        var allItems = new List<ModuleCaseSummary>();
+        foreach (var item in scopeCases)
+        {
+            var sc = item.sc;
+            var mc = item.mc;
+            legacyCaseMap.TryGetValue(sc.Alias, out var rec);
+
+            var caseNumber = rec?.CaseNo ?? "-";
+            var caseType = rec?.CaseType ?? "-";
+            var caseYear = rec?.CaseYear ?? "-";
+            var filingDate = rec?.DateOfFiling ?? "-";
+            var cnr = rec?.CnrNumber ?? "-";
+            var court = rec?.Court ?? "-";
+            var status = rec?.Status ?? "-";
+            var stage = rec?.CaseStage ?? "-";
+            var lastHearing = rec?.DateOfHearing;
+            var nextHearing = rec?.DateOfHearing;
+
+            if (!string.IsNullOrWhiteSpace(sc.PinnedFieldsJson))
+            {
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(sc.PinnedFieldsJson);
+                    if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object)
+                    {
+                        if (doc.RootElement.TryGetProperty("Court", out var pCourt) && pCourt.ValueKind == System.Text.Json.JsonValueKind.String)
+                            court = pCourt.GetString() ?? court;
+                        if (doc.RootElement.TryGetProperty("CaseStatus", out var pStatus) && pStatus.ValueKind == System.Text.Json.JsonValueKind.String)
+                            status = pStatus.GetString() ?? status;
+                        if (doc.RootElement.TryGetProperty("CaseStage", out var pStage) && pStage.ValueKind == System.Text.Json.JsonValueKind.String)
+                            stage = pStage.GetString() ?? stage;
+                        if (doc.RootElement.TryGetProperty("CaseNumber", out var pNumber) && pNumber.ValueKind == System.Text.Json.JsonValueKind.String)
+                            caseNumber = pNumber.GetString() ?? caseNumber;
+                    }
+                }
+                catch { }
+            }
+
+            var parts = CaseNumberNormaliser.Parse(new CaseNumberInput(caseNumber, caseType, caseYear, filingDate, cnr));
+            var statusBucket = LitigationCaseStatusClassifier.Classify(status, stage);
+
+            allItems.Add(new ModuleCaseSummary(
+                LegacyLitigationCaseId: mc.CaseId,
+                CaseId: mc.CaseId,
+                Alias: sc.Alias,
+                NumberDisplay: parts.Display,
+                NumberCompleteness: parts.Completeness,
+                Court: court,
+                CaseStatus: status,
+                StatusBucket: statusBucket,
+                LastHearingDate: lastHearing,
+                NextHearingDate: nextHearing,
+                InLatestFeed: sc.FeedLastSeenUtc != null && (!sc.AnalystNote?.Contains("(not in latest feed)", StringComparison.OrdinalIgnoreCase) ?? true),
+                IsHidden: sc.IsHidden,
+                IsExcluded: sc.IsExcluded,
+                ExclusionReason: sc.ExclusionReason,
+                AnalystNote: sc.AnalystNote,
+                PinnedFieldsJson: sc.PinnedFieldsJson,
+                IncludedInReport: sc.IncludedInReport,
+                RedirectAliasesJson: sc.RedirectAliasesJson
+            ));
+        }
+
+        var visible = filter.IncludeHidden ? allItems : allItems.Where(i => !i.IsHidden).ToList();
+
+        if (!string.IsNullOrWhiteSpace(filter.Court))
+        {
+            var courtName = filter.Court.Trim();
+            visible = courtName.Equals("Unspecified Court", StringComparison.OrdinalIgnoreCase)
+                ? visible.Where(c => string.IsNullOrWhiteSpace(c.Court) || c.Court == "-").ToList()
+                : visible.Where(c => string.Equals(c.Court?.Trim(), courtName, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.Search))
+        {
+            var term = filter.Search.Trim().ToLowerInvariant();
+            visible = visible.Where(c => (c.NumberDisplay?.ToLowerInvariant().Contains(term) ?? false) ||
+                                         (c.Court?.ToLowerInvariant().Contains(term) ?? false) ||
+                                         (c.Alias?.ToLowerInvariant().Contains(term) ?? false)).ToList();
+        }
+
+        var counts = new ModuleCaseCounts(
+            visible.Count,
+            visible.Count(c => c.StatusBucket == LitigationCaseStatusBucket.Pending),
+            visible.Count(c => c.StatusBucket == LitigationCaseStatusBucket.Disposed),
+            visible.Count(c => c.StatusBucket == LitigationCaseStatusBucket.Unknown),
+            visible.Count(c => !c.InLatestFeed),
+            allItems.Count(c => c.IsHidden)
+        );
+
+        if (filter.Status.HasValue)
+        {
+            visible = visible.Where(c => c.StatusBucket == filter.Status.Value).ToList();
+        }
+
+        visible = visible.OrderBy(c => c.CaseId).ToList();
+
+        if (page.AfterCaseId is { } after)
+        {
+            visible = visible.Where(c => c.LegacyLitigationCaseId > after).ToList();
+        }
+
+        var size = page.ClampedSize;
+        var pagedItems = visible.Take(size).ToList();
+        long? nextAfter = visible.Count > size ? pagedItems[^1].LegacyLitigationCaseId : null;
+
+        return new ModuleCasePage(pagedItems, nextAfter, counts);
     }
 
     /// <summary>The ids of the cases listed by the request's authoritative (latest) vendor snapshot.</summary>

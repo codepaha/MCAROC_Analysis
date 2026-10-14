@@ -86,6 +86,15 @@ public sealed class ModuleScopeCase
 
     public bool IncludedInReport { get; set; } = true;
 
+    /// <summary>Which pre-login search target produced this case in this assignment scope, linking to PreLoginLitigationTargets.TargetId.</summary>
+    public long? TargetId { get; set; }
+
+    /// <summary>#500 attribution verdict for this case against its target in this scope.</summary>
+    public MCAROC_Analysis.Data.Entities.LitigationAttributionOutcome? AttributionOutcome { get; set; }
+    public string? AttributionRule { get; set; }
+    public string? AttributionParty { get; set; }
+    public string? AttributionReason { get; set; }
+
     /// <summary>Old aliases that still resolve to this case after a merge, as a JSON array.</summary>
     public string? RedirectAliasesJson { get; set; }
 

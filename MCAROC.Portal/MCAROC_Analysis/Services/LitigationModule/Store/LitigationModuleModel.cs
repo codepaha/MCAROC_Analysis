@@ -45,10 +45,15 @@ public static class LitigationModuleModel
             e.HasKey(x => x.ScopeCaseId);
             e.Property(x => x.Alias).HasMaxLength(64).IsRequired();
             e.Property(x => x.ExclusionReason).HasMaxLength(1000);
+            e.Property(x => x.AttributionOutcome).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.AttributionRule).HasMaxLength(64);
+            e.Property(x => x.AttributionParty).HasMaxLength(500);
+            e.Property(x => x.AttributionReason).HasMaxLength(512);
             e.HasOne(x => x.Scope).WithMany().HasForeignKey(x => x.ScopeId).OnDelete(DeleteBehavior.NoAction);
             e.HasOne(x => x.Case).WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.NoAction);
             e.HasIndex(x => new { x.ScopeId, x.CaseId }).IsUnique();
             e.HasIndex(x => new { x.ScopeId, x.Alias }).IsUnique();
+            e.HasIndex(x => x.TargetId);
         });
 
         modelBuilder.Entity<ModuleBridgeOutbox>(e =>
