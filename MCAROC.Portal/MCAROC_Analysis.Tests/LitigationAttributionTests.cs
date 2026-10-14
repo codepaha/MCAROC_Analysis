@@ -48,6 +48,15 @@ public class LitigationAttributionTests : IAsyncLifetime
     }
 
     [Fact]
+    public void Another_body_beside_a_Devanagari_party_is_not_settled_without_judging_the_Devanagari_party()
+    {
+        // Review of #500: the company's Hindi name next to its employees' society must be judged, not set aside by the other-body rule.
+        var a = CaseAttributionRules.Assess(["COASTAL PROJECTS LIMITED EMPLOYEES COOPERATIVE SOCIETY", "कोस्टल प्रोजेक्ट्स लिमिटेड"], Coastal, CoastalFormer);
+        Assert.True(a.NeedsJudgement);
+        Assert.Equal(["कोस्टल प्रोजेक्ट्स लिमिटेड"], a.Candidates);   // the society itself is not asked about
+    }
+
+    [Fact]
     public void A_word_of_the_companys_own_name_never_makes_a_party_another_body()
     {
         var a = CaseAttributionRules.Assess(["ABC CREDIT LTD, HYDERABAD", "STATE BANK OF INDIA"], ["ABC Credit Limited"], []);
@@ -288,6 +297,24 @@ public class LitigationAttributionTests : IAsyncLifetime
         var late = await verify.LitigationCases.AsNoTracking().SingleAsync(c => c.LitigationCaseId == w.Cases["late"]);
         Assert.Equal(LitigationAttributionOutcome.Attributed, late.AttributionOutcome);
         Assert.Equal("COASTAL PROJECTS LTD., UDAIPUR", late.AttributionParty);
+    }
+
+    [Theory]
+    [InlineData("same", LitigationAttributionOutcome.Attributed, "judged-same")]
+    [InlineData("different", LitigationAttributionOutcome.NotTheCompany, "judged-different")]
+    public async Task The_companys_Hindi_name_beside_its_employees_society_is_decided_by_the_judgement(string verdict, LitigationAttributionOutcome outcome, string rule)
+    {
+        const string hindi = "कोस्टल प्रोजेक्ट्स लिमिटेड";
+        var w = await SeedAsync(extra: new() { ["hindi"] = ["COASTAL PROJECTS LIMITED EMPLOYEES COOPERATIVE SOCIETY", hindi] });
+        var judge = new ScriptedJudge(prompt => prompt.Contains(hindi)
+            ? System.Text.Json.JsonSerializer.Serialize(new { verdicts = new[] { new { party = hindi, verdict, reason = "Hindi spelling of the name." } } })
+            : Answer(prompt));
+        await using (var db = Ctx()) await Service(db, judge).AttributeRequestAsync(w.RequestId, default);
+
+        await using var verify = Ctx();
+        var c = await verify.LitigationCases.AsNoTracking().SingleAsync(x => x.LitigationCaseId == w.Cases["hindi"]);
+        Assert.Equal(outcome, c.AttributionOutcome);
+        Assert.Equal(rule, c.AttributionRule);   // decided by the judgement, never by the other-body rule
     }
 
     // ---- the pipeline -----------------------------------------------------------------------------------------------------------------------

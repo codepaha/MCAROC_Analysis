@@ -17,7 +17,7 @@ public sealed record RuleAssessment(LitigationAttributionOutcome? Outcome, strin
 /// <list type="number">
 /// <item>a party that is the company by the whole-name rule (current or former name, or an office acting for it) makes the case the company's;</item>
 /// <item>when every party that shares a word with the company's names is another body named after it (its employees' union, a cooperative society, a
-/// trust...), the case is not the company's;</item>
+/// trust...) and no party is written in Devanagari, the case is not the company's;</item>
 /// <item>otherwise the parties that share a word (or a sound) with its names are judged; when none does, which happens for a case found through a Hindi or
 /// phonetic keyword, all its parties are.</item>
 /// </list>
@@ -57,7 +57,10 @@ public static class CaseAttributionRules
         // A word of the company's own name never makes a party another body ("ABC Credit Limited" is not a credit society).
         bool IsOtherBody(string party) => WholeNamePartyMatcher.Canonical(party).Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Any(w => OtherBodyWords.Contains(w) && !companyWords.Contains(w));
-        if (resembling.Count > 0 && resembling.All(IsOtherBody))
+        // Settled without a judgement only when no party is left unassessed: a Devanagari party (the company's Hindi name shares no Latin word with it)
+        // could be the company itself, beside its employees' society (review of #500).
+        var devanagari = parties.Where(NamePhoneticKey.IsDevanagari).Distinct(StringComparer.Ordinal).ToList();
+        if (resembling.Count > 0 && resembling.All(IsOtherBody) && devanagari.Count == 0)
             return new(LitigationAttributionOutcome.NotTheCompany, "other-body", resembling[0],
                 "The party named after the company is another body (its employees, a society, a trust...), not the company.", []);
 
@@ -65,7 +68,7 @@ public static class CaseAttributionRules
         // Latin word with it); when none resembles it, every party. Capped; a case cut short by the cap is never settled as "not the company's" (review of #500).
         var possible = (resembling.Count > 0
                 ? resembling.Where(p => !IsOtherBody(p)).OrderByDescending(p => SharedWords(p, companyWords, companySounds))
-                    .Concat(parties.Where(NamePhoneticKey.IsDevanagari))
+                    .Concat(devanagari)
                 : parties)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         return new(null, null, null, null, possible.Take(MaxCandidatesPerCase).ToList(), possible.Count > MaxCandidatesPerCase, possible.Count);
