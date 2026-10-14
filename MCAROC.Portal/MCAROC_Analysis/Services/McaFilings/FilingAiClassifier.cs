@@ -21,7 +21,7 @@ public sealed record AiClassification(string FormType, FilingCategory Category, 
 public sealed partial class FilingAiClassifier(AppDbContext db, IServiceProvider services, ILogger<FilingAiClassifier> logger)
 {
     public const string PromptMarker = "MCAROC DOCUMENT TYPE";
-    public const string PromptVersion = "document-type-v1";
+    public const string PromptVersion = "document-type-v2";
     public const string Method = "AiTitle";
     /// <summary>Only the top of the page is sent: the title is there, the rest would only cost tokens.</summary>
     internal const int TextChars = 1500;
@@ -129,7 +129,8 @@ public sealed partial class FilingAiClassifier(AppDbContext db, IServiceProvider
     }
 
     /// <summary>The answer, if it holds: a known type, and a title quote of at least <see cref="MinQuoteChars"/> characters that is on the page (case and
-    /// spacing ignored). "Unknown" or anything else gives null.</summary>
+    /// spacing ignored) <b>and shows that type</b> (<see cref="FilingClassifier.QuoteShowsType"/>: a line such as "Government of India" is on the page but
+    /// shows no type — review of #504). "Unknown" or anything else gives null.</summary>
     internal static AiClassification? Check(string raw, string pageText)
     {
         string formType, quote;
@@ -147,6 +148,7 @@ public sealed partial class FilingAiClassifier(AppDbContext db, IServiceProvider
         if (!FilingClassifier.KnownTypes.TryGetValue(formType, out var category)) return null;
         var flatQuote = Flat(quote);
         if (flatQuote.Length < MinQuoteChars || !Flat(pageText).Contains(flatQuote, StringComparison.Ordinal)) return null;
+        if (!FilingClassifier.QuoteShowsType(formType, quote)) return null;
         return new AiClassification(formType, category, quote);
     }
 
@@ -158,7 +160,9 @@ public sealed partial class FilingAiClassifier(AppDbContext db, IServiceProvider
         sb.AppendLine("Choose exactly one type from this list, written as listed, or \"Unknown\" if none fits or you are not sure:");
         foreach (var t in FilingClassifier.KnownTypes.Keys.OrderBy(k => k, StringComparer.Ordinal)) sb.AppendLine($"- {t}");
         sb.AppendLine();
-        sb.AppendLine("Also copy, exactly as it appears in the text below, the title or heading line that shows the type (at least a few words).");
+        sb.AppendLine("Also copy, exactly as it appears in the text below, the title or heading line that names the type (for example \"Certificate of");
+        sb.AppendLine("Registration of Charge\" or \"List of Allottees\"). A line that does not name the type, such as \"Government of India\", is not enough:");
+        sb.AppendLine("if no line names the type, answer \"Unknown\".");
         sb.AppendLine("Answer with JSON only: {\"formType\": \"...\", \"titleQuote\": \"...\"}");
         sb.AppendLine();
         sb.AppendLine($"File name: {fileName}");

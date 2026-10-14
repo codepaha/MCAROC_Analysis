@@ -28,8 +28,25 @@ public class FilingAiClassifierTests : IAsyncLifetime
     [InlineData("""{"formType": "Certificate of Registration of Charge", "titleQuote": "Sanction letter dated 1 April"}""")]   // quote not on the page
     [InlineData("""{"formType": "Certificate of Registration of Charge", "titleQuote": "Charge"}""")]   // too short to prove anything
     [InlineData("""{"formType": "Unknown", "titleQuote": ""}""")]
+    [InlineData("""{"formType": "Certificate of Registration of Charge", "titleQuote": "Government of India"}""")]   // on the page, but shows no type (review of #504)
+    [InlineData("""{"formType": "Board Resolution", "titleQuote": "Ministry of Corporate Affairs"}""")]
     [InlineData("not json")]
     public void Any_other_answer_leaves_the_document_as_it_was(string raw) => Assert.Null(FilingAiClassifier.Check(raw, ChargeCertificateText));
+
+    [Theory]
+    [InlineData("Certificate of Registration of Charge", "Certificate of Registration of Charge")]          // the type's own rule
+    [InlineData("List of Allottees (PAS-5)", "LIST OF ALLOTTEES")]                                         // a rule for the type, not every word of its name
+    [InlineData("Board Resolution", "Certified true copy of the resolution passed by the Board")]           // every distinctive word of the name
+    [InlineData("Form DPT-3", "FORM NO. DPT-3")]
+    [InlineData("Financial Statements", "Balance Sheet as at 31st March 2023")]
+    public void A_quote_that_names_the_type_shows_it(string formType, string quote) => Assert.True(FilingClassifier.QuoteShowsType(formType, quote));
+
+    [Theory]
+    [InlineData("Certificate of Registration of Charge", "Government of India")]
+    [InlineData("Board Resolution", "Ministry of Corporate Affairs")]
+    [InlineData("Form DPT-3", "Form No. DPT-1")]
+    [InlineData("Shareholder Resolution", "Resolution")]                                                    // half the name is not the name
+    public void A_quote_that_does_not_name_the_type_does_not_show_it(string formType, string quote) => Assert.False(FilingClassifier.QuoteShowsType(formType, quote));
 
     [Fact]
     public void The_prompt_lists_every_known_type() =>
