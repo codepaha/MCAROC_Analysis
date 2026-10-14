@@ -37,14 +37,15 @@ public static partial class QuestionMasker
         return Spaces().Replace(t, " ").Trim();
     }
 
-    /// <summary>A name as written, and without its legal form ("Coastal Projects Limited" → "Coastal Projects"), when what remains is still distinctive.</summary>
+    /// <summary>A name as written, and without its legal form ("Coastal Projects Limited" → "Coastal Projects", "Acme Limited" → "Acme"). A one-word core is
+    /// masked too: a client's name must never reach the shared repository, even if a common word is occasionally masked with it (review of #511).</summary>
     private static IEnumerable<string> NameForms(string name)
     {
         var n = Spaces().Replace(name.Trim(), " ");
         if (n.Length == 0) yield break;
         yield return n;
         var core = LegalForm().Replace(n, "").Trim();
-        if (core.Length >= 5 && core.Contains(' ')) yield return core;
+        if (core.Length >= 3 && !core.Equals(n, StringComparison.OrdinalIgnoreCase)) yield return core;
     }
 
     [GeneratedRegex(@"\s+(private\s+limited|pvt\.?\s+ltd\.?|limited|ltd\.?|llp)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

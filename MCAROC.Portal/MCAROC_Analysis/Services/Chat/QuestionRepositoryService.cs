@@ -76,17 +76,18 @@ public sealed class QuestionRepositoryService(AppDbContext db, EmbeddingService 
             });
             touched.Add(best);
         }
-        await db.SaveChangesAsync(ct);
 
-        // Centre, name and counts of each group that changed, from all its members.
+        // Centre, name and counts of each group that changed, from its saved members and the new ones, saved together with the new entries in one
+        // SaveChanges (one transaction): a failure leaves neither, and the next pass enters the questions again (review of #511).
         foreach (var g in touched)
         {
-            var members = await db.ChatQuestionEntries.AsNoTracking().Where(e => e.ChatQuestionGroupId == g.ChatQuestionGroupId)
-                .Select(e => new { e.MaskedText, e.Embedding, e.ClientId, e.AnsweredWithEvidence, e.AnsweredFromIndex, e.AskedUtc }).ToListAsync(ct);
+            var members = g.ChatQuestionGroupId == 0 ? [] : await db.ChatQuestionEntries.AsNoTracking().Where(e => e.ChatQuestionGroupId == g.ChatQuestionGroupId)
+                .Select(e => new Member(e.MaskedText, e.Embedding, e.ClientId, e.AnsweredWithEvidence, e.AnsweredFromIndex, e.AskedUtc)).ToListAsync(ct);
+            members.AddRange(g.Entries.Where(e => e.ChatQuestionEntryId == 0)
+                .Select(e => new Member(e.MaskedText, e.Embedding, e.ClientId, e.AnsweredWithEvidence, e.AnsweredFromIndex, e.AskedUtc)));
             var memberVectors = members.Select(m => m.Embedding.Memory.ToArray()).ToList();
             var centre = Normalize(Mean(memberVectors));
             g.Centroid = new SqlVector<float>(centre);
-            centres[g] = centre;
             g.CanonicalQuestion = members[Enumerable.Range(0, members.Count).MaxBy(j => Dot(memberVectors[j], centre))].MaskedText;
             g.AskedCount = members.Count;
             g.ClientCount = members.Select(m => m.ClientId).Distinct().Count();
@@ -130,6 +131,8 @@ public sealed class QuestionRepositoryService(AppDbContext db, EmbeddingService 
             .Select(d => d.NameRaw).Distinct().ToListAsync(ct);
         return new MaskContext(companies, people);
     }
+
+    private sealed record Member(string MaskedText, SqlVector<float> Embedding, long ClientId, bool AnsweredWithEvidence, bool AnsweredFromIndex, DateTime AskedUtc);
 
     internal static bool HasCitations(string? citedSourcesJson) =>
         !string.IsNullOrWhiteSpace(citedSourcesJson) && citedSourcesJson.Trim() is not "[]" and not "null";

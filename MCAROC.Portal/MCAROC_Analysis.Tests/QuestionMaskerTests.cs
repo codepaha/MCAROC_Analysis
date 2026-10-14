@@ -29,10 +29,12 @@ public class QuestionMaskerTests
     }
 
     [Fact]
-    public void A_one_word_core_name_is_masked_only_in_full()
+    public void A_one_word_core_name_is_masked_too()
     {
-        // "Lodha Limited" → "Lodha" alone is too common a word to strip everywhere; the full name is masked.
-        var ctx = new MaskContext(["Lodha Limited"], []);
+        // Review of #511: "Acme" for "Acme Limited" must not reach the shared repository.
+        var ctx = new MaskContext(["Lodha Limited", "Acme Private Limited"], []);
         Assert.Equal("Charges of [company]", QuestionMasker.Mask("Charges of Lodha Limited", ctx));
+        Assert.Equal("Does [company] have open charges? Is [company] a defaulter?", QuestionMasker.Mask("Does lodha have open charges? Is Acme a defaulter?", ctx));
+        Assert.Equal("Acmeplex filings", QuestionMasker.Mask("Acmeplex filings", ctx));   // whole words only
     }
 }
