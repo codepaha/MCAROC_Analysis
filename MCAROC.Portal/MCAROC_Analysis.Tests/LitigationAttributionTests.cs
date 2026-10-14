@@ -73,6 +73,23 @@ public class LitigationAttributionTests : IAsyncLifetime
     }
 
     [Fact]
+    public void The_likeliest_parties_are_judged_first_and_a_capped_list_says_so()
+    {
+        var weaker = Enumerable.Range(1, 12).Select(i => $"COASTAL ROADWAYS {i} LTD").ToList();
+        var a = CaseAttributionRules.Assess([.. weaker, "COASTAL PROJECTS LTD., UDAIPUR"], Coastal, CoastalFormer);
+        Assert.Equal("COASTAL PROJECTS LTD., UDAIPUR", a.Candidates[0]);   // two shared words before one
+        Assert.True(a.Truncated);
+        Assert.Equal(13, a.PossibleCount);
+    }
+
+    [Fact]
+    public void A_Devanagari_party_is_judged_beside_a_latin_look_alike()
+    {
+        var a = CaseAttributionRules.Assess(["COASTAL ROADWAYS LTD", "कोस्टल प्रोजेक्ट्स लिमिटेड"], Coastal, CoastalFormer);
+        Assert.Contains("कोस्टल प्रोजेक्ट्स लिमिटेड", a.Candidates);
+    }
+
+    [Fact]
     public void A_record_without_parties_cannot_be_attributed() =>
         Assert.Equal(LitigationAttributionOutcome.Ambiguous, CaseAttributionRules.Assess([], Coastal, CoastalFormer).Outcome);
 
@@ -113,7 +130,7 @@ public class LitigationAttributionTests : IAsyncLifetime
         var verdicts = lines.Select(p => new
         {
             party = p,
-            verdict = p.Contains("UDAIPUR") ? "same" : p.Contains("SURENDRA") ? "different" : "unsure",
+            verdict = p.Contains("UDAIPUR") ? "same" : p.Contains("SURENDRA") || p.Contains("CONTRACTOR") ? "different" : "unsure",
             reason = p.Contains("UDAIPUR") ? "The company with its town." : "test"
         });
         return System.Text.Json.JsonSerializer.Serialize(new { verdicts });
@@ -121,7 +138,7 @@ public class LitigationAttributionTests : IAsyncLifetime
 
     private sealed record World(long RequestId, long SnapshotId, Dictionary<string, long> Cases, string Cin);
 
-    private static async Task<World> SeedAsync(string? cin = null)
+    private static async Task<World> SeedAsync(string? cin = null, Dictionary<string, string[]>? extra = null)
     {
         cin ??= "U45203TG" + Random.Shared.Next(1000, 9999) + "PLC" + Random.Shared.Next(100000, 999999);
         await using var db = Ctx();
@@ -153,6 +170,8 @@ public class LitigationAttributionTests : IAsyncLifetime
             ["person"] = new() { PetitionersJson = Parties("COASTAL PROJECTS LIMITED ERSTWHILE MANAGING DIRECTOR S SURENDRA"), RespondentsJson = Parties("IFCI LIMITED") },
             ["unclear"] = new() { PetitionersJson = Parties("COASTAL PROJECT CORPORATION"), RespondentsJson = Parties("STATE OF ODISHA") },
         };
+        foreach (var (key, petitioners) in extra ?? [])
+            cases[key] = new() { PetitionersJson = Parties(petitioners), RespondentsJson = Parties("STATE OF TELANGANA") };
         foreach (var c in cases.Values)
         {
             c.RequestId = request.RequestId; c.Court = "High Court"; c.CaseNumber = Guid.NewGuid().ToString("N")[..8];
@@ -240,6 +259,35 @@ public class LitigationAttributionTests : IAsyncLifetime
             Assert.Equal(3, retry.Assessed);
             Assert.Equal(0, retry.Pending);
         }
+    }
+
+    [Fact]
+    public async Task A_case_whose_company_party_falls_outside_the_cap_is_unconfirmed_never_not_the_companys()
+    {
+        // Review of #500: 13 parties could be the company and the company is the 13th; the 12 judged are all someone else.
+        var lookAlikes = Enumerable.Range(1, 12).Select(i => $"COASTAL PROJECTS CONTRACTOR {i}").ToList();
+        var w = await SeedAsync(extra: new() { ["crowded"] = [.. lookAlikes, "COASTAL PROJECTS LTD., UDAIPUR"] });
+        var judge = new ScriptedJudge(Answer);
+        await using (var db = Ctx()) await Service(db, judge).AttributeRequestAsync(w.RequestId, default);
+
+        await using var verify = Ctx();
+        var crowded = await verify.LitigationCases.AsNoTracking().SingleAsync(c => c.LitigationCaseId == w.Cases["crowded"]);
+        Assert.Equal(LitigationAttributionOutcome.Ambiguous, crowded.AttributionOutcome);
+        Assert.Equal("judged-partial", crowded.AttributionRule);
+        Assert.Contains("12 likeliest of 13", crowded.AttributionReason);
+    }
+
+    [Fact]
+    public async Task The_company_listed_after_weaker_look_alikes_is_still_judged_and_attributed()
+    {
+        var weaker = Enumerable.Range(1, 12).Select(i => $"COASTAL ROADWAYS {i} LTD").ToList();
+        var w = await SeedAsync(extra: new() { ["late"] = [.. weaker, "COASTAL PROJECTS LTD., UDAIPUR"] });
+        await using (var db = Ctx()) await Service(db, new ScriptedJudge(Answer)).AttributeRequestAsync(w.RequestId, default);
+
+        await using var verify = Ctx();
+        var late = await verify.LitigationCases.AsNoTracking().SingleAsync(c => c.LitigationCaseId == w.Cases["late"]);
+        Assert.Equal(LitigationAttributionOutcome.Attributed, late.AttributionOutcome);
+        Assert.Equal("COASTAL PROJECTS LTD., UDAIPUR", late.AttributionParty);
     }
 
     // ---- the pipeline -----------------------------------------------------------------------------------------------------------------------

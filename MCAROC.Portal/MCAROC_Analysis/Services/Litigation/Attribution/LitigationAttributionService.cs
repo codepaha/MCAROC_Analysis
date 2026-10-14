@@ -43,11 +43,11 @@ public sealed class LitigationAttributionService(AppDbContext db, IServiceProvid
         var before = cases.ToDictionary(c => c.LitigationCaseId, c => LitigationAttribution.Shown(c.AttributionOutcome));
 
         // 1. Rules.
-        var needing = new List<(LitigationCase Case, IReadOnlyList<string> Candidates)>();
+        var needing = new List<(LitigationCase Case, IReadOnlyList<string> Candidates, RuleAssessment Rules)>();
         foreach (var c in cases)
         {
             var assessment = CaseAttributionRules.Assess(PartiesOf(c), [subject.LegalName], subject.FormerNames);
-            if (assessment.NeedsJudgement) needing.Add((c, assessment.Candidates));
+            if (assessment.NeedsJudgement) needing.Add((c, assessment.Candidates, assessment));
             else Settle(c, assessment.Outcome!.Value, assessment.Rule, assessment.Party, assessment.Reason, now);
         }
 
@@ -68,7 +68,7 @@ public sealed class LitigationAttributionService(AppDbContext db, IServiceProvid
                 foreach (var (key, verdict) in fresh) verdicts[key] = verdict;
             }
 
-            foreach (var (c, candidates) in needing)
+            foreach (var (c, candidates, rules) in needing)
             {
                 var found = candidates.Select(p => (Party: p, Has: verdicts.TryGetValue(PartyKey(p), out var v), V: v)).Where(x => x.Has).ToList();
                 if (found.FirstOrDefault(x => x.V.Verdict == LitigationPartyVerdictKind.Same) is { Has: true } same)
@@ -77,6 +77,10 @@ public sealed class LitigationAttributionService(AppDbContext db, IServiceProvid
                     Settle(c, LitigationAttributionOutcome.Pending, null, null, "Waiting for the judgement of whether a party is the company.", c.AttributionDecidedUtc ?? now, keepSince: true);
                 else if (found.FirstOrDefault(x => x.V.Verdict == LitigationPartyVerdictKind.Unsure) is { Has: true } unsure)
                     Settle(c, LitigationAttributionOutcome.Ambiguous, "judged-unsure", unsure.Party, unsure.V.Reason, now);
+                else if (rules.Truncated)
+                    // Every judged party is someone else, but not every party that could be the company was judged: unconfirmed, never "not the company's".
+                    Settle(c, LitigationAttributionOutcome.Ambiguous, "judged-partial", null,
+                        $"The {candidates.Count} likeliest of {rules.PossibleCount} parties that could be the company were checked and none is; the others were not checked.", now);
                 else
                     Settle(c, LitigationAttributionOutcome.NotTheCompany, "judged-different", found.FirstOrDefault().Party, found.FirstOrDefault().V.Reason, now);
             }

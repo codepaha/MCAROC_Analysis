@@ -4,8 +4,10 @@ using MCAROC_Analysis.Services.LitigationModule.Refresh;
 
 namespace MCAROC_Analysis.Services.LitigationData.Attribution;
 
-/// <summary>What the rules alone say about one case. <see cref="Candidates"/> are the party names to judge when the rules cannot settle it.</summary>
-public sealed record RuleAssessment(LitigationAttributionOutcome? Outcome, string? Rule, string? Party, string? Reason, IReadOnlyList<string> Candidates)
+/// <summary>What the rules alone say about one case. <see cref="Candidates"/> are the party names to judge when the rules cannot settle it, most likely first;
+/// <see cref="Truncated"/> says some possible parties were left out by the cap, so "none of the judged parties is the company" does not settle the case.</summary>
+public sealed record RuleAssessment(LitigationAttributionOutcome? Outcome, string? Rule, string? Party, string? Reason, IReadOnlyList<string> Candidates,
+    bool Truncated = false, int PossibleCount = 0)
 {
     public bool NeedsJudgement => Outcome is null;
 }
@@ -59,9 +61,14 @@ public static class CaseAttributionRules
             return new(LitigationAttributionOutcome.NotTheCompany, "other-body", resembling[0],
                 "The party named after the company is another body (its employees, a society, a trust...), not the company.", []);
 
-        var candidates = (resembling.Count > 0 ? resembling.Where(p => !IsOtherBody(p)) : parties)
-            .Distinct(StringComparer.OrdinalIgnoreCase).Take(MaxCandidatesPerCase).ToList();
-        return new(null, null, null, null, candidates);
+        // The parties that could be the company: those resembling it (most shared words first), and any written in Devanagari (its Hindi name shares no
+        // Latin word with it); when none resembles it, every party. Capped; a case cut short by the cap is never settled as "not the company's" (review of #500).
+        var possible = (resembling.Count > 0
+                ? resembling.Where(p => !IsOtherBody(p)).OrderByDescending(p => SharedWords(p, companyWords, companySounds))
+                    .Concat(parties.Where(NamePhoneticKey.IsDevanagari))
+                : parties)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return new(null, null, null, null, possible.Take(MaxCandidatesPerCase).ToList(), possible.Count > MaxCandidatesPerCase, possible.Count);
     }
 
     private static string ReasonFor(PartyMatchResult match) => match.Rule switch
@@ -75,6 +82,9 @@ public static class CaseAttributionRules
 
     internal static IEnumerable<string> DistinctiveWords(string? name) =>
         WholeNamePartyMatcher.Canonical(name).Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(w => w.Length >= 3 && !NotDistinctive.Contains(w));
+
+    private static int SharedWords(string party, HashSet<string> companyWords, HashSet<string> companySounds) =>
+        DistinctiveWords(party).Distinct().Count(w => companyWords.Contains(w) || companySounds.Contains(NamePhoneticKey.WordKey(w)));
 
     private static bool Resembles(string party, HashSet<string> companyWords, HashSet<string> companySounds)
     {
