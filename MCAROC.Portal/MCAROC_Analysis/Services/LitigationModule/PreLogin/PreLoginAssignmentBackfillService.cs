@@ -52,6 +52,22 @@ public sealed class PreLoginAssignmentBackfillService(AppDbContext db, ILogger<P
         var existingScope = await db.Set<ModuleScope>().Include(s => s.Subject)
             .FirstOrDefaultAsync(s => s.Kind == ModuleScopeKind.Assignment && s.ExternalId == jobId, ct);
 
+        var maxAliasIndex = 0;
+        if (data.LegalCases?.Cases is { Count: > 0 } existingList)
+        {
+            foreach (var c in existingList)
+            {
+                if (!string.IsNullOrWhiteSpace(c.CaseRowId) &&
+                    c.CaseRowId.StartsWith("C-", StringComparison.OrdinalIgnoreCase) &&
+                    int.TryParse(c.CaseRowId[2..], out var idx) && idx > maxAliasIndex)
+                {
+                    maxAliasIndex = idx;
+                }
+            }
+        }
+
+        var nextAliasIndex = Math.Max(maxAliasIndex + 1, data.LegalCases?.NextCaseRowIdIndex ?? 1);
+
         bool createdScope = false;
         if (existingScope is null)
         {
@@ -63,22 +79,6 @@ public sealed class PreLoginAssignmentBackfillService(AppDbContext db, ILogger<P
             };
             db.Set<ModuleSubject>().Add(subject);
             await db.SaveChangesAsync(ct);
-
-            var maxAliasIndex = 0;
-            if (data.LegalCases?.Cases is { Count: > 0 } existingList)
-            {
-                foreach (var c in existingList)
-                {
-                    if (!string.IsNullOrWhiteSpace(c.CaseRowId) &&
-                        c.CaseRowId.StartsWith("C-", StringComparison.OrdinalIgnoreCase) &&
-                        int.TryParse(c.CaseRowId[2..], out var idx) && idx > maxAliasIndex)
-                    {
-                        maxAliasIndex = idx;
-                    }
-                }
-            }
-
-            var nextAliasIndex = Math.Max(maxAliasIndex + 1, data.LegalCases?.NextCaseRowIdIndex ?? 1);
 
             existingScope = new ModuleScope
             {
@@ -92,6 +92,10 @@ public sealed class PreLoginAssignmentBackfillService(AppDbContext db, ILogger<P
             db.Set<ModuleScope>().Add(existingScope);
             await db.SaveChangesAsync(ct);
             createdScope = true;
+        }
+        else if (existingScope.NextAliasIndex < nextAliasIndex)
+        {
+            existingScope.NextAliasIndex = nextAliasIndex;
         }
 
         var targets = job.LitigationTargets.ToList();
@@ -170,17 +174,61 @@ public sealed class PreLoginAssignmentBackfillService(AppDbContext db, ILogger<P
             else
             {
                 bool modified = false;
-                if (sc.TargetId == null && targetId != null)
+                if (sc.TargetId != targetId)
                 {
                     sc.TargetId = targetId;
                     modified = true;
                 }
+                if (sc.IsExcluded != c.IsExcludedFromReport)
+                {
+                    sc.IsExcluded = c.IsExcludedFromReport;
+                    sc.IncludedInReport = !c.IsExcludedFromReport;
+                    modified = true;
+                }
+                if (!string.Equals(sc.ExclusionReason ?? string.Empty, c.ExclusionReason ?? string.Empty, StringComparison.Ordinal))
+                {
+                    sc.ExclusionReason = c.ExclusionReason;
+                    modified = true;
+                }
+                if (!string.Equals(sc.AnalystNote ?? string.Empty, c.AnalystNote ?? string.Empty, StringComparison.Ordinal))
+                {
+                    sc.AnalystNote = c.AnalystNote;
+                    modified = true;
+                }
+                var expectedFeedSeenUtc = inLatestFeed ? feedSeenUtc : (DateTime?)null;
+                if ((expectedFeedSeenUtc != null && sc.FeedLastSeenUtc == null) ||
+                    (expectedFeedSeenUtc == null && sc.FeedLastSeenUtc != null))
+                {
+                    sc.FeedLastSeenUtc = expectedFeedSeenUtc;
+                    modified = true;
+                }
+
                 if (modified)
                 {
                     sc.UpdatedUtc = DateTime.UtcNow;
                     updatedCount++;
                 }
             }
+        }
+
+        var legacyCaseRowIds = cases
+            .Where(c => !string.IsNullOrWhiteSpace(c.CaseRowId))
+            .Select(c => c.CaseRowId!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var orphanScopeCases = existingScopeCases.Values
+            .Where(sc => !legacyCaseRowIds.Contains(sc.Alias))
+            .ToList();
+
+        if (orphanScopeCases.Count > 0)
+        {
+            db.Set<ModuleScopeCase>().RemoveRange(orphanScopeCases);
+            updatedCount += orphanScopeCases.Count;
+        }
+
+        if (!createdScope && (backfilledCount > 0 || updatedCount > 0))
+        {
+            existingScope.Version++;
         }
 
         await db.SaveChangesAsync(ct);

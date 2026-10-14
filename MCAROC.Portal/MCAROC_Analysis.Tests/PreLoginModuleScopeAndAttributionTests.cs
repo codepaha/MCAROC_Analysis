@@ -535,5 +535,75 @@ public class PreLoginModuleScopeAndAttributionTests : IAsyncLifetime
         Assert.Equal(PreLoginTargetKind.Director, decision.TargetKind);
         Assert.Equal(dirAnnLong.PreLoginLitigationTargetId, decision.TargetId);
     }
+
+    [Fact]
+    public async Task ReRunning_Backfill_Reconciles_Changed_Legacy_DataJson_And_Preserves_Parity()
+    {
+        await using var db = Ctx();
+        var casesInitial = new List<LegalCaseRecord>
+        {
+            new("district", "City Civil Court", "CNR901", "CS/901/2023", "CS", "2023", "PENDING", "-", "2023-01-01", "Delhi", "Delhi", "Details 1", "2023-05-01", "Pending", CaseRowId: "C-1"),
+            new("highcourt", "Delhi High Court", "CNR902", "WP/902/2023", "WP", "2023", "DISPOSED", "-", "2023-02-01", "Delhi", "Delhi", "Details 2", "2023-06-01", "Disposed", CaseRowId: "C-2")
+        };
+        var (job, _, _) = await CreateJobWithTargetsAsync(db, "Reconcile Co Ltd", "Director Reconcile", casesInitial);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        var r1 = await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+        Assert.Equal(2, r1.CasesBackfilled);
+        Assert.Equal(0, r1.UpdatedCases);
+
+        var parity1 = await PreLoginModuleParity.CheckAsync(db, job.PreLoginReportJobId);
+        Assert.True(parity1.IsClean);
+
+        var scope = await db.Set<ModuleScope>().FirstAsync(s => s.Kind == ModuleScopeKind.Assignment && s.ExternalId == job.PreLoginReportJobId);
+        Assert.Equal(1, scope.Version);
+
+        // Simulate subsequent changes to legacy DataJson:
+        // - C-1 gets excluded by an analyst with reason and note
+        // - C-2 gets an updated analyst note marking it (not in latest feed)
+        // - C-3 is an incoming new case
+        var updatedCases = new List<LegalCaseRecord>
+        {
+            casesInitial[0] with { IsExcludedFromReport = true, ExclusionReason = "Not borrower entity", AnalystNote = "Analyst verified" },
+            casesInitial[1] with { AnalystNote = "Old matter (not in latest feed)" },
+            new("district", "District Court", "CNR903", "CS/903/2023", "CS", "2023", "PENDING", "-", "2023-03-01", "Delhi", "Delhi", "Details 3", "2023-07-01", "Pending", CaseRowId: "C-3")
+        };
+
+        job.DataJson = JsonSerializer.Serialize(new InstaReportData(
+            new InstaCompany("Reconcile Co Ltd", "-", "U12345", "Company", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"),
+            [], [],
+            new InstaLegalCases(0, 0, 0, 0, 0, 0, 0, 0, 0, updatedCases, 4)));
+        job.DataVersion++;
+        await db.SaveChangesAsync();
+
+        // Re-run backfill
+        var r2 = await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+        Assert.Equal(1, r2.CasesBackfilled); // C-3 added
+        Assert.Equal(2, r2.UpdatedCases); // C-1 and C-2 reconciled
+
+        await db.Entry(scope).ReloadAsync();
+        Assert.Equal(2, scope.Version); // Version bumped on change
+        Assert.Equal(4, scope.NextAliasIndex);
+
+        var sc1 = await db.Set<ModuleScopeCase>().FirstAsync(s => s.ScopeId == scope.ScopeId && s.Alias == "C-1");
+        Assert.True(sc1.IsExcluded);
+        Assert.False(sc1.IncludedInReport);
+        Assert.Equal("Not borrower entity", sc1.ExclusionReason);
+        Assert.Equal("Analyst verified", sc1.AnalystNote);
+
+        var sc2 = await db.Set<ModuleScopeCase>().FirstAsync(s => s.ScopeId == scope.ScopeId && s.Alias == "C-2");
+        Assert.Equal("Old matter (not in latest feed)", sc2.AnalystNote);
+        Assert.Null(sc2.FeedLastSeenUtc);
+
+        var sc3 = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(s => s.ScopeId == scope.ScopeId && s.Alias == "C-3");
+        Assert.NotNull(sc3);
+
+        // Parity checker must report zero discrepancies after backfill reconciliation
+        var parity2 = await PreLoginModuleParity.CheckAsync(db, job.PreLoginReportJobId);
+        Assert.True(parity2.IsClean);
+        Assert.Empty(parity2.Discrepancies);
+        Assert.Equal(3, parity2.LegacyCount);
+        Assert.Equal(3, parity2.ModuleCount);
+    }
 }
 
