@@ -124,6 +124,32 @@ public static partial class FilingClassifier
         R("articles of association", @"articles of association", FilingCategory.Constitutional, "AoA"),
     ];
 
+    /// <summary>Every document type the rules can give, with its category: the closed list the AI fallback must choose from (#499), so a type it gives
+    /// is always one the rules know, and its category comes from here, never from the AI.</summary>
+    public static IReadOnlyDictionary<string, FilingCategory> KnownTypes { get; } =
+        FilenameRules.Concat(TextHeaderRules).Concat(CharterTitleRules)
+            .GroupBy(r => r.FormType, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First().Category, StringComparer.Ordinal);
+
+    private static readonly HashSet<string> TypeNameFillers = new(StringComparer.Ordinal) { "form", "of", "the", "and", "on", "for", "to", "in", "no", "a", "an", "attachment" };
+
+    /// <summary>True when a quoted title line shows <paramref name="formType"/> (review of #504): one of the rules for that type matches the quote, or the
+    /// quote holds every distinctive word of the type's name ("Board Resolution" in "certified true copy of the resolution passed by the board").
+    /// "Government of India" shows no type, though it is on most MCA pages.</summary>
+    public static bool QuoteShowsType(string formType, string quote)
+    {
+        if (string.IsNullOrWhiteSpace(quote)) return false;
+        var flat = Whitespace().Replace(Separators().Replace(quote.ToLowerInvariant(), " "), " ").Trim();
+        foreach (var rule in FilenameRules.Concat(TextHeaderRules).Concat(CharterTitleRules))
+            if (rule.FormType == formType && rule.Pattern.IsMatch(flat)) return true;
+
+        var quoteWords = TypeWord().Matches(flat).Select(m => m.Value).ToHashSet(StringComparer.Ordinal);
+        var typeWords = TypeWord().Matches(formType.ToLowerInvariant()).Select(m => m.Value).Where(w => !TypeNameFillers.Contains(w)).Distinct().ToList();
+        return typeWords.Count > 0 && typeWords.All(quoteWords.Contains);
+    }
+
+    [GeneratedRegex(@"[a-z]+|\d+", RegexOptions.CultureInvariant)]
+    private static partial Regex TypeWord();
+
     public static ClassificationResult Classify(string outerCategoryFolder, string sourceFolder, string originalFileName, string? firstPageText)
     {
         var name = NormaliseName(originalFileName);

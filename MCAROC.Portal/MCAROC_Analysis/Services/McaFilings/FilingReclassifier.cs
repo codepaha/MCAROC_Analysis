@@ -67,10 +67,17 @@ public sealed class FilingReclassificationOptions
     public bool Enabled { get; set; } = true;
     public int BatchSize { get; set; } = 200;
     public int StartDelaySeconds { get; set; } = 60;
+    /// <summary>The AI fallback for documents the rules cannot place (#499). Labels only; one small call per distinct PDF.</summary>
+    public bool AiFallbackEnabled { get; set; } = true;
+    public int AiBatchSize { get; set; } = 20;
+    /// <summary>At most this many document-type calls in any 24 hours (one per distinct PDF; about $0.0003 each).</summary>
+    public int AiMaxCallsPerDay { get; set; } = 300;
+    /// <summary>How often a pass looks for documents to classify again or to type (new imports between passes are typed on the next one).</summary>
+    public int PollMinutes { get; set; } = 10;
 }
 
-/// <summary>After start-up, classifies every stored document older than the current classifier, a batch at a time, then stops until the next start
-/// (new documents are stamped by the processor).</summary>
+/// <summary>Every <see cref="FilingReclassificationOptions.PollMinutes"/>: classifies again every stored document older than the current classifier, then
+/// types the documents the rules could not place with <see cref="FilingAiClassifier"/>. A failed pass is logged and the next one tries again.</summary>
 public sealed class FilingReclassificationWorker(IServiceScopeFactory scopes, IOptions<FilingReclassificationOptions> options, ILogger<FilingReclassificationWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -80,24 +87,33 @@ public sealed class FilingReclassificationWorker(IServiceScopeFactory scopes, IO
         try { await Task.Delay(TimeSpan.FromSeconds(Math.Max(0, opts.StartDelaySeconds)), stoppingToken); }
         catch (OperationCanceledException) { return; }
 
-        int seen = 0, changed = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                using var scope = scopes.CreateScope();
-                var (batchSeen, batchChanged) = await scope.ServiceProvider.GetRequiredService<FilingReclassifier>().ReclassifyBatchAsync(Math.Max(1, opts.BatchSize), stoppingToken);
-                seen += batchSeen; changed += batchChanged;
-                if (batchSeen == 0) break;
+                int seen = 0, changed = 0;
+                while (!stoppingToken.IsCancellationRequested)
+                {
+                    using var scope = scopes.CreateScope();
+                    var (batchSeen, batchChanged) = await scope.ServiceProvider.GetRequiredService<FilingReclassifier>().ReclassifyBatchAsync(Math.Max(1, opts.BatchSize), stoppingToken);
+                    seen += batchSeen; changed += batchChanged;
+                    if (batchSeen == 0) break;
+                }
+                if (seen > 0)
+                    logger.LogInformation("Filing documents re-classified to classifier version {Version}: {Seen} checked, {Changed} changed", FilingClassifier.Version, seen, changed);
+
+                while (opts.AiFallbackEnabled && !stoppingToken.IsCancellationRequested)
+                {
+                    using var scope = scopes.CreateScope();
+                    var (settled, _, _) = await scope.ServiceProvider.GetRequiredService<FilingAiClassifier>().ClassifyBatchAsync(Math.Max(1, opts.AiBatchSize), stoppingToken, Math.Max(0, opts.AiMaxCallsPerDay));
+                    if (settled == 0) break;
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Filing re-classification pass failed; it is tried again at the next start.");
-                return;
-            }
+            catch (Exception ex) { logger.LogError(ex, "Filing classification pass failed; the next pass tries again."); }
+
+            try { await Task.Delay(TimeSpan.FromMinutes(Math.Max(1, opts.PollMinutes)), stoppingToken); }
+            catch (OperationCanceledException) { return; }
         }
-        if (seen > 0)
-            logger.LogInformation("Filing documents re-classified to classifier version {Version}: {Seen} checked, {Changed} changed", FilingClassifier.Version, seen, changed);
     }
 }

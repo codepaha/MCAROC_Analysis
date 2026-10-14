@@ -143,6 +143,7 @@ builder.Services.AddScoped<CompanyNameSuggestionService>();
 builder.Services.Configure<MCAROC_Analysis.Services.McaFilings.FilingReclassificationOptions>(
     builder.Configuration.GetSection(MCAROC_Analysis.Services.McaFilings.FilingReclassificationOptions.SectionName));
 builder.Services.AddScoped<MCAROC_Analysis.Services.McaFilings.FilingReclassifier>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.McaFilings.FilingAiClassifier>();
 builder.Services.AddHostedService<MCAROC_Analysis.Services.McaFilings.FilingReclassificationWorker>();
 // Whether each vendor case is the company's (#489, decision a): rules first, then a cached judgement; only attributed cases are shown.
 builder.Services.Configure<MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttributionOptions>(
