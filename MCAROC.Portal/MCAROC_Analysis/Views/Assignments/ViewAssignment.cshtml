@@ -438,6 +438,7 @@
                                 <option value="excluded">Excluded Only</option>
                                 <option value="suggested">Suggested Exclusion</option>
                                 <option value="auto-excluded">Excluded Automatically</option>
+                                <option value="unconfirmed">Could not confirm (Review)</option>
                             </select>
                         </div>
                     </div>
@@ -489,6 +490,7 @@
                                         Model.CaseAttributions.TryGetValue(c.CaseRowId, out var attr);
                                         var isSuggested = attr?.IsSuggestedExclusion == true;
                                         var isAutoExcluded = attr?.IsAutoExcluded == true;
+                                        var isUnconfirmed = attr?.IsUnconfirmed == true;
                                         <tr data-case-row-id="@c.CaseRowId"
                                             data-cnr="@c.CnrNumber"
                                             data-court="@c.Court"
@@ -500,6 +502,7 @@
                                             data-excluded="@c.IsExcludedFromReport.ToString().ToLowerInvariant()"
                                             data-is-suggested="@isSuggested.ToString().ToLowerInvariant()"
                                             data-is-auto-excluded="@isAutoExcluded.ToString().ToLowerInvariant()"
+                                            data-is-unconfirmed="@isUnconfirmed.ToString().ToLowerInvariant()"
                                             data-exclusion-reason="@(c.ExclusionReason ?? "")"
                                             data-analyst-note="@(c.AnalystNote ?? "")"
                                             data-parties="@c.CaseDetails">
@@ -576,6 +579,18 @@
                                                             {
                                                                 <div class="small text-danger text-truncate" style="max-width: 140px;" title="@attr.Party">Party: @attr.Party</div>
                                                             }
+                                                            @if (!string.IsNullOrWhiteSpace(attr?.Reason))
+                                                            {
+                                                                <div class="small text-muted text-truncate" style="max-width: 140px;" title="@attr.Reason">@attr.Reason</div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                    else if (isUnconfirmed)
+                                                    {
+                                                        <div class="mt-1">
+                                                            <span class="badge bg-secondary-subtle text-secondary border border-secondary" title="@attr?.Reason">
+                                                                <i class="bi bi-question-diamond me-1"></i>Could not confirm (Review)
+                                                            </span>
                                                             @if (!string.IsNullOrWhiteSpace(attr?.Reason))
                                                             {
                                                                 <div class="small text-muted text-truncate" style="max-width: 140px;" title="@attr.Reason">@attr.Reason</div>
@@ -883,6 +898,7 @@
             const rowIsExcluded = row.getAttribute('data-excluded') === 'true';
             const rowIsSuggested = row.getAttribute('data-is-suggested') === 'true';
             const rowIsAutoExcluded = row.getAttribute('data-is-auto-excluded') === 'true';
+            const rowIsUnconfirmed = row.getAttribute('data-is-unconfirmed') === 'true';
 
             let matchesSearch = !searchText || rowText.includes(searchText);
             let matchesCategory = category === 'all' || rowCategory.includes(category);
@@ -892,7 +908,8 @@
                                    (inclusion === 'included' && !rowIsExcluded) ||
                                    (inclusion === 'excluded' && rowIsExcluded) ||
                                    (inclusion === 'suggested' && rowIsSuggested) ||
-                                   (inclusion === 'auto-excluded' && rowIsAutoExcluded);
+                                   (inclusion === 'auto-excluded' && rowIsAutoExcluded) ||
+                                   (inclusion === 'unconfirmed' && rowIsUnconfirmed);
 
             if (matchesSearch && matchesCategory && matchesDirection && matchesStatus && matchesInclusion) {
                 row.style.display = '';

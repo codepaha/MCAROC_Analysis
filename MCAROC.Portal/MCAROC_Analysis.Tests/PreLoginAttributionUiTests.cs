@@ -405,5 +405,153 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
         var autoDecision = await verifyDb.PreLoginAttributionDecisions.FirstOrDefaultAsync(d => d.CaseRowId == "C-9" && d.Action == PreLoginAttributionAction.AutomaticallyApplied);
         Assert.Null(autoDecision);
     }
+
+    [Fact]
+    public async Task RejectSuggestion_Preserves_AnalystManualExclusion_And_DoesNotModifyDataJson()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            new("district", "Saket Court", "CNR10", "CS/1000/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "KAPPA EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-10", Petitioner: "KAPPA EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+        };
+        var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "KAPPA INDUSTRIES LIMITED", "Ken Block", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, options, new ServiceCollection().BuildServiceProvider());
+        await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        var suggestions = await attributionService.GetOpenSuggestionsAsync(job.PreLoginReportJobId);
+        var item = Assert.Single(suggestions);
+
+        // Simulate analyst manually excluding this case earlier for settlement reasons
+        var scBefore = await db.Set<ModuleScopeCase>().FirstAsync(x => x.ScopeCaseId == item.ScopeCaseId);
+        scBefore.IsExcluded = true;
+        scBefore.ExclusionReason = "Analyst manual settlement exclusion";
+        await db.SaveChangesAsync();
+
+        var jobBeforeReject = await db.PreLoginReportJobs.FirstAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+        var initialDataJson = jobBeforeReject.DataJson;
+        var initialVersion = jobBeforeReject.DataVersion;
+
+        // Analyst rejects the attribution suggestion
+        var ok = await attributionService.RejectSuggestionWithSyncAsync(item.ScopeCaseId, "Analyst");
+        Assert.True(ok);
+
+        // Verify sc is STILL excluded with the analyst's manual exclusion reason
+        await using var verifyDb = Ctx();
+        var scAfter = await verifyDb.Set<ModuleScopeCase>().FirstAsync(x => x.ScopeCaseId == item.ScopeCaseId);
+        Assert.True(scAfter.IsExcluded);
+        Assert.Equal("Analyst manual settlement exclusion", scAfter.ExclusionReason);
+
+        // Verify DataJson and DataVersion were NOT altered
+        var jobAfter = await verifyDb.PreLoginReportJobs.FirstAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+        Assert.Equal(initialDataJson, jobAfter.DataJson);
+        Assert.Equal(initialVersion, jobAfter.DataVersion);
+
+        // Verify decision was recorded as Rejected
+        var decision = await verifyDb.PreLoginAttributionDecisions.FirstOrDefaultAsync(d => d.ScopeCaseId == item.ScopeCaseId && d.Action == PreLoginAttributionAction.Rejected);
+        Assert.NotNull(decision);
+    }
+
+    [Fact]
+    public async Task UndoExclusion_WhenNotAutomaticallyApplied_FailsAndDoesNotRestore()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            new("district", "Saket Court", "CNR11", "CS/1100/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "LAMBDA EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-11", Petitioner: "LAMBDA EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+        };
+        var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "LAMBDA LIMITED", "Larry Page", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var sc = await db.Set<ModuleScopeCase>().FirstAsync(x => x.Alias == "C-11");
+        sc.IsExcluded = true;
+        sc.ExclusionReason = "Analyst manual exclusion";
+        await db.SaveChangesAsync();
+
+        var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, options, new ServiceCollection().BuildServiceProvider());
+
+        // Attempt undo on a case that was never AutomaticallyApplied
+        var undone = await attributionService.UndoExclusionWithSyncAsync(sc.ScopeCaseId, "Analyst");
+        Assert.False(undone);
+
+        // Verify case remains excluded
+        await using var verifyDb = Ctx();
+        var scAfter = await verifyDb.Set<ModuleScopeCase>().FirstAsync(x => x.ScopeCaseId == sc.ScopeCaseId);
+        Assert.True(scAfter.IsExcluded);
+        Assert.Equal("Analyst manual exclusion", scAfter.ExclusionReason);
+    }
+
+    [Fact]
+    public async Task TrustReport_WhenNoDecisionsEvaluated_ReturnsNullPrecision()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            new("district", "Saket Court", "CNR12", "CS/1200/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "MU ENTERPRISES EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-12", Petitioner: "MU ENTERPRISES EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+        };
+        var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "MU ENTERPRISES LIMITED", "Mark Davis", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        // Run in Suggest mode - only Suggested decisions exist (denominator = 0)
+        var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, options, new ServiceCollection().BuildServiceProvider());
+        await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        var report = await attributionService.GetTrustReportAsync(job.PreLoginReportJobId);
+        Assert.NotNull(report);
+        Assert.Null(report.OverallPrecision);
+
+        var row = Assert.Single(report.Rows);
+        Assert.Null(row.Precision);
+    }
+
+    [Fact]
+    public async Task TrustReport_DateFiltering_CapturesAllEventsUpToExclusiveUtcUpperBound()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            new("district", "Saket Court", "CNR13", "CS/1300/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "NU TRADING EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-13", Petitioner: "NU TRADING EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+        };
+        var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "NU TRADING LIMITED", "Nancy Wheeler", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, options, new ServiceCollection().BuildServiceProvider());
+        await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        var suggestions = await attributionService.GetOpenSuggestionsAsync(job.PreLoginReportJobId);
+        var item = Assert.Single(suggestions);
+
+        // Accept suggestion
+        await attributionService.AcceptSuggestionWithSyncAsync(item.ScopeCaseId, "Analyst");
+
+        // Manually adjust the decision timestamp to 2026-10-14 18:00:00 UTC (which is 23:30 IST on Oct 14)
+        var decision = await db.PreLoginAttributionDecisions.FirstAsync(d => d.ScopeCaseId == item.ScopeCaseId && d.Action == PreLoginAttributionAction.Accepted);
+        decision.DecidedUtc = new DateTime(2026, 10, 14, 18, 0, 0, DateTimeKind.Utc);
+        await db.SaveChangesAsync();
+
+        // Query with IST bounds for Oct 14, 2026
+        // IST Oct 14 00:00:00 is Oct 13 18:30:00 UTC
+        // IST Oct 15 00:00:00 (exclusive upper bound) is Oct 14 18:30:00 UTC
+        var startUtc = new DateTime(2026, 10, 13, 18, 30, 0, DateTimeKind.Utc);
+        var endUtcExclusive = new DateTime(2026, 10, 14, 18, 30, 0, DateTimeKind.Utc);
+
+        var report = await attributionService.GetTrustReportAsync(job.PreLoginReportJobId, startUtc, endUtcExclusive);
+        Assert.NotNull(report);
+        Assert.Equal(1, report.TotalAccepted);
+        Assert.Equal(1.0, report.OverallPrecision);
+    }
 }
 

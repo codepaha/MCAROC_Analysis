@@ -16,7 +16,8 @@ public sealed record PreLoginCaseAttributionDto(
     bool IsExcluded,
     string? ExclusionReason,
     bool IsSuggestedExclusion,
-    bool IsAutoExcluded
+    bool IsAutoExcluded,
+    bool IsUnconfirmed = false
 );
 
 public sealed record PreLoginSuggestionItemDto(

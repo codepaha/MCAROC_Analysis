@@ -1,6 +1,7 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.LitigationModule.PreLogin;
 using MCAROC_Analysis.Services.PreLoginReports;
 using Microsoft.AspNetCore.Authorization;
@@ -303,16 +304,29 @@ public sealed class AssignmentsController(
     }
 
     [HttpGet("trust-report")]
-    public async Task<IActionResult> TrustReport(long? jobId, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct)
+    public async Task<IActionResult> TrustReport(long? jobId, DateTime? fromDate, DateTime? toDate, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct)
     {
-        var report = await attribution.GetTrustReportAsync(jobId, fromUtc, toUtc, ct);
+        var effectiveFrom = fromDate ?? fromUtc;
+        var effectiveTo = toDate ?? toUtc;
+
+        DateTime? startUtc = effectiveFrom.HasValue
+            ? TimeZoneInfo.ConvertTimeToUtc(effectiveFrom.Value.Date, Ist.Zone)
+            : null;
+
+        DateTime? endUtcExclusive = effectiveTo.HasValue
+            ? TimeZoneInfo.ConvertTimeToUtc(effectiveTo.Value.Date.AddDays(1), Ist.Zone)
+            : null;
+
+        var report = await attribution.GetTrustReportAsync(jobId, startUtc, endUtcExclusive, ct);
 
         var vm = new AssignmentTrustReportViewModel
         {
             Report = report,
             SelectedJobId = jobId,
-            FromUtc = fromUtc,
-            ToUtc = toUtc
+            FromDate = effectiveFrom?.Date,
+            ToDate = effectiveTo?.Date,
+            FromUtc = effectiveFrom?.Date,
+            ToUtc = effectiveTo?.Date
         };
 
         return View(vm);

@@ -82,6 +82,8 @@ public sealed class AssignmentTrustReportViewModel
 {
     public PreLoginTrustReport Report { get; init; } = null!;
     public long? SelectedJobId { get; init; }
+    public DateTime? FromDate { get; init; }
+    public DateTime? ToDate { get; init; }
     public DateTime? FromUtc { get; init; }
     public DateTime? ToUtc { get; init; }
 }

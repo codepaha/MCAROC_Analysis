@@ -85,6 +85,9 @@ public static class AuditRouteRegistry
             { ("Assignments", "Retry"), (AuditActionType.PreLoginReportEdited, AuditRulePolicy.Always) },
             { ("Assignments", "SingleCaseEdit"), (AuditActionType.PreLoginReportEdited, AuditRulePolicy.Always) },
             { ("Assignments", "BatchUpdateCases"), (AuditActionType.PreLoginReportEdited, AuditRulePolicy.Always) },
+            { ("Assignments", "AcceptSuggestion"), (AuditActionType.PreLoginReportEdited, AuditRulePolicy.Always) },
+            { ("Assignments", "RejectSuggestion"), (AuditActionType.PreLoginReportEdited, AuditRulePolicy.Always) },
+            { ("Assignments", "UndoExclusion"), (AuditActionType.PreLoginReportEdited, AuditRulePolicy.Always) },
         };
 
     public static (AuditActionType ActionType, AuditRulePolicy Policy) Resolve(string controller, string action)
