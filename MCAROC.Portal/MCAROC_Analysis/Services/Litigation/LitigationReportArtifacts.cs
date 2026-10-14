@@ -305,7 +305,7 @@ public static class LitigationReportArtifacts
         foreach (var value in new[]
         {
             serial.ToString(CultureInfo.InvariantCulture), report.AssignmentNumber, report.CompanyName,
-            item.ProviderCaseId, item.CnrNumber, item.CourtCategory, view.Side switch { LitigationCompanySide.ByCompany => "By", LitigationCompanySide.AgainstCompany => "Against", _ => "Not determined" },
+            item.ProviderCaseId, item.CnrNumber, item.CourtCategory, view.Side switch { LitigationCompanySide.ByCompany => "By", LitigationCompanySide.AgainstCompany => "Against", LitigationCompanySide.Both => "Both sides", _ => "Not determined" },
             LitigationCasePresentation.Label(view.Institution), view.Age.Headline, item.Type, item.Court, item.Bench,
             item.CaseNumber, item.CaseType, item.CaseYear, item.CaseStage, item.CaseStatus, item.Act, item.FilingDate,
             item.LastHearingDate, item.NextHearingDate, item.DecisionDate, item.State, item.District,
@@ -550,12 +550,15 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
     /// the company and cases it brought each show total (pending / disposed / unknown).</summary>
     private void ComposeForumSummary(IContainer container)
     {
-        var showUnspecified = views.Any(v => v.Side is LitigationCompanySide.Both or LitigationCompanySide.Unknown);
+        // "Both sides" is a known result, kept apart from "not determined" (the side could not be told); each column only when used.
+        var showBoth = views.Any(v => v.Side == LitigationCompanySide.Both);
+        var showUnspecified = views.Any(v => v.Side == LitigationCompanySide.Unknown);
         container.Table(table =>
         {
             table.ColumnsDefinition(columns =>
             {
                 columns.RelativeColumn(2.2f); columns.RelativeColumn(1); columns.RelativeColumn(2); columns.RelativeColumn(2);
+                if (showBoth) columns.RelativeColumn(2);
                 if (showUnspecified) columns.RelativeColumn(2);
             });
             IContainer Head(IContainer c) => c.Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4);
@@ -565,6 +568,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
                 header.Cell().Element(Head).AlignRight().Text("TOTAL").Bold().FontSize(7).FontColor(Navy);
                 header.Cell().Element(Head).AlignRight().Text("AGAINST COMPANY").Bold().FontSize(7).FontColor(Navy);
                 header.Cell().Element(Head).AlignRight().Text("BY COMPANY").Bold().FontSize(7).FontColor(Navy);
+                if (showBoth) header.Cell().Element(Head).AlignRight().Text("BOTH SIDES").Bold().FontSize(7).FontColor(Navy);
                 if (showUnspecified) header.Cell().Element(Head).AlignRight().Text("NOT DETERMINED").Bold().FontSize(7).FontColor(Navy);
             });
 
@@ -577,7 +581,8 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
                 table.Cell().Element(Cell).AlignRight().Text(t => { var span = t.Span(rows.Count.ToString(CultureInfo.InvariantCulture)).FontSize(7.5f); if (total) span.Bold(); });
                 Breakdown(table.Cell().Element(Cell), rows.Where(v => v.Side == LitigationCompanySide.AgainstCompany).ToList());
                 Breakdown(table.Cell().Element(Cell), rows.Where(v => v.Side == LitigationCompanySide.ByCompany).ToList());
-                if (showUnspecified) Breakdown(table.Cell().Element(Cell), rows.Where(v => v.Side is LitigationCompanySide.Both or LitigationCompanySide.Unknown).ToList());
+                if (showBoth) Breakdown(table.Cell().Element(Cell), rows.Where(v => v.Side == LitigationCompanySide.Both).ToList());
+                if (showUnspecified) Breakdown(table.Cell().Element(Cell), rows.Where(v => v.Side == LitigationCompanySide.Unknown).ToList());
             }
 
             foreach (var institution in Enum.GetValues<LitigationInstitution>())

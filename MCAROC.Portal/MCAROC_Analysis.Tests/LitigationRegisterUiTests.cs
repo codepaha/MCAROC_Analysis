@@ -230,11 +230,15 @@ public class LitigationRegisterUiTests
         Assert.Equal(0, summary.ForForum(LitigationInstitution.Nclat).Total); // a forum with nothing found is still a row of zeros
         Assert.False(summary.HasNotDetermined);
 
-        // a company on both sides, or on neither, is "not determined"
+        // a company on both sides is a known result with its own column; only a side that could not be told is "not determined"
         summary.Add(LitigationInstitution.Itat, LitigationCompanySide.Both, LitigationCaseStatusBucket.Pending);
+        Assert.True(summary.HasBoth);
+        Assert.False(summary.HasNotDetermined);
         summary.Add(LitigationInstitution.Itat, LitigationCompanySide.Unknown, LitigationCaseStatusBucket.Disposed);
         Assert.True(summary.HasNotDetermined);
-        Assert.Equal(new LitigationForumSummary.Counts(1, 1, 0), summary.Cell(LitigationInstitution.Itat, LitigationForumSummary.SideColumn.NotDetermined));
+        Assert.Equal(new LitigationForumSummary.Counts(1, 0, 0), summary.Cell(LitigationInstitution.Itat, LitigationForumSummary.SideColumn.Both));
+        Assert.Equal(new LitigationForumSummary.Counts(0, 1, 0), summary.Cell(LitigationInstitution.Itat, LitigationForumSummary.SideColumn.NotDetermined));
+        Assert.Equal(2, summary.ForForum(LitigationInstitution.Itat).Total);
         Assert.Equal(6, summary.Total.Total);
     }
 }

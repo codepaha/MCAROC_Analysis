@@ -14,12 +14,15 @@ public sealed class LitigationForumSummary
 
     private readonly Dictionary<(LitigationInstitution Forum, SideColumn Side), Counts> _cells = [];
 
-    public enum SideColumn { Against, By, NotDetermined }
+    /// <summary><see cref="Both"/> is a known result (the company is named on both sides), kept apart from <see cref="NotDetermined"/>, where the side
+    /// could not be told.</summary>
+    public enum SideColumn { Against, By, Both, NotDetermined }
 
     public static SideColumn ColumnOf(LitigationCompanySide side) => side switch
     {
         LitigationCompanySide.AgainstCompany => SideColumn.Against,
         LitigationCompanySide.ByCompany => SideColumn.By,
+        LitigationCompanySide.Both => SideColumn.Both,
         _ => SideColumn.NotDetermined
     };
 
@@ -38,12 +41,15 @@ public sealed class LitigationForumSummary
     public Counts Cell(LitigationInstitution forum, SideColumn side) => _cells.GetValueOrDefault((forum, side), new Counts(0, 0, 0));
 
     public Counts ForForum(LitigationInstitution forum) =>
-        Cell(forum, SideColumn.Against) + Cell(forum, SideColumn.By) + Cell(forum, SideColumn.NotDetermined);
+        Enum.GetValues<SideColumn>().Aggregate(new Counts(0, 0, 0), (sum, side) => sum + Cell(forum, side));
 
     public Counts ForSide(SideColumn side) => Enum.GetValues<LitigationInstitution>().Aggregate(new Counts(0, 0, 0), (sum, f) => sum + Cell(f, side));
 
-    public Counts Total => ForSide(SideColumn.Against) + ForSide(SideColumn.By) + ForSide(SideColumn.NotDetermined);
+    public Counts Total => Enum.GetValues<SideColumn>().Aggregate(new Counts(0, 0, 0), (sum, side) => sum + ForSide(side));
 
     /// <summary>The "not determined" column is only worth showing when a case's side could not be told.</summary>
     public bool HasNotDetermined => ForSide(SideColumn.NotDetermined).Total > 0;
+
+    /// <summary>The "both sides" column is only shown when the company is named on both sides of some case.</summary>
+    public bool HasBoth => ForSide(SideColumn.Both).Total > 0;
 }

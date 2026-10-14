@@ -210,9 +210,9 @@ public class StructuredFactsProvider(AppDbContext db)
 
         var names = await CompanyNamesAsync(requestId, companyName, ingestionRunId, ct);
         var summary = new LitigationForumSummary();
-        var pending = 0; var disposed = 0; var by = 0; var against = 0; var withNext = 0;
-        // status x side: [pending, disposed, unknown] x [against, by, not determined]
-        var crossTab = new int[3, 3];
+        var pending = 0; var disposed = 0; var by = 0; var against = 0; var both = 0; var withNext = 0;
+        // status x side: [pending, disposed, unknown] x [against, by, both sides, not determined]
+        var crossTab = new int[3, Enum.GetValues<LitigationForumSummary.SideColumn>().Length];
         foreach (var c in cases)
         {
             var bucket = LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage);
@@ -225,6 +225,7 @@ public class StructuredFactsProvider(AppDbContext db)
             }
             if (side == LitigationCompanySide.ByCompany) by++;
             else if (side == LitigationCompanySide.AgainstCompany) against++;
+            else if (side == LitigationCompanySide.Both) both++;
             if (!string.IsNullOrWhiteSpace(c.NextHearingDate)) withNext++;
             crossTab[(int)bucket, (int)LitigationForumSummary.ColumnOf(side)]++;
         }
@@ -232,12 +233,14 @@ public class StructuredFactsProvider(AppDbContext db)
             .OrderByDescending(g => g.Count()).ThenBy(g => g.Key).Select(g => $"{g.Key} {g.Count()}"));
         var text = $"{cases.Count} litigation case(s) fetched from the litigation data service for this company: {pending} pending, {disposed} disposed, "
             + $"{cases.Count - pending - disposed} of unknown status; {against} against the company, {by} by the company"
-            + (by + against < cases.Count ? $", {cases.Count - by - against} of unstated direction" : "")
+            + (both > 0 ? $", {both} with the company on both sides" : "")
+            + (by + against + both < cases.Count ? $", {cases.Count - by - against - both} of unstated direction" : "")
             + $"; {withNext} with a next hearing date. By court type: {courts}.";
         var facts = new List<StructuredFact> { new("Litigation", text, null, null) };
 
         string Row(string label, LitigationCaseStatusBucket bucket) =>
-            $"{label}: {crossTab[(int)bucket, 0]} against the company, {crossTab[(int)bucket, 1]} by the company, {crossTab[(int)bucket, 2]} side not determined";
+            $"{label}: {crossTab[(int)bucket, (int)LitigationForumSummary.SideColumn.Against]} against the company, {crossTab[(int)bucket, (int)LitigationForumSummary.SideColumn.By]} by the company, "
+            + $"{crossTab[(int)bucket, (int)LitigationForumSummary.SideColumn.Both]} with the company on both sides, {crossTab[(int)bucket, (int)LitigationForumSummary.SideColumn.NotDetermined]} side not determined";
         facts.Add(new StructuredFact("Litigation",
             $"Litigation cases by status and the company's side: {Row("pending", LitigationCaseStatusBucket.Pending)}; {Row("disposed", LitigationCaseStatusBucket.Disposed)}; "
             + $"{Row("status not reported", LitigationCaseStatusBucket.Unknown)}.", null, null));
@@ -250,7 +253,8 @@ public class StructuredFactsProvider(AppDbContext db)
                 return $"{c.Total} ({c.Pending} pending, {c.Disposed} disposed, {c.Unknown} unknown)";
             }
             return $"{LitigationCasePresentation.Label(f)}: {summary.ForForum(f).Total} in all — against the company {Part(LitigationForumSummary.SideColumn.Against)}; "
-                + $"by the company {Part(LitigationForumSummary.SideColumn.By)}; side not determined {Part(LitigationForumSummary.SideColumn.NotDetermined)}";
+                + $"by the company {Part(LitigationForumSummary.SideColumn.By)}; company on both sides {Part(LitigationForumSummary.SideColumn.Both)}; "
+                + $"side not determined {Part(LitigationForumSummary.SideColumn.NotDetermined)}";
         });
         facts.Add(new StructuredFact("Litigation", "Litigation cases by forum: " + string.Join(". ", forums) + ".", null, null));
 
