@@ -1,4 +1,5 @@
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.LitigationModule.PreLogin;
 using MCAROC_Analysis.Services.PreLoginReports;
 
 namespace MCAROC_Analysis.Models;
@@ -46,6 +47,7 @@ public sealed class AssignmentDetailViewModel
     public PreLoginLitigationTarget? BorrowerTarget { get; init; }
     public IReadOnlyList<PreLoginLitigationTarget> DirectorTargets { get; init; } = [];
     public IReadOnlyList<LegalCaseRecord> Cases { get; init; } = [];
+    public IReadOnlyDictionary<string, PreLoginCaseAttributionDto> CaseAttributions { get; init; } = new Dictionary<string, PreLoginCaseAttributionDto>(StringComparer.OrdinalIgnoreCase);
 
     // KPI Metrics
     public int TotalCases => Cases.Count;
@@ -54,5 +56,33 @@ public sealed class AssignmentDetailViewModel
     public int TribunalCases => Cases.Count(c => c.Category.Contains("drt") || c.Category.Contains("nclt") || c.Category.Contains("consumer") || c.Category.Contains("rera") || c.Category.Contains("tribunal"));
     public int IncludedCases => Cases.Count(c => !c.IsExcludedFromReport);
     public int ExcludedCases => Cases.Count(c => c.IsExcludedFromReport);
+    public int SuggestedExclusionsCount => CaseAttributions.Values.Count(a => a.IsSuggestedExclusion);
+    public int AutoExcludedCount => CaseAttributions.Values.Count(a => a.IsAutoExcluded);
+}
+
+public sealed class AssignmentSuggestionsViewModel
+{
+    public IReadOnlyList<PreLoginSuggestionItemDto> Items { get; init; } = [];
+    public long? SelectedJobId { get; init; }
+    public string? SelectedReasonKind { get; init; }
+    public PreLoginTargetKind? SelectedTargetKind { get; init; }
+    public IReadOnlyList<string> AvailableReasons { get; init; } = [];
+}
+
+public sealed class AssignmentAutoExclusionsViewModel
+{
+    public IReadOnlyList<PreLoginAutoExcludedItemDto> Items { get; init; } = [];
+    public long? SelectedJobId { get; init; }
+    public string? SelectedReasonKind { get; init; }
+    public PreLoginTargetKind? SelectedTargetKind { get; init; }
+    public IReadOnlyList<string> AvailableReasons { get; init; } = [];
+}
+
+public sealed class AssignmentTrustReportViewModel
+{
+    public PreLoginTrustReport Report { get; init; } = null!;
+    public long? SelectedJobId { get; init; }
+    public DateTime? FromUtc { get; init; }
+    public DateTime? ToUtc { get; init; }
 }
 

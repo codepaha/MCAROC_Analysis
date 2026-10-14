@@ -21,8 +21,23 @@ public sealed record PreLoginAttributionRunResult(
 public sealed record TrustReportRow(
     string ReasonKind, int Suggested, int Accepted, int Rejected, int AutoApplied, int Undone, int AnalystMiss, double Precision);
 
+public sealed record TrustReportTargetRow(
+    PreLoginTargetKind TargetKind, int Suggested, int Accepted, int Rejected, int AutoApplied, int Undone, int AnalystMiss, double Precision);
+
 public sealed record PreLoginTrustReport(
-    long? JobId, IReadOnlyList<TrustReportRow> Rows, int TotalDecisions, double OverallPrecision);
+    long? JobId,
+    DateTime? FromUtc,
+    DateTime? ToUtc,
+    IReadOnlyList<TrustReportRow> Rows,
+    IReadOnlyList<TrustReportTargetRow> TargetRows,
+    int TotalDecisions,
+    int TotalSuggested,
+    int TotalAccepted,
+    int TotalRejected,
+    int TotalAutoApplied,
+    int TotalUndone,
+    int TotalMisses,
+    double OverallPrecision);
 
 /// <summary>
 /// Pre-login litigation case attribution and automatic exclusion engine (#446).
@@ -483,6 +498,328 @@ public sealed class PreLoginAttributionService(
         return true;
     }
 
+    public async Task<IReadOnlyDictionary<string, PreLoginCaseAttributionDto>> GetCaseAttributionsForJobAsync(long jobId, CancellationToken ct = default)
+    {
+        var scope = await db.Set<ModuleScope>().AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Kind == ModuleScopeKind.Assignment && s.ExternalId == jobId, ct);
+
+        if (scope is null) return new Dictionary<string, PreLoginCaseAttributionDto>(StringComparer.OrdinalIgnoreCase);
+
+        var scopeCases = await db.Set<ModuleScopeCase>().AsNoTracking()
+            .Where(sc => sc.ScopeId == scope.ScopeId)
+            .ToListAsync(ct);
+
+        var targets = await db.PreLoginLitigationTargets.AsNoTracking()
+            .Where(t => t.PreLoginReportJobId == jobId)
+            .ToDictionaryAsync(t => t.PreLoginLitigationTargetId, ct);
+
+        var decisions = await db.PreLoginAttributionDecisions.AsNoTracking()
+            .Where(d => d.PreLoginReportJobId == jobId)
+            .GroupBy(d => d.ScopeCaseId)
+            .ToDictionaryAsync(g => g.Key, g => g.OrderByDescending(d => d.DecidedUtc).First(), ct);
+
+        var dict = new Dictionary<string, PreLoginCaseAttributionDto>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var sc in scopeCases)
+        {
+            var target = sc.TargetId.HasValue && targets.TryGetValue(sc.TargetId.Value, out var t) ? t : null;
+            var targetKind = target?.TargetKind ?? PreLoginTargetKind.Borrower;
+            var targetName = target?.TargetName;
+
+            decisions.TryGetValue(sc.ScopeCaseId, out var lastDecision);
+
+            bool isSuggestedExclusion = sc.AttributionOutcome == LitigationAttributionOutcome.NotTheCompany &&
+                                        !sc.IsExcluded &&
+                                        lastDecision?.Action != PreLoginAttributionAction.Rejected;
+
+            bool isAutoExcluded = sc.IsExcluded &&
+                                  lastDecision?.Action == PreLoginAttributionAction.AutomaticallyApplied;
+
+            dict[sc.Alias] = new PreLoginCaseAttributionDto(
+                sc.ScopeCaseId,
+                sc.Alias,
+                sc.TargetId,
+                targetName,
+                targetKind,
+                sc.AttributionOutcome,
+                sc.AttributionRule,
+                sc.AttributionParty,
+                sc.AttributionReason,
+                sc.IsExcluded,
+                sc.ExclusionReason,
+                isSuggestedExclusion,
+                isAutoExcluded
+            );
+        }
+
+        return dict;
+    }
+
+    public async Task<IReadOnlyList<PreLoginSuggestionItemDto>> GetOpenSuggestionsAsync(
+        long? jobId = null,
+        string? reasonKind = null,
+        PreLoginTargetKind? targetKind = null,
+        CancellationToken ct = default)
+    {
+        var scQuery = db.Set<ModuleScopeCase>().AsNoTracking()
+            .Where(sc => sc.AttributionOutcome == LitigationAttributionOutcome.NotTheCompany && !sc.IsExcluded);
+
+        var scopeCases = await scQuery.ToListAsync(ct);
+        if (scopeCases.Count == 0) return [];
+
+        var scopeIds = scopeCases.Select(sc => sc.ScopeId).Distinct().ToList();
+        var scopes = await db.Set<ModuleScope>().AsNoTracking()
+            .Where(s => scopeIds.Contains(s.ScopeId) && s.Kind == ModuleScopeKind.Assignment)
+            .ToDictionaryAsync(s => s.ScopeId, ct);
+
+        var jobIds = scopes.Values.Select(s => s.ExternalId).Distinct().ToList();
+        if (jobId.HasValue) jobIds = jobIds.Where(id => id == jobId.Value).ToList();
+
+        var jobs = await db.PreLoginReportJobs.AsNoTracking()
+            .Where(j => jobIds.Contains(j.PreLoginReportJobId))
+            .ToDictionaryAsync(j => j.PreLoginReportJobId, ct);
+
+        var targets = await db.PreLoginLitigationTargets.AsNoTracking()
+            .Where(t => jobIds.Contains(t.PreLoginReportJobId))
+            .ToDictionaryAsync(t => t.PreLoginLitigationTargetId, ct);
+
+        var scopeCaseIds = scopeCases.Select(sc => sc.ScopeCaseId).ToList();
+        var decisions = await db.PreLoginAttributionDecisions.AsNoTracking()
+            .Where(d => scopeCaseIds.Contains(d.ScopeCaseId))
+            .GroupBy(d => d.ScopeCaseId)
+            .ToDictionaryAsync(g => g.Key, g => g.OrderByDescending(d => d.DecidedUtc).First(), ct);
+
+        var results = new List<PreLoginSuggestionItemDto>();
+
+        foreach (var sc in scopeCases)
+        {
+            if (!scopes.TryGetValue(sc.ScopeId, out var scope)) continue;
+            if (jobId.HasValue && scope.ExternalId != jobId.Value) continue;
+            if (!jobs.TryGetValue(scope.ExternalId, out var job)) continue;
+
+            if (decisions.TryGetValue(sc.ScopeCaseId, out var lastDecision))
+            {
+                if (lastDecision.Action == PreLoginAttributionAction.Rejected) continue;
+            }
+
+            var target = sc.TargetId.HasValue && targets.TryGetValue(sc.TargetId.Value, out var t) ? t : null;
+            var actualTargetKind = target?.TargetKind ?? PreLoginTargetKind.Borrower;
+            var actualTargetName = target?.TargetName ?? job.SubmittedCompanyName ?? job.Cin;
+
+            if (targetKind.HasValue && actualTargetKind != targetKind.Value) continue;
+            if (!string.IsNullOrWhiteSpace(reasonKind) && !string.Equals(sc.AttributionRule, reasonKind, StringComparison.OrdinalIgnoreCase)) continue;
+
+            LegalCaseRecord? caseRecord = null;
+            if (!string.IsNullOrWhiteSpace(job.DataJson))
+            {
+                try
+                {
+                    var data = JsonSerializer.Deserialize<InstaReportData>(job.DataJson);
+                    caseRecord = data?.LegalCases?.Cases?.FirstOrDefault(c => string.Equals(c.CaseRowId, sc.Alias, StringComparison.OrdinalIgnoreCase));
+                }
+                catch { }
+            }
+
+            var suggestedUtc = decisions.TryGetValue(sc.ScopeCaseId, out var d) ? d.DecidedUtc : (sc.UpdatedUtc ?? sc.CreatedUtc);
+
+            results.Add(new PreLoginSuggestionItemDto(
+                sc.ScopeCaseId,
+                job.PreLoginReportJobId,
+                job.SubmittedCompanyName ?? job.Cin,
+                job.Cin,
+                job.BatchId,
+                sc.Alias,
+                sc.TargetId,
+                actualTargetName,
+                actualTargetKind,
+                caseRecord?.Court,
+                caseRecord?.CaseNo,
+                caseRecord?.Category,
+                sc.AttributionRule ?? "rule",
+                sc.AttributionParty,
+                sc.AttributionReason ?? "Suggested exclusion",
+                suggestedUtc
+            ));
+        }
+
+        return results.OrderByDescending(r => r.SuggestedUtc).ToList();
+    }
+
+    public async Task<IReadOnlyList<PreLoginAutoExcludedItemDto>> GetAutoExcludedCasesAsync(
+        long? jobId = null,
+        string? reasonKind = null,
+        PreLoginTargetKind? targetKind = null,
+        CancellationToken ct = default)
+    {
+        var scQuery = db.Set<ModuleScopeCase>().AsNoTracking()
+            .Where(sc => sc.IsExcluded);
+
+        var scopeCases = await scQuery.ToListAsync(ct);
+        if (scopeCases.Count == 0) return [];
+
+        var scopeIds = scopeCases.Select(sc => sc.ScopeId).Distinct().ToList();
+        var scopes = await db.Set<ModuleScope>().AsNoTracking()
+            .Where(s => scopeIds.Contains(s.ScopeId) && s.Kind == ModuleScopeKind.Assignment)
+            .ToDictionaryAsync(s => s.ScopeId, ct);
+
+        var jobIds = scopes.Values.Select(s => s.ExternalId).Distinct().ToList();
+        if (jobId.HasValue) jobIds = jobIds.Where(id => id == jobId.Value).ToList();
+
+        var jobs = await db.PreLoginReportJobs.AsNoTracking()
+            .Where(j => jobIds.Contains(j.PreLoginReportJobId))
+            .ToDictionaryAsync(j => j.PreLoginReportJobId, ct);
+
+        var targets = await db.PreLoginLitigationTargets.AsNoTracking()
+            .Where(t => jobIds.Contains(t.PreLoginReportJobId))
+            .ToDictionaryAsync(t => t.PreLoginLitigationTargetId, ct);
+
+        var scopeCaseIds = scopeCases.Select(sc => sc.ScopeCaseId).ToList();
+        var decisions = await db.PreLoginAttributionDecisions.AsNoTracking()
+            .Where(d => scopeCaseIds.Contains(d.ScopeCaseId))
+            .GroupBy(d => d.ScopeCaseId)
+            .ToDictionaryAsync(g => g.Key, g => g.OrderByDescending(d => d.DecidedUtc).First(), ct);
+
+        var results = new List<PreLoginAutoExcludedItemDto>();
+
+        foreach (var sc in scopeCases)
+        {
+            if (!scopes.TryGetValue(sc.ScopeId, out var scope)) continue;
+            if (jobId.HasValue && scope.ExternalId != jobId.Value) continue;
+            if (!jobs.TryGetValue(scope.ExternalId, out var job)) continue;
+
+            if (!decisions.TryGetValue(sc.ScopeCaseId, out var lastDecision) ||
+                lastDecision.Action != PreLoginAttributionAction.AutomaticallyApplied)
+            {
+                continue;
+            }
+
+            var target = sc.TargetId.HasValue && targets.TryGetValue(sc.TargetId.Value, out var t) ? t : null;
+            var actualTargetKind = target?.TargetKind ?? PreLoginTargetKind.Borrower;
+            var actualTargetName = target?.TargetName ?? job.SubmittedCompanyName ?? job.Cin;
+
+            if (targetKind.HasValue && actualTargetKind != targetKind.Value) continue;
+            if (!string.IsNullOrWhiteSpace(reasonKind) && !string.Equals(sc.AttributionRule, reasonKind, StringComparison.OrdinalIgnoreCase)) continue;
+
+            LegalCaseRecord? caseRecord = null;
+            if (!string.IsNullOrWhiteSpace(job.DataJson))
+            {
+                try
+                {
+                    var data = JsonSerializer.Deserialize<InstaReportData>(job.DataJson);
+                    caseRecord = data?.LegalCases?.Cases?.FirstOrDefault(c => string.Equals(c.CaseRowId, sc.Alias, StringComparison.OrdinalIgnoreCase));
+                }
+                catch { }
+            }
+
+            results.Add(new PreLoginAutoExcludedItemDto(
+                sc.ScopeCaseId,
+                job.PreLoginReportJobId,
+                job.SubmittedCompanyName ?? job.Cin,
+                job.Cin,
+                job.BatchId,
+                sc.Alias,
+                sc.TargetId,
+                actualTargetName,
+                actualTargetKind,
+                caseRecord?.Court,
+                caseRecord?.CaseNo,
+                caseRecord?.Category,
+                sc.AttributionRule ?? "rule",
+                sc.AttributionParty,
+                sc.AttributionReason ?? "Auto-excluded",
+                sc.ExclusionReason ?? "Excluded automatically",
+                lastDecision.DecidedUtc
+            ));
+        }
+
+        return results.OrderByDescending(r => r.ExcludedUtc).ToList();
+    }
+
+    public async Task<bool> AcceptSuggestionWithSyncAsync(long scopeCaseId, string decidedBy = "Analyst", CancellationToken ct = default)
+    {
+        var sc = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == scopeCaseId, ct);
+        if (sc is null) return false;
+
+        var scope = await db.Set<ModuleScope>().FirstOrDefaultAsync(s => s.ScopeId == sc.ScopeId, ct);
+        if (scope is null) return false;
+
+        var job = await db.PreLoginReportJobs.FirstOrDefaultAsync(j => j.PreLoginReportJobId == scope.ExternalId, ct);
+        if (job is null) return false;
+
+        var reason = $"[Accepted suggestion] {sc.AttributionReason}";
+        var ok = await AcceptSuggestionAsync(scopeCaseId, decidedBy, ct);
+        if (!ok) return false;
+
+        SyncCaseToDataJson(job, sc.Alias, isExcluded: true, exclusionReason: reason);
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    public async Task<bool> RejectSuggestionWithSyncAsync(long scopeCaseId, string decidedBy = "Analyst", CancellationToken ct = default)
+    {
+        var sc = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == scopeCaseId, ct);
+        if (sc is null) return false;
+
+        var scope = await db.Set<ModuleScope>().FirstOrDefaultAsync(s => s.ScopeId == sc.ScopeId, ct);
+        if (scope is null) return false;
+
+        var job = await db.PreLoginReportJobs.FirstOrDefaultAsync(j => j.PreLoginReportJobId == scope.ExternalId, ct);
+        if (job is null) return false;
+
+        var ok = await RejectSuggestionAsync(scopeCaseId, decidedBy, ct);
+        if (!ok) return false;
+
+        SyncCaseToDataJson(job, sc.Alias, isExcluded: false, exclusionReason: null);
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    public async Task<bool> UndoExclusionWithSyncAsync(long scopeCaseId, string decidedBy = "Analyst", CancellationToken ct = default)
+    {
+        var sc = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == scopeCaseId, ct);
+        if (sc is null) return false;
+
+        var scope = await db.Set<ModuleScope>().FirstOrDefaultAsync(s => s.ScopeId == sc.ScopeId, ct);
+        if (scope is null) return false;
+
+        var job = await db.PreLoginReportJobs.FirstOrDefaultAsync(j => j.PreLoginReportJobId == scope.ExternalId, ct);
+        if (job is null) return false;
+
+        var ok = await UndoExclusionAsync(scopeCaseId, decidedBy, ct);
+        if (!ok) return false;
+
+        SyncCaseToDataJson(job, sc.Alias, isExcluded: false, exclusionReason: null);
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    private static void SyncCaseToDataJson(PreLoginReportJob job, string caseRowId, bool isExcluded, string? exclusionReason)
+    {
+        if (string.IsNullOrWhiteSpace(job.DataJson)) return;
+        try
+        {
+            var data = JsonSerializer.Deserialize<InstaReportData>(job.DataJson);
+            if (data?.LegalCases?.Cases is null) return;
+
+            var cases = data.LegalCases.Cases.ToList();
+            var idx = cases.FindIndex(c => string.Equals(c.CaseRowId, caseRowId, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0)
+            {
+                var existing = cases[idx];
+                cases[idx] = existing with
+                {
+                    IsExcludedFromReport = isExcluded,
+                    ExclusionReason = isExcluded ? (exclusionReason ?? existing.ExclusionReason) : null
+                };
+                var updatedLegalCases = LegalCaseFileParser.ToInstaLegalCases(cases) with { NextCaseRowIdIndex = data.LegalCases.NextCaseRowIdIndex };
+                var updatedData = data with { LegalCases = updatedLegalCases };
+                job.DataJson = JsonSerializer.Serialize(updatedData);
+                job.DataVersion++;
+            }
+        }
+        catch { }
+    }
+
     public async Task RecordAnalystMissAsync(long scopeCaseId, string decidedBy = "Analyst", string? reason = null, CancellationToken ct = default)
     {
         var sc = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == scopeCaseId, ct);
@@ -519,19 +856,21 @@ public sealed class PreLoginAttributionService(
         return target?.TargetKind ?? PreLoginTargetKind.Borrower;
     }
 
-    public async Task<PreLoginTrustReport> GetTrustReportAsync(long? jobId = null, CancellationToken ct = default)
+    public async Task<PreLoginTrustReport> GetTrustReportAsync(long? jobId = null, DateTime? fromUtc = null, DateTime? toUtc = null, CancellationToken ct = default)
     {
         var query = db.PreLoginAttributionDecisions.AsNoTracking();
         if (jobId.HasValue) query = query.Where(d => d.PreLoginReportJobId == jobId.Value);
+        if (fromUtc.HasValue) query = query.Where(d => d.DecidedUtc >= fromUtc.Value);
+        if (toUtc.HasValue) query = query.Where(d => d.DecidedUtc <= toUtc.Value);
 
         var decisions = await query.ToListAsync(ct);
 
-        var grouped = decisions.GroupBy(d => d.ReasonKind).OrderBy(g => g.Key);
+        var groupedByReason = decisions.GroupBy(d => d.ReasonKind).OrderBy(g => g.Key);
         var rows = new List<TrustReportRow>();
 
-        int totalAccepted = 0, totalAutoApplied = 0, totalRejected = 0, totalUndone = 0, totalMisses = 0;
+        int totalSuggested = 0, totalAccepted = 0, totalAutoApplied = 0, totalRejected = 0, totalUndone = 0, totalMisses = 0;
 
-        foreach (var g in grouped)
+        foreach (var g in groupedByReason)
         {
             var suggested = g.Count(d => d.Action == PreLoginAttributionAction.Suggested);
             var accepted = g.Count(d => d.Action == PreLoginAttributionAction.Accepted);
@@ -540,6 +879,7 @@ public sealed class PreLoginAttributionService(
             var undone = g.Count(d => d.Action == PreLoginAttributionAction.Undone);
             var miss = g.Count(d => d.Action == PreLoginAttributionAction.AnalystMiss);
 
+            totalSuggested += suggested;
             totalAccepted += accepted;
             totalAutoApplied += autoApplied;
             totalRejected += rejected;
@@ -553,11 +893,43 @@ public sealed class PreLoginAttributionService(
             rows.Add(new TrustReportRow(g.Key, suggested, accepted, rejected, autoApplied, undone, miss, Math.Round(precision, 4)));
         }
 
+        var groupedByTarget = decisions.GroupBy(d => d.TargetKind).OrderBy(g => g.Key);
+        var targetRows = new List<TrustReportTargetRow>();
+
+        foreach (var g in groupedByTarget)
+        {
+            var suggested = g.Count(d => d.Action == PreLoginAttributionAction.Suggested);
+            var accepted = g.Count(d => d.Action == PreLoginAttributionAction.Accepted);
+            var rejected = g.Count(d => d.Action == PreLoginAttributionAction.Rejected);
+            var autoApplied = g.Count(d => d.Action == PreLoginAttributionAction.AutomaticallyApplied);
+            var undone = g.Count(d => d.Action == PreLoginAttributionAction.Undone);
+            var miss = g.Count(d => d.Action == PreLoginAttributionAction.AnalystMiss);
+
+            var correct = accepted + (autoApplied - undone);
+            var denominator = accepted + autoApplied + rejected;
+            var precision = denominator > 0 ? (double)Math.Max(0, correct) / denominator : 1.0;
+
+            targetRows.Add(new TrustReportTargetRow(g.Key, suggested, accepted, rejected, autoApplied, undone, miss, Math.Round(precision, 4)));
+        }
+
         var totalCorrect = totalAccepted + (totalAutoApplied - totalUndone);
         var totalDenominator = totalAccepted + totalAutoApplied + totalRejected;
         var overallPrecision = totalDenominator > 0 ? (double)Math.Max(0, totalCorrect) / totalDenominator : 1.0;
 
-        return new PreLoginTrustReport(jobId, rows, decisions.Count, Math.Round(overallPrecision, 4));
+        return new PreLoginTrustReport(
+            jobId,
+            fromUtc,
+            toUtc,
+            rows,
+            targetRows,
+            decisions.Count,
+            totalSuggested,
+            totalAccepted,
+            totalRejected,
+            totalAutoApplied,
+            totalUndone,
+            totalMisses,
+            Math.Round(overallPrecision, 4));
     }
 
     private async Task<Dictionary<string, (LitigationPartyVerdictKind Verdict, string? Reason, string PartyName)>> JudgePartiesAsync(

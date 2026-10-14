@@ -3,7 +3,7 @@
     ViewData["Title"] = "Borrower Assignments";
 }
 
-<div class="pi-page-head d-flex justify-content-between align-items-center mb-4">
+<div class="pi-page-head d-flex justify-content-between align-items-center mb-3">
     <div>
         <div class="pi-kicker text-muted small fw-semibold text-uppercase">Pre-Login Report System</div>
         <h1 class="h3 fw-bold mb-1">Borrower Assignments</h1>
@@ -15,6 +15,29 @@
         </a>
     </div>
 </div>
+
+<ul class="nav nav-pills mb-4 gap-2">
+    <li class="nav-item">
+        <a class="nav-link active fw-semibold" asp-controller="Assignments" asp-action="Index">
+            <i class="bi bi-folder2-open me-1"></i> All Assignments
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link fw-semibold" asp-controller="Assignments" asp-action="Suggestions">
+            <i class="bi bi-question-circle me-1"></i> Suggested Exclusions
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link fw-semibold" asp-controller="Assignments" asp-action="AutoExclusions">
+            <i class="bi bi-magic me-1"></i> Excluded Automatically
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link fw-semibold" asp-controller="Assignments" asp-action="TrustReport">
+            <i class="bi bi-shield-check me-1"></i> Attribution Trust Report
+        </a>
+    </li>
+</ul>
 
 <div class="card shadow-sm border-0 mb-4">
     <div class="card-body p-3">

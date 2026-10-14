@@ -337,42 +337,62 @@
 
         <!-- TAB 2: Legal Cases & Litigation Lake -->
         <div class="tab-pane fade" id="tab-cases" role="tabpanel">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h5 class="fw-bold mb-0">Legal Case Portfolio</h5>
+                    <p class="text-muted small mb-0">Review discovered litigation records, verify automated attribution suggestions, and manage report inclusions.</p>
+                </div>
+                <div>
+                    <a asp-action="TrustReport" asp-route-jobId="@Model.PreLoginReportJobId" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-shield-check me-1"></i> Assignment Trust Report
+                    </a>
+                </div>
+            </div>
+
             <!-- KPI Summary Cards -->
-            <div class="row g-3 mb-4">
-                <div class="col-md-2">
-                    <div class="card border-0 shadow-sm text-center p-3">
+            <div class="row g-2 mb-4">
+                <div class="col">
+                    <div class="card border-0 shadow-sm text-center p-3 h-100">
                         <div class="text-muted small">Total Cases</div>
                         <div class="h3 fw-bold text-dark mb-0">@Model.TotalCases</div>
                     </div>
                 </div>
-                <div class="col-md-2">
-                    <div class="card border-0 shadow-sm text-center p-3">
+                <div class="col">
+                    <div class="card border-0 shadow-sm text-center p-3 h-100">
                         <div class="text-muted small">High Court</div>
                         <div class="h3 fw-bold text-primary mb-0">@Model.HighCourtCases</div>
                     </div>
                 </div>
-                <div class="col-md-2">
-                    <div class="card border-0 shadow-sm text-center p-3">
+                <div class="col">
+                    <div class="card border-0 shadow-sm text-center p-3 h-100">
                         <div class="text-muted small">District Court</div>
                         <div class="h3 fw-bold text-info mb-0">@Model.DistrictCases</div>
                     </div>
                 </div>
-                <div class="col-md-2">
-                    <div class="card border-0 shadow-sm text-center p-3">
+                <div class="col">
+                    <div class="card border-0 shadow-sm text-center p-3 h-100">
                         <div class="text-muted small">DRT & Tribunals</div>
                         <div class="h3 fw-bold text-secondary mb-0">@Model.TribunalCases</div>
                     </div>
                 </div>
-                <div class="col-md-2">
-                    <div class="card border-0 shadow-sm text-center p-3">
-                        <div class="text-muted small">Included in SBI Report</div>
+                <div class="col">
+                    <div class="card border-0 shadow-sm text-center p-3 h-100">
+                        <div class="text-muted small">Included</div>
                         <div class="h3 fw-bold text-success mb-0" id="kpiIncluded">@Model.IncludedCases</div>
                     </div>
                 </div>
-                <div class="col-md-2">
-                    <div class="card border-0 shadow-sm text-center p-3">
-                        <div class="text-muted small">Excluded from Report</div>
+                <div class="col">
+                    <div class="card border-0 shadow-sm text-center p-3 h-100">
+                        <div class="text-muted small">Excluded</div>
                         <div class="h3 fw-bold text-muted mb-0" id="kpiExcluded">@Model.ExcludedCases</div>
+                    </div>
+                </div>
+                <div class="col">
+                    <div class="card border-0 shadow-sm text-center p-3 h-100 @(Model.SuggestedExclusionsCount > 0 ? "border-warning border-2 bg-warning-subtle" : "")">
+                        <div class="text-muted small">Suggested Excl.</div>
+                        <div class="h3 fw-bold @(Model.SuggestedExclusionsCount > 0 ? "text-warning-emphasis" : "text-muted") mb-0">
+                            @Model.SuggestedExclusionsCount
+                        </div>
                     </div>
                 </div>
             </div>
@@ -416,6 +436,8 @@
                                 <option value="all">All Inclusions</option>
                                 <option value="included">Included in Report</option>
                                 <option value="excluded">Excluded Only</option>
+                                <option value="suggested">Suggested Exclusion</option>
+                                <option value="auto-excluded">Excluded Automatically</option>
                             </select>
                         </div>
                     </div>
@@ -464,6 +486,9 @@
                                     @foreach (var c in Model.Cases)
                                     {
                                         var isConcluded = MCAROC_Analysis.Models.LitigationCaseStatusClassifier.IsConcluded(c.Status, c.CaseStage);
+                                        Model.CaseAttributions.TryGetValue(c.CaseRowId, out var attr);
+                                        var isSuggested = attr?.IsSuggestedExclusion == true;
+                                        var isAutoExcluded = attr?.IsAutoExcluded == true;
                                         <tr data-case-row-id="@c.CaseRowId"
                                             data-cnr="@c.CnrNumber"
                                             data-court="@c.Court"
@@ -473,6 +498,8 @@
                                             data-stage="@c.CaseStage"
                                             data-is-concluded="@isConcluded.ToString().ToLowerInvariant()"
                                             data-excluded="@c.IsExcludedFromReport.ToString().ToLowerInvariant()"
+                                            data-is-suggested="@isSuggested.ToString().ToLowerInvariant()"
+                                            data-is-auto-excluded="@isAutoExcluded.ToString().ToLowerInvariant()"
                                             data-exclusion-reason="@(c.ExclusionReason ?? "")"
                                             data-analyst-note="@(c.AnalystNote ?? "")"
                                             data-parties="@c.CaseDetails">
@@ -501,6 +528,12 @@
                                             <td>
                                                 <div class="small text-dark text-truncate" style="max-width: 280px;" title="@c.CaseDetails">@c.CaseDetails</div>
                                                 <div class="small text-muted font-monospace">Act: @(c.Act != "-" ? c.Act : "N/A")</div>
+                                                @if (attr?.TargetName != null)
+                                                {
+                                                    <div class="small text-muted mt-1">
+                                                        <span class="badge bg-light text-dark border">Target: @attr.TargetName (@attr.TargetKind)</span>
+                                                    </div>
+                                                }
                                             </td>
                                             <td>
                                                 @if (isConcluded)
@@ -520,18 +553,72 @@
                                             <td>
                                                 @if (c.IsExcludedFromReport)
                                                 {
-                                                    <span class="badge bg-secondary text-white"><i class="bi bi-eye-slash me-1"></i>Excluded</span>
-                                                    <div class="small text-muted text-truncate" style="max-width: 120px;" title="@c.ExclusionReason">@c.ExclusionReason</div>
+                                                    if (isAutoExcluded)
+                                                    {
+                                                        <span class="badge bg-warning text-dark"><i class="bi bi-magic me-1"></i>Excluded automatically</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="badge bg-secondary text-white"><i class="bi bi-eye-slash me-1"></i>Excluded</span>
+                                                    }
+                                                    <div class="small text-muted text-truncate" style="max-width: 130px;" title="@c.ExclusionReason">@c.ExclusionReason</div>
                                                 }
                                                 else
                                                 {
                                                     <span class="badge bg-success-subtle text-success border border-success"><i class="bi bi-check-circle me-1"></i>Included</span>
+                                                    @if (isSuggested)
+                                                    {
+                                                        <div class="mt-1">
+                                                            <span class="badge bg-warning-subtle text-warning-emphasis border border-warning" title="@attr?.Reason">
+                                                                <i class="bi bi-exclamation-triangle me-1"></i>Suggested exclusion
+                                                            </span>
+                                                            @if (!string.IsNullOrWhiteSpace(attr?.Party))
+                                                            {
+                                                                <div class="small text-danger text-truncate" style="max-width: 140px;" title="@attr.Party">Party: @attr.Party</div>
+                                                            }
+                                                            @if (!string.IsNullOrWhiteSpace(attr?.Reason))
+                                                            {
+                                                                <div class="small text-muted text-truncate" style="max-width: 140px;" title="@attr.Reason">@attr.Reason</div>
+                                                            }
+                                                        </div>
+                                                    }
                                                 }
                                             </td>
                                             <td style="text-align: right;">
-                                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="openSingleEditModal('@c.CaseRowId')">
-                                                    <i class="bi bi-pencil-square"></i> Edit
-                                                </button>
+                                                <div class="d-inline-flex flex-column gap-1 align-items-end">
+                                                    @if (isSuggested && attr != null)
+                                                    {
+                                                        <div class="d-inline-flex gap-1 mb-1">
+                                                            <form method="post" asp-action="AcceptSuggestion" asp-route-scopeCaseId="@attr.ScopeCaseId" class="d-inline">
+                                                                @Html.AntiForgeryToken()
+                                                                <input type="hidden" name="returnUrl" value="@Context.Request.Path@Context.Request.QueryString" />
+                                                                <button type="submit" class="btn btn-xs btn-outline-danger py-0 px-1" title="Accept exclusion suggestion">
+                                                                    <i class="bi bi-check-lg"></i> Accept
+                                                                </button>
+                                                            </form>
+                                                            <form method="post" asp-action="RejectSuggestion" asp-route-scopeCaseId="@attr.ScopeCaseId" class="d-inline">
+                                                                @Html.AntiForgeryToken()
+                                                                <input type="hidden" name="returnUrl" value="@Context.Request.Path@Context.Request.QueryString" />
+                                                                <button type="submit" class="btn btn-xs btn-outline-secondary py-0 px-1" title="Reject exclusion suggestion">
+                                                                    <i class="bi bi-x-lg"></i> Reject
+                                                                </button>
+                                                            </form>
+                                                        </div>
+                                                    }
+                                                    else if (isAutoExcluded && attr != null)
+                                                    {
+                                                        <form method="post" asp-action="UndoExclusion" asp-route-scopeCaseId="@attr.ScopeCaseId" class="d-inline mb-1">
+                                                            @Html.AntiForgeryToken()
+                                                            <input type="hidden" name="returnUrl" value="@Context.Request.Path@Context.Request.QueryString" />
+                                                            <button type="submit" class="btn btn-xs btn-outline-warning text-dark py-0 px-1 fw-semibold" title="Undo automatic exclusion">
+                                                                <i class="bi bi-arrow-counterclockwise"></i> Undo
+                                                            </button>
+                                                        </form>
+                                                    }
+                                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="openSingleEditModal('@c.CaseRowId')">
+                                                        <i class="bi bi-pencil-square"></i> Edit
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                     }
@@ -794,12 +881,18 @@
             const rowDirection = row.getAttribute('data-direction').toLowerCase();
             const rowIsConcluded = row.getAttribute('data-is-concluded') === 'true';
             const rowIsExcluded = row.getAttribute('data-excluded') === 'true';
+            const rowIsSuggested = row.getAttribute('data-is-suggested') === 'true';
+            const rowIsAutoExcluded = row.getAttribute('data-is-auto-excluded') === 'true';
 
             let matchesSearch = !searchText || rowText.includes(searchText);
             let matchesCategory = category === 'all' || rowCategory.includes(category);
             let matchesDirection = direction === 'all' || rowDirection.includes(direction);
             let matchesStatus = status === 'all' || (status === 'disposed' ? rowIsConcluded : !rowIsConcluded);
-            let matchesInclusion = inclusion === 'all' || (inclusion === 'included' ? !rowIsExcluded : rowIsExcluded);
+            let matchesInclusion = inclusion === 'all' ||
+                                   (inclusion === 'included' && !rowIsExcluded) ||
+                                   (inclusion === 'excluded' && rowIsExcluded) ||
+                                   (inclusion === 'suggested' && rowIsSuggested) ||
+                                   (inclusion === 'auto-excluded' && rowIsAutoExcluded);
 
             if (matchesSearch && matchesCategory && matchesDirection && matchesStatus && matchesInclusion) {
                 row.style.display = '';
