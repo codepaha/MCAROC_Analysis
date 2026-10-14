@@ -26,8 +26,12 @@ public class ChatService(
     AppDbContext db,
     RetrievalContextBuilder contextBuilder,
     ChatCompletionService completionService,
-    ILogger<ChatService> logger)
+    ILogger<ChatService> logger,
+    DocumentFinder? documentFinder = null)
 {
+    /// <summary>Recorded as the "model" of an answer given from the document index, with no AI call (#499).</summary>
+    public const string DocumentIndexModel = "document-index";
+
     public const int MaxQuestionLength = 1000;
     private static readonly ChatRetrievalOptions Options = ChatRetrievalOptions.Default;
 
@@ -106,12 +110,15 @@ public class ChatService(
         ChatMessage? assistantMessage = null;
         try
         {
-            var context = await contextBuilder.BuildAsync(requestId, question, ct);
+            // A request for a document itself is answered from the document index, with no retrieval and no model call (#499).
+            var fromIndex = documentFinder is null ? null : await documentFinder.TryAnswerAsync(requestId, trimmed, ct);
+            var context = fromIndex is null ? await contextBuilder.BuildAsync(requestId, question, ct) : RetrievalContext.Empty;
             // No evidence means no model call: an unavailable provider must not replace the required
             // fail-closed response, and the model cannot turn an empty prompt into verified evidence.
-            var completion = context.Sources.Count == 0
-                ? ChatCompletionService.InsufficientEvidenceResult()
-                : await completionService.CompleteAsync(request.CompanyName, context, priorHistory, question, ct);
+            var completion = fromIndex
+                ?? (context.Sources.Count == 0
+                    ? ChatCompletionService.InsufficientEvidenceResult()
+                    : await completionService.CompleteAsync(request.CompanyName, context, priorHistory, question, ct));
 
             assistantMessage = new ChatMessage
             {
@@ -124,7 +131,7 @@ public class ChatService(
                     s.Tag, Type = s.Type.ToString(), s.DisplayLabel, s.RelevanceScore
                 })),
                 CitedSourcesJson = JsonSerializer.Serialize(completion.CitedSources),
-                Model = completionService.Model,
+                Model = fromIndex is null ? completionService.Model : DocumentIndexModel,
                 PromptVersion = ChatCompletionService.PromptVersion,
                 EmbeddingModel = EmbeddingService.ModelId,
                 TopK = Options.TopK,

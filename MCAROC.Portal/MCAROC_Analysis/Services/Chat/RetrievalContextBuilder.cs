@@ -12,7 +12,11 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MCAROC_Analysis.Services.Chat;
 
-public record RetrievalContext(IReadOnlyList<RetrievedSource> Sources, string IndexingStatusLabel);
+public record RetrievalContext(IReadOnlyList<RetrievedSource> Sources, string IndexingStatusLabel)
+{
+    /// <summary>No sources: a turn answered without retrieval (a document request answered from the index, #499).</summary>
+    public static RetrievalContext Empty { get; } = new([], string.Empty);
+}
 
 /// <summary>ChatService -> RetrievalContextBuilder -> StructuredFactsProvider + DocumentRetriever +
 /// LitigationDocumentRetriever. This separation is what makes a real question-classifying router easy to slot
