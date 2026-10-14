@@ -17,6 +17,7 @@ public static class AiUsagePurposes
     public const string CalculationAudit = "CalculationAudit";
     public const string BorrowerExtraction = "BorrowerExtraction";
     public const string GroundedSearch = "GroundedSearch";
+    public const string QuestionRepository = "QuestionRepository";
     public const string KeywordSuggestion = "LitigationKeywordSuggestion";
     public const string LitigationAttribution = "LitigationAttribution";
     public const string DocumentClassification = "DocumentClassification";

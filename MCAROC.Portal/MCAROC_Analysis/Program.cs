@@ -399,6 +399,10 @@ builder.Services.AddSingleton(sp =>
 });
 builder.Services.AddScoped<DocumentChunkingOrchestrator>();
 builder.Services.AddHostedService<DocumentChunkingWorker>();
+// #499: the cross-client question repository (masked questions grouped by meaning) and the worker that fills it.
+builder.Services.Configure<QuestionRepositoryOptions>(builder.Configuration.GetSection(QuestionRepositoryOptions.SectionName));
+builder.Services.AddScoped<QuestionRepositoryService>();
+builder.Services.AddHostedService<QuestionRepositoryWorker>();
 builder.Services.AddScoped<StructuredFactsProvider>();
 builder.Services.AddScoped(sp => new DocumentRetriever(sp.GetRequiredService<AppDbContext>(), ChatRetrievalOptions.Default));
 builder.Services.AddScoped(sp => new LitigationDocumentRetriever(sp.GetRequiredService<AppDbContext>(), ChatRetrievalOptions.Default));

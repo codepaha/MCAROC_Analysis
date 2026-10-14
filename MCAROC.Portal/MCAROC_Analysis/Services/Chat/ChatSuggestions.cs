@@ -13,8 +13,9 @@ namespace MCAROC_Analysis.Services.Chat;
 /// to "insufficient evidence" (the panel used to offer the same five to every company, EPFO included where there was none). Ordered by what a lender
 /// usually asks first — charges and property, then identity, litigation, management, financials — at most <see cref="MaxSuggestions"/>.
 /// Document requests among them ("Show the charge registration certificates") are answered from the document index, with no AI call.
+/// Remaining places are filled from the question repository: what many clients ask and usually get answered with evidence.
 /// </summary>
-public sealed class ChatSuggestions(AppDbContext db)
+public sealed class ChatSuggestions(AppDbContext db, QuestionRepositoryOptions? repository = null)
 {
     public const int MaxSuggestions = 6;
 
@@ -66,6 +67,14 @@ public sealed class ChatSuggestions(AppDbContext db)
         if (await db.EpfoContributions.AsNoTracking().AnyAsync(e => e.RequestId == requestId && e.IngestionRunId == run
                 && e.PaymentDueDate != null && e.PaymentDate != null && e.PaymentDate > e.PaymentDueDate, ct))
             s.Add("Which EPFO payments were paid late, and by how many days?");
+
+        // Cross-client questions (#499) only fill places the request's own data left, and only for a request with some data (an empty one gets none).
+        if (repository is not null && s.Count is > 0 and < MaxSuggestions)
+        {
+            var seen = new HashSet<string>(s, StringComparer.OrdinalIgnoreCase);
+            foreach (var q in await QuestionRepositoryService.FrequentQuestionsAsync(db, repository, MaxSuggestions, ct))
+                if (s.Count < MaxSuggestions && seen.Add(q)) s.Add(q);
+        }
 
         return s.Take(MaxSuggestions).ToList();
     }
