@@ -287,5 +287,123 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
         // Analyst miss must NOT decrease precision denominator: denominator = accepted + autoApplied + rejected = 1. precision = 1.0.
         Assert.Equal(1.0, targetRow.Precision);
     }
+
+    [Fact]
+    public async Task AcceptSuggestionWithSyncAsync_WhenDataJsonCorrupted_FailsAndDoesNotModifyModuleStore()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            new("district", "Saket Court", "CNR7", "CS/700/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "ZETA LOGISTICS EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-7", Petitioner: "ZETA LOGISTICS EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+        };
+        var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "ZETA LOGISTICS LIMITED", "Zack Taylor", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, options, new ServiceCollection().BuildServiceProvider());
+        await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        var suggestions = await attributionService.GetOpenSuggestionsAsync(job.PreLoginReportJobId);
+        var item = Assert.Single(suggestions);
+
+        // Corrupt job DataJson
+        job.DataJson = "{ corrupted json not valid";
+        await db.SaveChangesAsync();
+
+        // Attempt AcceptSuggestionWithSyncAsync
+        var ok = await attributionService.AcceptSuggestionWithSyncAsync(item.ScopeCaseId, "Analyst");
+        Assert.False(ok);
+
+        // Verify module store was NOT modified and remains consistent
+        await using var verifyDb = Ctx();
+        var sc = await verifyDb.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == item.ScopeCaseId);
+        Assert.NotNull(sc);
+        Assert.False(sc.IsExcluded);
+
+        var decision = await verifyDb.PreLoginAttributionDecisions.FirstOrDefaultAsync(d => d.ScopeCaseId == item.ScopeCaseId && d.Action == PreLoginAttributionAction.Accepted);
+        Assert.Null(decision);
+    }
+
+    [Fact]
+    public async Task AcceptSuggestionWithSyncAsync_WhenDataJsonLacksAlias_FailsAndDoesNotModifyModuleStore()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            new("district", "Saket Court", "CNR8", "CS/800/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "THETA SOLUTIONS EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-8", Petitioner: "THETA SOLUTIONS EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+        };
+        var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "THETA SOLUTIONS LIMITED", "Tina Fey", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, options, new ServiceCollection().BuildServiceProvider());
+        await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        var suggestions = await attributionService.GetOpenSuggestionsAsync(job.PreLoginReportJobId);
+        var item = Assert.Single(suggestions);
+
+        // Modify job DataJson so the case row id does not match (lacks alias C-8)
+        var modifiedCases = new List<LegalCaseRecord>
+        {
+            new("district", "Saket Court", "CNR8", "CS/800/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "THETA SOLUTIONS EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "DIFFERENT-ALIAS-999", Petitioner: "THETA SOLUTIONS EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+        };
+        job.DataJson = JsonSerializer.Serialize(new InstaReportData(
+            new InstaCompany("THETA SOLUTIONS LIMITED", "-", "U12345", "Company", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"),
+            [],
+            [],
+            new InstaLegalCases(0, 0, 0, 0, 0, 0, 0, 0, 0, modifiedCases, modifiedCases.Count + 1)));
+        await db.SaveChangesAsync();
+
+        // Attempt AcceptSuggestionWithSyncAsync
+        var ok = await attributionService.AcceptSuggestionWithSyncAsync(item.ScopeCaseId, "Analyst");
+        Assert.False(ok);
+
+        // Verify module store was NOT modified
+        await using var verifyDb = Ctx();
+        var sc = await verifyDb.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == item.ScopeCaseId);
+        Assert.NotNull(sc);
+        Assert.False(sc.IsExcluded);
+
+        var decision = await verifyDb.PreLoginAttributionDecisions.FirstOrDefaultAsync(d => d.ScopeCaseId == item.ScopeCaseId && d.Action == PreLoginAttributionAction.Accepted);
+        Assert.Null(decision);
+    }
+
+    [Fact]
+    public async Task ApplyOpenSuggestionsAsync_WhenDataJsonCorrupted_ThrowsAndDoesNotModifyModuleStore()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            new("district", "Saket Court", "CNR9", "CS/900/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "IOTA COMMERCE EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-9", Petitioner: "IOTA COMMERCE EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+        };
+        var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "IOTA COMMERCE LIMITED", "Ian Wright", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, options, new ServiceCollection().BuildServiceProvider());
+        await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        // Corrupt DataJson
+        job.DataJson = "corrupt data {";
+        await db.SaveChangesAsync();
+
+        // Attempt ApplyOpenSuggestionsAsync
+        await Assert.ThrowsAsync<InvalidOperationException>(() => attributionService.ApplyOpenSuggestionsAsync(job.PreLoginReportJobId, "Admin"));
+
+        // Verify module store was NOT modified
+        await using var verifyDb = Ctx();
+        var sc = await verifyDb.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.Alias == "C-9");
+        Assert.NotNull(sc);
+        Assert.False(sc.IsExcluded);
+
+        var autoDecision = await verifyDb.PreLoginAttributionDecisions.FirstOrDefaultAsync(d => d.CaseRowId == "C-9" && d.Action == PreLoginAttributionAction.AutomaticallyApplied);
+        Assert.Null(autoDecision);
+    }
 }
 
