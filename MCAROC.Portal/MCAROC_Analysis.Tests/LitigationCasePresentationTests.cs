@@ -155,7 +155,8 @@ public sealed class LitigationCasePresentationTests
         while (csv.Read()) directions.Add(csv.GetField("Direction"));
 
         Assert.Equal(3, directions.Count);
-        Assert.All(directions, d => Assert.Equal("Not determined", d)); // same wording as the report, never a blank cell
+        // a company on both sides is a known result, as the PDF card says, never "not determined"; the other two could not be told
+        Assert.Equal(["Both sides", "Not determined", "Not determined"], directions);
     }
 
     [Fact]

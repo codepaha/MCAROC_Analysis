@@ -210,9 +210,9 @@ public class CopilotCaseAndChargeFactsTests
 
         Assert.Contains(litigation, t => t.Contains("6 litigation case(s)") && t.Contains("3 pending, 2 disposed") && t.Contains("4 against the company, 1 by the company"));
         var byStatus = Assert.Single(litigation, t => t.StartsWith("Litigation cases by status and the company's side"));
-        Assert.Contains("pending: 3 against the company, 0 by the company, 0 side not determined", byStatus);
-        Assert.Contains("disposed: 1 against the company, 1 by the company, 0 side not determined", byStatus);
-        Assert.Contains("status not reported: 0 against the company, 0 by the company, 1 side not determined", byStatus);
+        Assert.Contains("pending: 3 against the company, 0 by the company, 0 with the company on both sides, 0 side not determined", byStatus);
+        Assert.Contains("disposed: 1 against the company, 1 by the company, 0 with the company on both sides, 0 side not determined", byStatus);
+        Assert.Contains("status not reported: 0 against the company, 0 by the company, 0 with the company on both sides, 1 side not determined", byStatus);
 
         var byForum = Assert.Single(litigation, t => t.StartsWith("Litigation cases by forum"));
         Assert.Contains("Supreme Court: 3 in all — against the company 2 (1 pending, 1 disposed, 0 unknown)", byForum);
