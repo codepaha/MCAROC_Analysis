@@ -4,6 +4,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.LitigationModule.Freshness;
+using MCAROC_Analysis.Services.LitigationModule.Reading;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.LitigationData;
@@ -19,7 +20,8 @@ namespace MCAROC_Analysis.Services.LitigationData;
 public class LitigationReportAssembler(
     AppDbContext db,
     ICourtRefreshStatusService? courtRefreshStatus = null,
-    ILogger<LitigationReportAssembler>? logger = null)
+    ILogger<LitigationReportAssembler>? logger = null,
+    LitigationReaderGate? readerGate = null)
 {
     /// <param name="includeAnalysis">False produces the pre-analysis report: case data only, no AI output.</param>
     public async Task<StandaloneLitigationReport?> AssembleAsync(long requestId, CancellationToken ct = default, bool includeAnalysis = true)
@@ -78,11 +80,8 @@ public class LitigationReportAssembler(
 
         // Server-Side Subquery Loading for Case IDs
         var snapshotId = authoritativeSnapshot.LitigationReportSnapshotId;
-        var caseIdsQuery = db.LitigationCaseSourceReports
-            .Where(sr => sr.LitigationReportSnapshotId == snapshotId && sr.Case!.MergedIntoCaseId == null)
-            .Where(MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttribution.IsShownLink)   // #489: only the company's cases
-            .Select(sr => sr.LitigationCaseId)
-            .Distinct();
+        var caseSource = readerGate is null ? CaseSetSource.Legacy : await readerGate.ResolveCaseListAsync(requestId, ct);
+        var caseIdsQuery = await LitigationCaseSets.ForAsync(db, caseSource, requestId, snapshotId, ct);
 
         var cases = await db.LitigationCases
             .AsNoTracking()

@@ -477,7 +477,7 @@ public partial class RequestsController(
     {
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var query = new Services.RequestDetails.RequestDetailsQuery(db, dossierCache, logger,
-            bprOptions, litigationAnalysis, chargeLitigation, orderOutcomes, fullTextStatus, readerGate);
+            bprOptions, litigationAnalysis, chargeLitigation, orderOutcomes, fullTextStatus, readerGate, courtRefreshStatus);
         try
         {
             var vm = await query.BuildAsync(id, charge, court, status, page, outcome, focusCase,

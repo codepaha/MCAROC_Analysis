@@ -5,6 +5,7 @@ using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.LitigationModule.Fetching;
 using MCAROC_Analysis.Services.LitigationModule.Normalisation;
+using MCAROC_Analysis.Services.LitigationModule.Reading;
 using MCAROC_Analysis.Services.LitigationModule.Refresh;
 using MCAROC_Analysis.Services.LitigationModule.Store;
 using Microsoft.EntityFrameworkCore;
@@ -67,15 +68,41 @@ public interface ICourtRefreshStatusService
     Task<IReadOnlyDictionary<long, CaseFreshnessResult>> GetCaseFreshnessBatchAsync(long requestId, IReadOnlyList<long> caseIds, CancellationToken ct = default);
     Task<CaseFreshnessResult> GetCaseFreshnessAsync(long requestId, long caseId, CancellationToken ct = default);
     Task<WhatIsNotUpdatedSummaryDto> GetWhatIsNotUpdatedSummaryAsync(long requestId, CancellationToken ct = default);
+    Task<WhatIsNotUpdatedSummaryDto> GetWhatIsNotUpdatedSummaryAsync(long requestId, IReadOnlyList<long>? caseIds, CancellationToken ct = default);
     Task<LitigationDataCurrencySummary> GetDataCurrencySummaryAsync(long requestId, CancellationToken ct = default);
     Task<LitigationDataCurrencySummary> GetDataCurrencySummaryAsync(long requestId, IReadOnlyList<long>? caseIds, CancellationToken ct = default);
     Task<LitigationDataCurrencySummary> GetDossierDataCurrencySummaryAsync(long requestId, IReadOnlyList<Litigation> dossierLitigations, DateTime? sourceSnapshotUtc = null, CancellationToken ct = default);
 }
 
-public sealed class CourtRefreshStatusService(AppDbContext db, TimeProvider? time = null) : ICourtRefreshStatusService
+public sealed class CourtRefreshStatusService(
+    AppDbContext db,
+    TimeProvider? time = null,
+    LitigationReaderGate? readerGate = null) : ICourtRefreshStatusService
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private DateTime NowUtc => _time.GetUtcNow().UtcDateTime;
+
+    private async Task<List<long>> ResolveRequestCaseIdsAsync(long requestId, CancellationToken ct)
+    {
+        if (readerGate is not null)
+        {
+            var snapshotId = await LitigationSnapshotSelection.ForRequest(db, requestId)
+                .Select(s => (long?)s.LitigationReportSnapshotId).FirstOrDefaultAsync(ct);
+            if (snapshotId is { } sid)
+            {
+                var source = await readerGate.ResolveCaseListAsync(requestId, ct);
+                var activeQuery = await LitigationCaseSets.ForAsync(db, source, requestId, sid, ct);
+                return await activeQuery.ToListAsync(ct);
+            }
+            return [];
+        }
+
+        return await db.LitigationCases.AsNoTracking()
+            .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null)
+            .Where(LitigationData.Attribution.LitigationAttribution.IsShown)
+            .Select(c => c.LitigationCaseId)
+            .ToListAsync(ct);
+    }
 
     public async Task<CourtRefreshStatusDto> GetRefreshStatusAsync(long requestId, CancellationToken ct = default)
     {
@@ -368,14 +395,19 @@ public sealed class CourtRefreshStatusService(AppDbContext db, TimeProvider? tim
         return result;
     }
 
-    public async Task<WhatIsNotUpdatedSummaryDto> GetWhatIsNotUpdatedSummaryAsync(long requestId, CancellationToken ct = default)
-    {
-        var caseIds = await db.LitigationCases.AsNoTracking()
-            .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null).Where(LitigationData.Attribution.LitigationAttribution.IsShown)
-            .Select(c => c.LitigationCaseId)
-            .ToListAsync(ct);
+    public Task<WhatIsNotUpdatedSummaryDto> GetWhatIsNotUpdatedSummaryAsync(long requestId, CancellationToken ct = default)
+        => GetWhatIsNotUpdatedSummaryAsync(requestId, null, ct);
 
-        var total = caseIds.Count;
+    public async Task<WhatIsNotUpdatedSummaryDto> GetWhatIsNotUpdatedSummaryAsync(
+        long requestId,
+        IReadOnlyList<long>? caseIds,
+        CancellationToken ct = default)
+    {
+        var ids = caseIds is not null
+            ? caseIds.Distinct().ToList()
+            : await ResolveRequestCaseIdsAsync(requestId, ct);
+
+        var total = ids.Count;
         if (total == 0)
         {
             return new WhatIsNotUpdatedSummaryDto(
@@ -399,13 +431,13 @@ public sealed class CourtRefreshStatusService(AppDbContext db, TimeProvider? tim
                 PortfolioSummaryPending: false);
         }
 
-        var freshnessMap = await GetCaseFreshnessBatchAsync(requestId, caseIds, ct);
+        var freshnessMap = await GetCaseFreshnessBatchAsync(requestId, ids, ct);
 
         var updated = freshnessMap.Values.Count(f => f.Label == FreshnessLabel.Updated);
         var notUpdated = total - updated;
 
         var moduleCases = await db.Set<ModuleCase>().AsNoTracking()
-            .Where(mc => mc.LegacyLitigationCaseId != null && caseIds.Contains(mc.LegacyLitigationCaseId.Value))
+            .Where(mc => mc.LegacyLitigationCaseId != null && ids.Contains(mc.LegacyLitigationCaseId.Value))
             .Select(mc => new { mc.CaseId, LegacyId = mc.LegacyLitigationCaseId!.Value })
             .ToListAsync(ct);
 
@@ -445,7 +477,7 @@ public sealed class CourtRefreshStatusService(AppDbContext db, TimeProvider? tim
 
         // Calculate fields still missing across all cases
         var cases = await db.LitigationCases.AsNoTracking()
-            .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null).Where(LitigationData.Attribution.LitigationAttribution.IsShown)
+            .Where(c => ids.Contains(c.LitigationCaseId))
             .Select(c => new
             {
                 c.CaseStatus,
@@ -479,7 +511,7 @@ public sealed class CourtRefreshStatusService(AppDbContext db, TimeProvider? tim
 
         // Orders summary
         var orders = await db.LitigationCaseOrders.AsNoTracking()
-            .Where(o => caseIds.Contains(o.LitigationCaseId))
+            .Where(o => ids.Contains(o.LitigationCaseId))
             .Select(o => o.LitigationCaseOrderId)
             .ToListAsync(ct);
 
@@ -501,7 +533,7 @@ public sealed class CourtRefreshStatusService(AppDbContext db, TimeProvider? tim
         // Analysis summary
         var casesQueuedForAnalysis = freshnessMap.Values.Count(f => f.AnalysisOnEarlierData);
         var maxCaseLastSeenUtc = cases.Count > 0 ? cases.Max(c => c.LastSeenUtc) : (DateTime?)null;
-        var portfolioSummaryPending = await IsPortfolioSummaryPendingAsync(requestId, caseIds, casesQueuedForAnalysis, maxCaseLastSeenUtc, ct);
+        var portfolioSummaryPending = await IsPortfolioSummaryPendingAsync(requestId, ids, casesQueuedForAnalysis, maxCaseLastSeenUtc, ct);
 
         return new WhatIsNotUpdatedSummaryDto(
             TotalCases: total,
@@ -629,10 +661,7 @@ public sealed class CourtRefreshStatusService(AppDbContext db, TimeProvider? tim
 
         var cases = caseIds is not null
             ? caseIds.Distinct().ToList()
-            : await db.LitigationCases.AsNoTracking()
-                .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null).Where(LitigationData.Attribution.LitigationAttribution.IsShown)
-                .Select(c => c.LitigationCaseId)
-                .ToListAsync(ct);
+            : await ResolveRequestCaseIdsAsync(requestId, ct);
 
         var latestObsUtc = await GetLatestObservationUtcForLegacyCasesAsync(cases, ct);
         var asOfUtc = MaxUtc(sourceSnapshotUtc, MaxUtc(latestObsUtc, completedRunUtc));
@@ -686,9 +715,12 @@ public sealed class CourtRefreshStatusService(AppDbContext db, TimeProvider? tim
                 InProgressNote: inProgressNote);
         }
 
-        var courtCases = await db.LitigationCases.AsNoTracking()
-            .Where(c => c.RequestId == requestId && c.MergedIntoCaseId == null).Where(LitigationData.Attribution.LitigationAttribution.IsShown)
-            .ToListAsync(ct);
+        var courtCaseIds = await ResolveRequestCaseIdsAsync(requestId, ct);
+        var courtCases = courtCaseIds.Count == 0
+            ? []
+            : await db.LitigationCases.AsNoTracking()
+                .Where(c => courtCaseIds.Contains(c.LitigationCaseId))
+                .ToListAsync(ct);
 
         var freshnessMap = courtCases.Count == 0
             ? new Dictionary<long, CaseFreshnessResult>()

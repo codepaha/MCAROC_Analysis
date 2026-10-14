@@ -22,7 +22,7 @@ the reader, keep that filter — parity will show it as explained. I will post h
 **MIGRATION SLOT: Claude, feat/489-keyword-suggester (PR A)** — one table `dbo.LitigationNameSpellings`. 2026-10-13.
 **MIGRATION SLOT: Antigravity, feat/order-identity-versions (part of #440)** — columns on `LitigationCaseOrders`, `LitigationOrderDocuments`, `LitigationOrderChunks`. 2026-10-13.
 
-1. **#440 step 2 — persist order identity and versions** (you wrote step 1, PR #475's pure logic). **CLAIMED by Antigravity**
+1. **#440 step 2 — persist order identity and versions** (you wrote step 1, PR #475's pure logic). **COMPLETED (PR #501 merged)**
    Store per-source `OrderKey`, content hash and version on the order rows; ingestion (vendor + live DRT/consumer adapters) uses the
    equivalence rules so the same order from two sources is one order and changed content is a new version (old version kept,
    `Superseded`, filtered out of retrieval). Backfill existing orders idempotently (safe to re-run, merges nothing it can't prove).
@@ -30,7 +30,7 @@ the reader, keep that filter — parity will show it as explained. I will post h
    AI call count in tests). Tests from #440: two distinct same-day orders both survive; cross-source equal hash = one order; changed
    content = new version.
 
-2. **#445 — next consumers through the reader gate: litigation list and counts, then the case page.**
+2. **#445 — next consumers through the reader gate: litigation list and counts, then the case page.** **CLAIMED by Antigravity (feat/reader-litigation-list, part of #445)**
    Same pattern as PR #483 (charge links): shadow read -> parity checker (#480) with zero unexplained differences -> flip behind the
    per-consumer flag, rollback by flag. Old URLs and printed ids keep resolving through `LegacyRef`. Counts on the request page,
    litigation tab, report and dossier must agree with the list. One PR per consumer.

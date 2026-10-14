@@ -6,6 +6,7 @@ using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.McaFilings;
 using MCAROC_Analysis.Services.Chat;
 using MCAROC_Analysis.Services.LitigationData;
+using MCAROC_Analysis.Services.LitigationModule.Freshness;
 using MCAROC_Analysis.Services.LitigationModule.Reading;
 using MCAROC_Analysis.Services.PropertyParticulars;
 using Microsoft.EntityFrameworkCore;
@@ -16,7 +17,8 @@ namespace MCAROC_Analysis.Services.RequestDetails;
 public sealed class LitigationDetailsQuery(AppDbContext db,
     Microsoft.Extensions.Options.IOptions<BprLitigationOptions>? bprOptions = null,
     LitigationAiAnalysisOrchestrator? litigationAnalysis = null, LitigationOrderOutcomeQuery? orderOutcomes = null,
-    LitigationReaderGate? readerGate = null)
+    LitigationReaderGate? readerGate = null,
+    ICourtRefreshStatusService? courtRefreshStatus = null)
 {
     public async Task LoadAsync(RequestDetailsViewModel vm, string? court, string? status, int page, string? outcome, long? focusCase, CancellationToken ct, string? search = null, int pageSize = 25, bool compact = false)
     {
@@ -188,7 +190,7 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                     }
 
                     if (compact)
-                        casesQuery = await new LitigationCaseListQuery(db, orderOutcomes, caseSource)
+                        casesQuery = await new LitigationCaseListQuery(db, orderOutcomes, caseSource, courtRefreshStatus)
                             .FilterAsync(authoritativeSnapshotId, court, status, search, outcome, id, ct);
                     litVm.TotalCaseCount = await casesQuery.CountAsync(ct);
                     litVm.CurrentPage = Math.Clamp(litVm.CurrentPage, 1, Math.Max(1, litVm.TotalPages));
@@ -395,7 +397,7 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                                 }
                                 catch (JsonException) { }
                         }
-                        litVm.CaseList = await new LitigationCaseListQuery(db, orderOutcomes, caseSource)
+                        litVm.CaseList = await new LitigationCaseListQuery(db, orderOutcomes, caseSource, courtRefreshStatus)
                             .BuildAsync(id, court, status, page, litVm.PageSize, search, outcome, focusCase, ct);
                         litVm.Cases = litVm.CaseList!.Cases;
                         litVm.CurrentPage = litVm.CaseList.Page;

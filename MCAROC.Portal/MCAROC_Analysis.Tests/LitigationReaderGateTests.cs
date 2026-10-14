@@ -3,6 +3,7 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.LitigationModule.Bridge;
+using MCAROC_Analysis.Services.LitigationModule.Freshness;
 using MCAROC_Analysis.Services.LitigationModule.Reading;
 using MCAROC_Analysis.Services.LitigationModule.Store;
 using MCAROC_Analysis.Services.RequestDetails;
@@ -83,6 +84,12 @@ public class LitigationReaderGateTests : IAsyncLifetime
         new(db, Options.Create(new LitigationReaderOptions { CaseList = mode, CasePage = mode }), Options.Create(Bridge));
 
     private static LitigationCasePageService Pages(AppDbContext db, LitigationReaderMode mode) => new(db, null, null, Gate(db, mode));
+
+    private static CourtRefreshStatusService StatusService(AppDbContext db, LitigationReaderMode mode) =>
+        new(db, null, Gate(db, mode));
+
+    private static LitigationReportAssembler Reports(AppDbContext db, LitigationReaderMode mode) =>
+        new(db, StatusService(db, mode), null, Gate(db, mode));
 
     private static async Task<long[]> ListedAsync(long requestId, CaseSetSource source)
     {
@@ -242,5 +249,158 @@ public class LitigationReaderGateTests : IAsyncLifetime
         var c = CaseSetComparison.Of([1, 2], [2, 3]);
         Assert.Equal([1L], c.OnlyInLegacy);
         Assert.Equal([3L], c.OnlyInModule);
+    }
+
+    [Fact]
+    public async Task Litigation_report_reads_through_gate_in_legacy_and_module_modes_and_counts_agree()
+    {
+        var w = await SeedAsync();
+        await BridgeAsync(w);
+        await using var db = Ctx();
+
+        var legacyReport = await Reports(db, LitigationReaderMode.Legacy).AssembleAsync(w.RequestId, default, includeAnalysis: false);
+        Assert.NotNull(legacyReport);
+        Assert.Equal(w.CaseIds[2..], legacyReport!.Cases.Select(c => c.LitigationCaseId).OrderBy(x => x));
+        Assert.Equal(2, legacyReport.Cases.Count);
+        Assert.Equal(2, legacyReport.CourtSummaryGrid.TotalCases);
+        Assert.Equal(2, legacyReport.DataCurrency?.TotalCases);
+
+        var legacyListModel = await new LitigationCaseListQuery(db, null, CaseSetSource.Legacy, StatusService(db, LitigationReaderMode.Legacy))
+            .BuildAsync(w.RequestId, null, null, 1, 100, null, null, null, default);
+        Assert.Equal(legacyReport.Cases.Count, legacyListModel!.Total);
+        Assert.Equal(legacyReport.Cases.Count, legacyListModel.NotUpdatedCount);
+
+        var moduleReport = await Reports(db, LitigationReaderMode.Module).AssembleAsync(w.RequestId, default, includeAnalysis: false);
+        Assert.NotNull(moduleReport);
+        Assert.Equal(w.CaseIds.OrderBy(x => x), moduleReport!.Cases.Select(c => c.LitigationCaseId).OrderBy(x => x));
+        Assert.Equal(4, moduleReport.Cases.Count);
+        Assert.Equal(4, moduleReport.CourtSummaryGrid.TotalCases);
+        Assert.Equal(4, moduleReport.DataCurrency?.TotalCases);
+
+        var moduleListModel = await new LitigationCaseListQuery(db, null, CaseSetSource.Module, StatusService(db, LitigationReaderMode.Module))
+            .BuildAsync(w.RequestId, null, null, 1, 100, null, null, null, default);
+        Assert.Equal(moduleReport.Cases.Count, moduleListModel!.Total);
+        Assert.Equal(moduleReport.Cases.Count, moduleListModel.NotUpdatedCount);
+    }
+
+    [Fact]
+    public async Task Litigation_report_leaves_out_hidden_case_in_module_mode()
+    {
+        var w = await SeedAsync();
+        await BridgeAsync(w);
+        await using (var db = Ctx())
+        {
+            var hidden = await db.Set<ModuleScopeCase>().FirstAsync(sc => sc.Case!.LegacyLitigationCaseId == w.CaseIds[3]);
+            hidden.IsHidden = true;
+            await db.SaveChangesAsync();
+        }
+
+        await using var verify = Ctx();
+        var moduleReport = await Reports(verify, LitigationReaderMode.Module).AssembleAsync(w.RequestId, default, includeAnalysis: false);
+        Assert.NotNull(moduleReport);
+        Assert.Equal(w.CaseIds[..3].OrderBy(x => x), moduleReport!.Cases.Select(c => c.LitigationCaseId).OrderBy(x => x));
+        Assert.Equal(3, moduleReport.Cases.Count);
+        Assert.Equal(3, moduleReport.CourtSummaryGrid.TotalCases);
+        Assert.Equal(3, moduleReport.DataCurrency?.TotalCases);
+
+        var moduleListModel = await new LitigationCaseListQuery(verify, null, CaseSetSource.Module, StatusService(verify, LitigationReaderMode.Module))
+            .BuildAsync(w.RequestId, null, null, 1, 100, null, null, null, default);
+        Assert.Equal(3, moduleListModel!.Total);
+    }
+
+    [Fact]
+    public async Task Litigation_tab_and_list_counts_agree_under_both_modes()
+    {
+        var w = await SeedAsync();
+        await BridgeAsync(w);
+        await using var db = Ctx();
+
+        var req = await db.Requests.FirstAsync(r => r.RequestId == w.RequestId);
+
+        // Legacy mode
+        var vmLegacy = new RequestDetailsViewModel { Request = req, Documents = [] };
+        var legacyGate = Gate(db, LitigationReaderMode.Legacy);
+        var legacyStatus = StatusService(db, LitigationReaderMode.Legacy);
+        await new LitigationDetailsQuery(db, null, null, null, legacyGate, legacyStatus)
+            .LoadAsync(vmLegacy, null, null, 1, null, null, default, compact: true);
+
+        Assert.NotNull(vmLegacy.LitigationDataLake);
+        var lakeL = vmLegacy.LitigationDataLake!;
+        Assert.Equal(2, lakeL.TotalCaseCount);
+        Assert.Equal(2, lakeL.CaseList!.Total);
+        Assert.Equal(2, lakeL.CourtSummaryGrid.TotalCases);
+        Assert.Equal(2, lakeL.SourceCoverage.UniqueCasesCount);
+        Assert.Equal(2, lakeL.CaseList.NotUpdatedCount);
+
+        // Module mode
+        var vmModule = new RequestDetailsViewModel { Request = req, Documents = [] };
+        var moduleGate = Gate(db, LitigationReaderMode.Module);
+        var moduleStatus = StatusService(db, LitigationReaderMode.Module);
+        await new LitigationDetailsQuery(db, null, null, null, moduleGate, moduleStatus)
+            .LoadAsync(vmModule, null, null, 1, null, null, default, compact: true);
+
+        Assert.NotNull(vmModule.LitigationDataLake);
+        var lakeM = vmModule.LitigationDataLake!;
+        Assert.Equal(4, lakeM.TotalCaseCount);
+        Assert.Equal(4, lakeM.CaseList!.Total);
+        Assert.Equal(4, lakeM.CourtSummaryGrid.TotalCases);
+        Assert.Equal(4, lakeM.SourceCoverage.UniqueCasesCount);
+        Assert.Equal(4, lakeM.CaseList.NotUpdatedCount);
+    }
+
+    [Fact]
+    public async Task Court_refresh_status_and_currency_agree_with_gate()
+    {
+        var w = await SeedAsync();
+        await BridgeAsync(w);
+        await using var db = Ctx();
+
+        var legacyStatus = StatusService(db, LitigationReaderMode.Legacy);
+        var legacyNotUpdated = await legacyStatus.GetWhatIsNotUpdatedSummaryAsync(w.RequestId, default);
+        var legacyCurrency = await legacyStatus.GetDataCurrencySummaryAsync(w.RequestId, default);
+        Assert.Equal(2, legacyNotUpdated.TotalCases);
+        Assert.Equal(2, legacyCurrency.TotalCases);
+
+        var moduleStatus = StatusService(db, LitigationReaderMode.Module);
+        var moduleNotUpdated = await moduleStatus.GetWhatIsNotUpdatedSummaryAsync(w.RequestId, default);
+        var moduleCurrency = await moduleStatus.GetDataCurrencySummaryAsync(w.RequestId, default);
+        Assert.Equal(4, moduleNotUpdated.TotalCases);
+        Assert.Equal(4, moduleCurrency.TotalCases);
+    }
+
+    [Fact]
+    public async Task Dossier_data_currency_matches_dossier_rows_and_matches_only_gated_cases()
+    {
+        var w = await SeedAsync();
+        await BridgeAsync(w);
+        await using var db = Ctx();
+
+        var litRow = new Litigation { RequestId = w.RequestId, IngestionRunId = 1, CaseNumber = "1", Court = "DRT Mumbai 1", CaseType = "OA", Litigants = "Bank vs Co" };
+        var dossierLit = new[] { litRow };
+
+        // Legacy mode: case 1 was only in the older snapshot, so legacy does not list it -> cannot be matched
+        var legacyStatus = StatusService(db, LitigationReaderMode.Legacy);
+        var legacyCurrency = await legacyStatus.GetDossierDataCurrencySummaryAsync(w.RequestId, dossierLit, default);
+        Assert.Equal(1, legacyCurrency.TotalCases);
+        Assert.Equal(0, legacyCurrency.RefreshedCasesCount);
+        Assert.Equal(1, legacyCurrency.UnrefreshedCasesCount);
+
+        // Module mode: case 1 is in the retained set, so it matches the court case
+        var moduleStatus = StatusService(db, LitigationReaderMode.Module);
+        var moduleCurrency = await moduleStatus.GetDossierDataCurrencySummaryAsync(w.RequestId, dossierLit, default);
+        Assert.Equal(1, moduleCurrency.TotalCases);
+        Assert.Equal(1, moduleCurrency.UnrefreshedCasesCount); // not yet marked refreshed, but matched
+    }
+
+    [Fact]
+    public async Task Parity_checker_reports_clean_on_seeded_world()
+    {
+        var w = await SeedAsync();
+        await BridgeAsync(w);
+        await using var db = Ctx();
+
+        var report = await new LitigationModuleParity(db).CheckRequestAsync(w.RequestId, default);
+        Assert.True(report.IsClean, string.Join("; ", report.UnexplainedDifferences));
+        Assert.Equal((2, 4), (report.LegacyCount, report.ReaderCount));
     }
 }

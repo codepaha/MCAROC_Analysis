@@ -156,7 +156,8 @@ public sealed class LitigationCaseListQuery(
             freshnessMap = new Dictionary<long, CaseFreshnessResult>();
         }
 
-        var notUpdatedSummary = await statusSvc.GetWhatIsNotUpdatedSummaryAsync(requestId, ct);
+        var allCaseIds = await (await LitigationCaseSets.ForAsync(db, source, requestId, sid, ct)).ToListAsync(ct);
+        var notUpdatedSummary = await statusSvc.GetWhatIsNotUpdatedSummaryAsync(requestId, allCaseIds, ct);
         model.NotUpdatedCount = notUpdatedSummary.NotUpdatedCount;
         model.Total = orderedIds.Count;
         model.Page = Math.Clamp(page, 1, model.TotalPages);

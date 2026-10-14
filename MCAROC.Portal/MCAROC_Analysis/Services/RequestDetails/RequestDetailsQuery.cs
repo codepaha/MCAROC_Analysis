@@ -6,6 +6,7 @@ using MCAROC_Analysis.Services.Dossier;
 using MCAROC_Analysis.Services.McaFilings;
 using MCAROC_Analysis.Services.Chat;
 using MCAROC_Analysis.Services.LitigationData;
+using MCAROC_Analysis.Services.LitigationModule.Freshness;
 using MCAROC_Analysis.Services.PropertyParticulars;
 using MCAROC_Analysis.Services.LitigationModule.Reading;
 using Microsoft.EntityFrameworkCore;
@@ -18,7 +19,8 @@ public sealed class RequestDetailsQuery(AppDbContext db, DossierCache dossierCac
     Microsoft.Extensions.Options.IOptions<BprLitigationOptions>? bprOptions = null,
     LitigationAiAnalysisOrchestrator? litigationAnalysis = null, ChargeLitigationService? chargeLitigation = null,
     LitigationOrderOutcomeQuery? orderOutcomes = null, FullTextSearchStatus? fullTextStatus = null,
-    LitigationReaderGate? readerGate = null)
+    LitigationReaderGate? readerGate = null,
+    ICourtRefreshStatusService? courtRefreshStatus = null)
 {
     public async Task<RequestDetailsViewModel?> BuildAsync(long id, long? charge, string? court, string? status,
         int page, string? outcome, long? focusCase, bool hasFullAccess, IServiceProvider? services, CancellationToken ct,
@@ -62,7 +64,7 @@ public sealed class RequestDetailsQuery(AppDbContext db, DossierCache dossierCac
                 .ToListAsync(ct);
         }
 
-        await new LitigationDetailsQuery(db, bprOptions, litigationAnalysis, orderOutcomes, readerGate)
+        await new LitigationDetailsQuery(db, bprOptions, litigationAnalysis, orderOutcomes, readerGate, courtRefreshStatus)
             .LoadAsync(vm, court, status, page, outcome, focusCase, ct, search, pageSize, compactLitigation);
 
         // Never let the charge-to-case comparison take the request page down: it is a highlight, not the page.
