@@ -53,9 +53,26 @@ public class FilingClassifierCoverageTests
     [InlineData("57684e71010d815a8aaa3b89b7a1f3f1v1-Certificate of Incorporation.pdf", "Certificate of Incorporation")]
     public void Types_that_were_right_stay_right(string fileName, string formType) => Assert.Equal(formType, Name(fileName).FormType);
 
-    [Fact]
-    public void A_short_code_inside_a_word_is_not_that_code() =>
-        Assert.NotEqual("MoA", Name("Namoa Infra Board Note.pdf").FormType);
+    [Theory]
+    [InlineData("Namoa Infra Board Note.pdf")]       // inside a word
+    [InlineData("Moana Infra Board Note.pdf")]       // the start of another word (review of #503)
+    [InlineData("Aoaki Traders Board Note.pdf")]
+    [InlineData("MoAndAoA Holdings Note.pdf")]
+    public void A_short_code_that_is_part_of_another_word_is_not_that_code(string fileName)
+    {
+        var r = Name(fileName);
+        Assert.NotEqual("MoA", r.FormType);
+        Assert.NotEqual("AoA", r.FormType);
+    }
+
+    [Theory]
+    [InlineData("MOA.pdf", "MoA")]
+    [InlineData("Altered-MoA-2021.pdf", "MoA")]
+    [InlineData("523174379-aoasubcribersheet-1.pdf", "AoA")]   // run together with a charter word
+    [InlineData("moaalteration.pdf", "MoA")]
+    [InlineData("AOA amended 2022.pdf", "AoA")]
+    public void A_short_code_as_a_word_or_joined_to_a_charter_word_is_that_code(string fileName, string formType) =>
+        Assert.Equal(formType, Name(fileName).FormType);
 
     [Fact]
     public void A_resolution_that_mentions_the_memorandum_in_its_body_is_a_resolution_not_an_MoA()

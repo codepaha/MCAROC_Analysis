@@ -91,8 +91,9 @@ public static partial class FilingClassifier
 
         // Constitutional
         R("name change certificate", @"certificate of incorporation (pursuant|consequent) (to|upon) change of name|fresh certificate of incorporation|change of name", FilingCategory.Constitutional, "Certificate of Incorporation on Change of Name"),
-        R("memorandum of association", @"memorandum of association|\bmoa", FilingCategory.Constitutional, "MoA"),   // "moa..." at a word start, never inside a word
-        R("articles of association", @"articles of association|\baoa", FilingCategory.Constitutional, "AoA"),
+        // "moa"/"aoa" as a whole word, or run together with a charter word ("aoasubcribersheet", misspelt as filed); never the start of another word ("Moana", "Aoaki").
+        R("memorandum of association", @"memorandum of association|\bmoa(?=\b|sub|alter|amend)", FilingCategory.Constitutional, "MoA"),
+        R("articles of association", @"articles of association|\baoa(?=\b|sub|alter|amend)", FilingCategory.Constitutional, "AoA"),
         R("certificate of incorporation", @"certificate of incorporation", FilingCategory.Constitutional, "Certificate of Incorporation"),
     ];
 
