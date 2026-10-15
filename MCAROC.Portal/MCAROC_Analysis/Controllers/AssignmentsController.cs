@@ -1,6 +1,8 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
+using MCAROC_Analysis.Services;
+using MCAROC_Analysis.Services.LitigationModule.PreLogin;
 using MCAROC_Analysis.Services.PreLoginReports;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,7 +12,10 @@ namespace MCAROC_Analysis.Controllers;
 
 [Authorize]
 [Route("assignments")]
-public sealed class AssignmentsController(AppDbContext db, PreLoginReportJobService jobs) : Controller
+public sealed class AssignmentsController(
+    AppDbContext db,
+    PreLoginReportJobService jobs,
+    PreLoginAttributionService attribution) : Controller
 {
     [HttpGet("")]
     public async Task<IActionResult> Index(string? status, string? search, CancellationToken ct)
@@ -81,6 +86,8 @@ public sealed class AssignmentsController(AppDbContext db, PreLoginReportJobServ
         var borrowerTarget = job.LitigationTargets?.FirstOrDefault(t => t.TargetKind == PreLoginTargetKind.Borrower && t.TargetIndex == 0);
         var directorTargets = job.LitigationTargets?.Where(t => t.TargetKind == PreLoginTargetKind.Director).ToList() ?? [];
 
+        var caseAttributions = await attribution.GetCaseAttributionsForJobAsync(job.PreLoginReportJobId, ct);
+
         var viewModel = new AssignmentDetailViewModel
         {
             PreLoginReportJobId = job.PreLoginReportJobId,
@@ -98,7 +105,8 @@ public sealed class AssignmentsController(AppDbContext db, PreLoginReportJobServ
             StoredData = stored,
             BorrowerTarget = borrowerTarget,
             DirectorTargets = directorTargets,
-            Cases = stored?.LegalCases?.Cases ?? []
+            Cases = stored?.LegalCases?.Cases ?? [],
+            CaseAttributions = caseAttributions
         };
 
         return View(viewModel);
@@ -257,6 +265,110 @@ public sealed class AssignmentsController(AppDbContext db, PreLoginReportJobServ
 
         var fileName = Path.GetFileName(job.ReportStoragePath);
         return PhysicalFile(job.ReportStoragePath, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", fileName);
+    }
+
+    [HttpGet("suggestions")]
+    public async Task<IActionResult> Suggestions(long? jobId, string? reasonKind, PreLoginTargetKind? targetKind, CancellationToken ct)
+    {
+        var items = await attribution.GetOpenSuggestionsAsync(jobId, reasonKind, targetKind, ct);
+        var reasons = items.Select(i => i.Rule).Where(r => !string.IsNullOrWhiteSpace(r)).Distinct().OrderBy(r => r).ToList();
+
+        var vm = new AssignmentSuggestionsViewModel
+        {
+            Items = items,
+            SelectedJobId = jobId,
+            SelectedReasonKind = reasonKind,
+            SelectedTargetKind = targetKind,
+            AvailableReasons = reasons
+        };
+
+        return View(vm);
+    }
+
+    [HttpGet("auto-exclusions")]
+    public async Task<IActionResult> AutoExclusions(long? jobId, string? reasonKind, PreLoginTargetKind? targetKind, CancellationToken ct)
+    {
+        var items = await attribution.GetAutoExcludedCasesAsync(jobId, reasonKind, targetKind, ct);
+        var reasons = items.Select(i => i.Rule).Where(r => !string.IsNullOrWhiteSpace(r)).Distinct().OrderBy(r => r).ToList();
+
+        var vm = new AssignmentAutoExclusionsViewModel
+        {
+            Items = items,
+            SelectedJobId = jobId,
+            SelectedReasonKind = reasonKind,
+            SelectedTargetKind = targetKind,
+            AvailableReasons = reasons
+        };
+
+        return View(vm);
+    }
+
+    [HttpGet("trust-report")]
+    public async Task<IActionResult> TrustReport(long? jobId, DateTime? fromDate, DateTime? toDate, DateTime? fromUtc, DateTime? toUtc, CancellationToken ct)
+    {
+        var effectiveFrom = fromDate ?? fromUtc;
+        var effectiveTo = toDate ?? toUtc;
+
+        DateTime? startUtc = effectiveFrom.HasValue
+            ? TimeZoneInfo.ConvertTimeToUtc(effectiveFrom.Value.Date, Ist.Zone)
+            : null;
+
+        DateTime? endUtcExclusive = effectiveTo.HasValue
+            ? TimeZoneInfo.ConvertTimeToUtc(effectiveTo.Value.Date.AddDays(1), Ist.Zone)
+            : null;
+
+        var report = await attribution.GetTrustReportAsync(jobId, startUtc, endUtcExclusive, ct);
+
+        var vm = new AssignmentTrustReportViewModel
+        {
+            Report = report,
+            SelectedJobId = jobId,
+            FromDate = effectiveFrom?.Date,
+            ToDate = effectiveTo?.Date,
+            FromUtc = effectiveFrom?.Date,
+            ToUtc = effectiveTo?.Date
+        };
+
+        return View(vm);
+    }
+
+    [HttpPost("accept-suggestion/{scopeCaseId:long}")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> AcceptSuggestion(long scopeCaseId, string? returnUrl, CancellationToken ct)
+    {
+        var analyst = User.Identity?.Name ?? "Analyst";
+        var ok = await attribution.AcceptSuggestionWithSyncAsync(scopeCaseId, analyst, ct);
+        if (ok) TempData["SuccessMessage"] = "Suggested exclusion accepted and case excluded from report.";
+        else TempData["ErrorMessage"] = "Failed to accept suggestion for the specified case.";
+
+        if (!string.IsNullOrWhiteSpace(returnUrl) && Url.IsLocalUrl(returnUrl)) return Redirect(returnUrl);
+        return RedirectToAction(nameof(Suggestions));
+    }
+
+    [HttpPost("reject-suggestion/{scopeCaseId:long}")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> RejectSuggestion(long scopeCaseId, string? returnUrl, CancellationToken ct)
+    {
+        var analyst = User.Identity?.Name ?? "Analyst";
+        var ok = await attribution.RejectSuggestionWithSyncAsync(scopeCaseId, analyst, ct);
+        if (ok) TempData["SuccessMessage"] = "Suggested exclusion rejected. Case remains included in report.";
+        else TempData["ErrorMessage"] = "Failed to reject suggestion for the specified case.";
+
+        if (!string.IsNullOrWhiteSpace(returnUrl) && Url.IsLocalUrl(returnUrl)) return Redirect(returnUrl);
+        return RedirectToAction(nameof(Suggestions));
+    }
+
+    [HttpPost("undo-exclusion/{scopeCaseId:long}")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> UndoExclusion(long scopeCaseId, string? returnUrl, CancellationToken ct)
+    {
+        var analyst = User.Identity?.Name ?? "Analyst";
+        var ok = await attribution.UndoExclusionWithSyncAsync(scopeCaseId, analyst, ct);
+        if (ok) TempData["SuccessMessage"] = "Automatic exclusion undone. Case restored to report.";
+        else TempData["ErrorMessage"] = "Failed to undo automatic exclusion.";
+
+        if (!string.IsNullOrWhiteSpace(returnUrl) && Url.IsLocalUrl(returnUrl)) return Redirect(returnUrl);
+        return RedirectToAction(nameof(AutoExclusions));
     }
 }
 
