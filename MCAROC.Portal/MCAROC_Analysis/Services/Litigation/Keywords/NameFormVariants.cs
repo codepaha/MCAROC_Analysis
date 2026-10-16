@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.RegularExpressions;
 
 namespace MCAROC_Analysis.Services.LitigationData;
@@ -10,9 +9,9 @@ public sealed record GeneratedKeyword(string Value, LitigationKeywordSource Sour
 /// <list type="bullet">
 /// <item>corporate-form words shortened or dropped: Bharat Petroleum <b>Corp</b> Ltd, Bharat Petroleum <b>Corp.</b> Ltd., Bharat Petroleum;</item>
 /// <item>a joined word split or the name run together: Hero <b>Fin Corp</b>, <b>Herofincorp</b>;</item>
-/// <item>an acronym already in the name spaced or dotted: <b>H D F C</b> Bank, <b>H.D.F.C</b> Bank;</item>
-/// <item>the initials of the name: <b>BPCL</b>, <b>B.P.C.L.</b>, <b>HFCL</b> (only 3+ letters).</item>
+/// <item>an acronym already in the name spaced or dotted: <b>H D F C</b> Bank, <b>H.D.F.C</b> Bank.</item>
 /// </list>
+/// The initials of a name (BPCL, HFCL) are no longer generated (owner 2026-10-16): not every company has a short form.
 /// Initials are not unique ("HFCL" is also another listed company), so they are search terms only: a case found through one belongs to the company only
 /// once its party is attributed (#489 decision a). No acronym is expanded here: an expansion is only accepted when its initials spell the acronym.
 /// </summary>
@@ -25,7 +24,6 @@ public static partial class NameFormVariants
         ["COMPANY"] = ["Co", "Co."],
     };
     private const int MinCoreLetters = 5;
-    private const int MinInitials = 3;
 
     /// <summary>Short words of an all-capitals name that are words, not acronyms (see <see cref="IsAcronymWord"/>).</summary>
     private static readonly HashSet<string> ShortWords = new(StringComparer.OrdinalIgnoreCase)
@@ -108,15 +106,8 @@ public static partial class NameFormVariants
             Add(Join(words, i, string.Join('.', w.ToCharArray())), LitigationKeywordSource.GeneratedNameForm, $"\"{w}\" written with full stops");
         }
 
-        // Initials of the name, legal form included (Bharat Petroleum Corporation Limited = BPCL; Hero FinCorp Limited = HFCL).
-        var initials = Initials(words.SelectMany(CamelParts).Concat(suffix.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .Where(s => s.Equals("LIMITED", StringComparison.OrdinalIgnoreCase) || s.Equals("LTD", StringComparison.OrdinalIgnoreCase))), allCapitals);
-        var hasAcronymWord = words.Any(w => IsAcronymWord(w, allCapitals));
-        if (!hasAcronymWord && initials.Length >= MinInitials)
-        {
-            Add(initials, LitigationKeywordSource.GeneratedAcronym, "initials of the name");
-            Add(string.Join('.', initials.ToCharArray()) + ".", LitigationKeywordSource.GeneratedAcronym, "initials of the name, with full stops");
-        }
+        // No initials are made up (owner 2026-10-16): not every company has a short form, and "NEK" for a small LLP only finds other parties.
+        // A short form the company really uses comes in as an approved alias or is already a word of the name (HDFC, spaced and dotted above).
         return results;
     }
 
@@ -132,20 +123,6 @@ public static partial class NameFormVariants
     }
 
     private static bool IsAcronymInMixedName(string[] words) => words.Any(w => w.Any(char.IsLower)) || words.Length > 1;
-
-    private static string Initials(IEnumerable<string> words, bool allCapitals)
-    {
-        var sb = new StringBuilder();
-        foreach (var w in words)
-        {
-            var upper = w.ToUpperInvariant();
-            if (upper is "AND" or "OF" or "THE" or "&") continue;
-            if (IsAcronymWord(w, allCapitals)) { sb.Append(upper); continue; }   // an acronym word keeps its letters
-            var first = w.FirstOrDefault(char.IsLetter);
-            if (first != default) sb.Append(char.ToUpperInvariant(first));
-        }
-        return sb.ToString();
-    }
 
     /// <summary>"FinCorp" is Fin + Corp; "HDFC" and "Hero" are one part each.</summary>
     internal static List<string> CamelParts(string word)

@@ -25,7 +25,7 @@ public class LitigationKeywordSuggesterTests(ITestOutputHelper output)
         var values = keywords.Select(k => k.Value).ToList();
         foreach (var expected in new[]
         {
-            "Bharat Petroleum Corporation Limited", "Bharat Petroleum Corporation Ltd", "Bharat Petroleum Corporation", "Bharat Petroleum", "BPCL", "B.P.C.L.",
+            "Bharat Petroleum Corporation Limited", "Bharat Petroleum Corporation Ltd", "Bharat Petroleum Corporation", "Bharat Petroleum",
             "Bharat Petroleum Corp Ltd", "Bharat Petroleum Corp. Ltd.", "Bharat Petroleum Corp"
         })
             Assert.Contains(expected, values);
@@ -39,6 +39,7 @@ public class LitigationKeywordSuggesterTests(ITestOutputHelper output)
         Print(llp);
         var values = llp.Select(k => k.Value).ToList();
         Assert.Contains("NATURE EARTH KHARKHODA", values);
+        Assert.DoesNotContain(llp, k => k.Source == LitigationKeywordSource.GeneratedAcronym);   // no made-up initials ("NEK")
         Assert.DoesNotContain(values, v => v.Contains("N A T U R E") || v.Contains("N.A.T") || v.Contains("E A R T H") || v.Contains("E.A.R"));
 
         var bank = Suggest("HDFC BANK LIMITED").Select(k => k.Value).ToList();
@@ -47,7 +48,7 @@ public class LitigationKeywordSuggesterTests(ITestOutputHelper output)
         Assert.DoesNotContain(bank, v => v.Contains("B A N K"));
 
         var bpcl = Suggest("BHARAT PETROLEUM CORPORATION LIMITED").Select(k => k.Value).ToList();
-        Assert.Contains("BPCL", bpcl);
+        Assert.DoesNotContain("BPCL", bpcl);
         Assert.Contains("BHARAT PETROLEUM CORPORATION", bpcl);
         Assert.DoesNotContain(bpcl, v => v.Contains("B H A R A T") || v.Contains("P.E.T"));
 
@@ -71,8 +72,9 @@ public class LitigationKeywordSuggesterTests(ITestOutputHelper output)
         var keywords = Suggest("Hero FinCorp Limited");
         Print(keywords);
         var values = keywords.Select(k => k.Value).ToList();
-        foreach (var expected in new[] { "Hero FinCorp Limited", "Hero FinCorp Ltd", "Hero FinCorp", "Hero Fin Corp", "Herofincorp", "HFCL" })
+        foreach (var expected in new[] { "Hero FinCorp Limited", "Hero FinCorp Ltd", "Hero FinCorp", "Hero Fin Corp", "Herofincorp" })
             Assert.Contains(expected, values, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("HFCL", values, StringComparer.OrdinalIgnoreCase);   // initials are not made up (owner 2026-10-16)
         // The owner's list has "Hero FinCorp Pvt Ltd", but the company is a public limited company: a private-limited form is another entity's name and is
         // never generated. The litigation data service's non-exact search on "Hero FinCorp" returns such records anyway, and they are attributed (#489 a).
         Assert.DoesNotContain(values, v => v.Contains("Pvt", StringComparison.OrdinalIgnoreCase));
