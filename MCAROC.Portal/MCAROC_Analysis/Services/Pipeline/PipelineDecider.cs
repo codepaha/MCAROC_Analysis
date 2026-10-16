@@ -282,6 +282,18 @@ public static class PipelineDecider
 
     private static StageVerdict Litigation(PipelineSnapshot s, PipelinePolicy policy, StageVerdict ingest, DateTime now)
     {
+        // The search starts in parallel with the fetch; ingestion only adds the former names. A finished search is
+        // therefore not done until ingestion has settled (so analysis and the court update see every case), and
+        // former names it did not cover get one automatic top-up search.
+        var ingestSettled = ingest.IsDone || ingest.State is PipelineStageStateKind.NeedsAttention or PipelineStageStateKind.Skipped or PipelineStageStateKind.Cancelled;
+        if (s.LitigationSearch is { Status: LitigationSearchJobStatus.Completed, SnapshotStatus: LitigationReportSnapshotStatus.Completed } finished)
+        {
+            if (!ingestSettled)
+                return Running(finished.SnapshotId, "AWAITING_FORMER_NAMES");
+            if (s.UnsearchedFormerNames.Count > 0)
+                return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: ReadyToStart,
+                    ReasonDetail: $"Former name(s) {string.Join(", ", s.UnsearchedFormerNames)} were not searched; a top-up search starts automatically.");
+        }
         if (s.LitigationSearch is { } job)
         {
             return job.Status switch
@@ -311,7 +323,8 @@ public static class PipelineDecider
         }
         if (!policy.LitigationSearch) return Skip(PipelineStageSkipKind.Neutral, "POLICY_OFF");
         if (!s.LitigationConfigured) return Skip(PipelineStageSkipKind.Warning, "INTEGRATION_NOT_CONFIGURED");
-        if (!ingest.IsDone) return Waiting("AWAITING_INGEST");
+        // Only a request still showing its identifier as the name waits for ingestion to supply the real one.
+        if (!ingest.IsDone && !s.LitigationNameKnown) return Waiting("AWAITING_INGEST");
         var trust = IdentityTrust.Evaluate(s.AppliedResolution, s.SpendThreshold);
         if (!trust.Trusted)
             return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: AwaitingTrustedIdentity,

@@ -59,20 +59,38 @@ public sealed class LitigationStartService(
         return (new LitigationSearchPlan(keywords, opts.DefaultEntityType, appCustomerId), null);
     }
 
-    /// <summary>The pipeline's automatic start (plan §4.1). Unlike the reviewer's button it never re-runs: if the
-    /// request already has a search job — started by hand, or by a racing reconciler — nothing is admitted and the
-    /// result carries that job's id with <c>Started=false</c>. A company name alone is not a safe identity to buy
-    /// on, so a request without a CIN/LLPIN is not eligible.</summary>
+    /// <summary>The pipeline's automatic start (plan §4.1). It starts as soon as the company is identified, in
+    /// parallel with the fetch, so it may run before ingestion has supplied the former names. It re-runs a search
+    /// only for that reason: once ingestion is done, a completed search that did not cover every former name is
+    /// re-run once with the full name set (the "top-up"; imported cases append and are de-duplicated). Otherwise
+    /// an existing job — started by hand, or by a racing reconciler — admits nothing and the result carries its id
+    /// with <c>Started=false</c>. A company name alone is not a safe identity to buy on, so a request without a
+    /// CIN/LLPIN is not eligible.</summary>
     public async Task<LitigationStartResult> StartAutoSearchAsync(long requestId, string? correlationId, CancellationToken ct)
     {
         var request = await db.Requests.AsNoTracking().FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
         if (request is null) return LitigationStartResult.Ineligible("The request no longer exists.");
         if (string.IsNullOrWhiteSpace(request.Cin ?? request.Llpin))
             return LitigationStartResult.Ineligible("The request has no CIN/LLPIN; start the litigation search by hand.");
+        var topUp = (await UnsearchedFormerNamesAsync(db, request, ct)).Count > 0;
         var (plan, problem) = await PlanSearchAsync(db, request, bprOptions?.Value ?? new BprLitigationOptions(), ct, keywordSuggester);
         if (plan is null) return LitigationStartResult.Ineligible(problem!);
         return await StartSearchAsync(request, plan.Keywords, plan.EntityType, plan.ApplicationCustomerId, PaidCallTrigger.Auto, ct,
-            correlationId, onlyIfNoJob: true);
+            correlationId, onlyIfNoJob: !topUp);
+    }
+
+    /// <summary>Former names from the latest completed ingestion that the request's completed search did not
+    /// cover. Empty while there is no completed ingestion or no completed search.</summary>
+    public static async Task<IReadOnlyList<string>> UnsearchedFormerNamesAsync(AppDbContext db, McaRequest request, CancellationToken ct)
+    {
+        if (request.LatestCompletedIngestionRunId is not { } runId) return [];
+        var job = await db.LitigationSearchJobs.AsNoTracking().Where(j => j.RequestId == request.RequestId)
+            .Select(j => new { j.Status, j.KeywordsJson }).FirstOrDefaultAsync(ct);
+        if (job is not { Status: LitigationSearchJobStatus.Completed }) return [];
+        var former = await db.CompanyNameHistories.AsNoTracking()
+            .Where(x => x.IngestionRunId == runId && !string.IsNullOrWhiteSpace(x.PreviousName))
+            .Select(x => x.PreviousName).ToListAsync(ct);
+        return LitigationKeywordPlanner.UnsearchedNames(former, LitigationKeyword.ParseJson(job.KeywordsJson));
     }
 
     public async Task<LitigationStartResult> StartSearchAsync(

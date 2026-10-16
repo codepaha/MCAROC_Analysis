@@ -50,6 +50,11 @@ public sealed record PipelineSnapshot
     public FilingFacts? Filings { get; init; }
 
     public bool LitigationConfigured { get; init; }
+    /// <summary>The request carries the company's real name (not just its identifier standing in), so the
+    /// litigation search can start before ingestion.</summary>
+    public bool LitigationNameKnown { get; init; }
+    /// <summary>Former names from the latest completed ingestion that the completed search did not cover.</summary>
+    public IReadOnlyList<string> UnsearchedFormerNames { get; init; } = [];
     public LitigationSearchFacts? LitigationSearch { get; init; }
     public RunFacts<LitigationAiAnalysisRunStatus>? LitigationAnalysis { get; init; }
     /// <summary>The request's newest court update run, if any (#444).</summary>

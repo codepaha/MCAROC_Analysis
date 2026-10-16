@@ -32,10 +32,14 @@ public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOpt
             .Select(r => new
             {
                 r.Cin, r.Llpin, r.RequestStatus, r.IsManualReviewRequired, r.ManualReviewReason, r.FailureReason,
-                r.LatestCompletedIngestionRunId, r.HasIngestionWarnings
+                r.LatestCompletedIngestionRunId, r.HasIngestionWarnings, r.CompanyName
             })
             .FirstOrDefaultAsync(ct);
         if (request is null) return null;
+        var litigationNameKnown = !string.IsNullOrWhiteSpace(request.CompanyName)
+            && !string.Equals(request.CompanyName.Trim(), (request.Cin ?? request.Llpin)?.Trim(), StringComparison.OrdinalIgnoreCase);
+        var unsearchedFormerNames = await LitigationStartService.UnsearchedFormerNamesAsync(db,
+            new McaRequest { RequestId = requestId, LatestCompletedIngestionRunId = request.LatestCompletedIngestionRunId }, ct);
 
         var job = await db.AutoFetchJobs.AsNoTracking().Where(j => j.RequestId == requestId)
             .Select(j => new AutoFetchFacts(j.AutoFetchJobId, j.Status, j.RocDocumentId, j.IncludeFilings, j.FilingBatchId, j.FailureReason, j.HeartbeatUtc))
@@ -167,6 +171,8 @@ public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOpt
             DossierHoldActive = holdActive,
             Filings = filings,
             LitigationConfigured = bprOptions.Value.IsConfigured,
+            LitigationNameKnown = litigationNameKnown,
+            UnsearchedFormerNames = unsearchedFormerNames,
             LitigationSearch = searchFacts,
             LitigationAnalysis = litigationAnalysis,
             CourtUpdate = courtUpdate,

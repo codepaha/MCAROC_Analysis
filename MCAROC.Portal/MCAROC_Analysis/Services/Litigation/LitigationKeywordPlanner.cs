@@ -12,6 +12,16 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// </summary>
 public static partial class LitigationKeywordPlanner
 {
+    /// <summary>The former names not among the searched keywords — what a search started before ingestion (which
+    /// supplies the former names) still has to cover. <see cref="Build"/> adds every former name verbatim
+    /// (normalised), so once a search has been planned with them they are never reported again.</summary>
+    public static IReadOnlyList<string> UnsearchedNames(IEnumerable<string> names, IEnumerable<LitigationKeyword> searched)
+    {
+        var have = searched.Select(k => CanonicalKey(NormalizeDisplay(k.Value))).ToHashSet(StringComparer.Ordinal);
+        return names.Select(NormalizeDisplay).Where(n => n.Length > 0 && !have.Contains(CanonicalKey(n)))
+            .DistinctBy(CanonicalKey, StringComparer.Ordinal).ToList();
+    }
+
     public static IReadOnlyList<LitigationKeyword> Build(
         string legalName,
         IEnumerable<string>? historicalNames = null,
