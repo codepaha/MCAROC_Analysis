@@ -118,6 +118,51 @@ public class FilingStrandingTests : IAsyncLifetime
         }
     }
 
+    private static McaFilingDocument Doc(McaFilingBatch batch, McaFiling filing, string name, FilingDocumentProcessingStatus status, AiExtractionStatus ai) => new()
+    {
+        FilingId = filing.FilingId, BatchId = batch.BatchId, RequestId = batch.RequestId, OriginalFileName = name, StoragePath = @"C:ake\" + name,
+        FileHash = Guid.NewGuid().ToString("N"), Category = FilingCategory.Charge, FormType = "CHG-1", ProcessingStatus = status, AiExtractionStatus = ai,
+        UpdatedAt = DateTime.UtcNow
+    };
+
+    /// <summary>Live 2026-10-16 (a large company): the filing was extracted while one attachment was still between OCR steps (not
+    /// Discovered/TextExtracting), so the attachment later turned Pending, was never claimed, and its batch never completed.</summary>
+    [Fact]
+    public async Task A_filing_is_not_extracted_while_any_of_its_documents_is_still_being_processed()
+    {
+        await using var db = CreateContext();
+        var (batch, filing) = await SeedFilingAsync(db);
+        var ready = Doc(batch, filing, "chg1.pdf", FilingDocumentProcessingStatus.Completed, AiExtractionStatus.Pending);
+        db.McaFilingDocuments.AddRange(ready, Doc(batch, filing, "attachment.pdf", FilingDocumentProcessingStatus.TextExtracted, AiExtractionStatus.NotApplicable));
+        await db.SaveChangesAsync();
+
+        await Processor(db, new FilingProcessingQueue(), new ThrowingExtraction()).ExtractFilingAsync(filing.FilingId, default);
+
+        await using var verify = CreateContext();
+        Assert.False(await verify.McaFilingExtractions.AnyAsync(e => e.FilingId == filing.FilingId));   // no call made yet
+        Assert.Equal(AiExtractionStatus.Pending,
+            (await verify.McaFilingDocuments.AsNoTracking().SingleAsync(d => d.FilingDocumentId == ready.FilingDocumentId)).AiExtractionStatus);
+    }
+
+    [Fact]
+    public async Task A_document_left_pending_after_its_filing_was_extracted_is_settled_and_the_batch_can_complete()
+    {
+        await using var db = CreateContext();
+        var (batch, filing) = await SeedFilingAsync(db);
+        var done = Doc(batch, filing, "chg1.pdf", FilingDocumentProcessingStatus.Completed, AiExtractionStatus.Success);
+        var late = Doc(batch, filing, "mgt8.pdf", FilingDocumentProcessingStatus.Completed, AiExtractionStatus.Pending);
+        db.McaFilingDocuments.AddRange(done, late);
+        db.McaFilingExtractions.Add(new McaFilingExtraction { FilingId = filing.FilingId, SchemaName = "charge", Status = ExtractionStatus.Success });
+        await db.SaveChangesAsync();
+
+        await Processor(db, new FilingProcessingQueue()).RecoverStaleWorkAsync(default);
+
+        await using var verify = CreateContext();
+        Assert.Equal(AiExtractionStatus.Success,
+            (await verify.McaFilingDocuments.AsNoTracking().SingleAsync(d => d.FilingDocumentId == late.FilingDocumentId)).AiExtractionStatus);
+        Assert.NotEqual(FilingBatchStatus.Processing, (await verify.McaFilingBatches.AsNoTracking().SingleAsync(b => b.BatchId == batch.BatchId)).Status);
+    }
+
     [Fact]
     public void A_reply_wrapped_in_a_one_element_array_is_read_as_its_object()
     {
