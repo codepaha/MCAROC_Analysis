@@ -36,6 +36,16 @@ public sealed class LitigationKeywordPlannerTests
         Assert.Empty(LitigationKeyword.ParseJson(json));
 
     [Fact]
+    public void UnsearchedNames_reports_former_names_until_a_search_is_planned_with_them()
+    {
+        var firstSearch = LitigationKeywordPlanner.Build("New Name Private Limited");
+        Assert.Equal(["Old  Name Ltd".Replace("  ", " ")], LitigationKeywordPlanner.UnsearchedNames(["Old  Name Ltd", " NEW NAME PRIVATE LIMITED "], firstSearch));
+
+        var topUp = LitigationKeywordPlanner.Build("New Name Private Limited", ["Old  Name Ltd"]);
+        Assert.Empty(LitigationKeywordPlanner.UnsearchedNames(["old name ltd"], topUp));
+    }
+
+    [Fact]
     public void Build_keeps_vetted_abbreviation_phonetic_and_Hindi_aliases_with_their_provenance()
     {
         var keywords = LitigationKeywordPlanner.Build(

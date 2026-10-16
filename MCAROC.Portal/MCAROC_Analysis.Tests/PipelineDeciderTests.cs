@@ -271,6 +271,51 @@ public sealed class PipelineDeciderTests
     }
 
     [Fact]
+    public void Litigation_search_starts_in_parallel_with_the_fetch_once_the_company_name_is_known()
+    {
+        var waiting = AutoBeforeExport(AutoFetchJobStatus.WaitingForRefresh, new LifecycleFacts(CompanyReportLifecycleState.Refreshing, DateTime.UtcNow, true))
+            with { LitigationConfigured = true };
+        var policy = new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true };
+
+        Assert.Equal("AWAITING_INGEST", PipelineDecider.Decide(waiting, policy).Stages[PipelineStage.Litigation].ReasonCode);
+        Assert.Equal("WOULD_START", PipelineDecider.Decide(waiting with { LitigationNameKnown = true }, policy).Stages[PipelineStage.Litigation].ReasonCode);
+    }
+
+    [Fact]
+    public void A_search_finished_before_ingestion_is_held_until_ingestion_supplies_the_former_names()
+    {
+        var s = AutoBeforeExport(AutoFetchJobStatus.WaitingForRefresh, new LifecycleFacts(CompanyReportLifecycleState.Refreshing, DateTime.UtcNow, true)) with
+        {
+            LitigationConfigured = true, LitigationNameKnown = true,
+            LitigationSearch = new LitigationSearchFacts(40, LitigationSearchJobStatus.Completed, null, 41, LitigationReportSnapshotStatus.Completed, OrdersFullyProcessed: true)
+        };
+        var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
+
+        Assert.Equal(PipelineStageStateKind.Running, State(d, PipelineStage.Litigation));
+        Assert.Equal("AWAITING_FORMER_NAMES", d.Stages[PipelineStage.Litigation].ReasonCode);
+        Assert.Equal(PipelineStageStateKind.Waiting, State(d, PipelineStage.LitigationAnalysis));
+    }
+
+    [Fact]
+    public void Former_names_the_search_did_not_cover_get_a_top_up_search_before_analysis()
+    {
+        var s = ManualDone() with
+        {
+            LitigationConfigured = true, LitigationNameKnown = true, UnsearchedFormerNames = ["OLD NAME PRIVATE LIMITED"],
+            LitigationSearch = new LitigationSearchFacts(40, LitigationSearchJobStatus.Completed, null, 41, LitigationReportSnapshotStatus.Completed, OrdersFullyProcessed: true)
+        };
+        var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
+
+        Assert.Equal(PipelineStageStateKind.NotStarted, State(d, PipelineStage.Litigation));
+        Assert.Equal("WOULD_START", d.Stages[PipelineStage.Litigation].ReasonCode);
+        Assert.Contains("OLD NAME PRIVATE LIMITED", d.Stages[PipelineStage.Litigation].ReasonDetail);
+        Assert.Equal(PipelineStageStateKind.Waiting, State(d, PipelineStage.LitigationAnalysis));
+
+        var covered = PipelineDecider.Decide(s with { UnsearchedFormerNames = [] }, new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
+        Assert.Equal(PipelineStageStateKind.Succeeded, State(covered, PipelineStage.Litigation));
+    }
+
+    [Fact]
     public void LitigationAnalysis_is_not_ready_while_order_documents_are_still_being_processed()
     {
         var s = ManualDone() with

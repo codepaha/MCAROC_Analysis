@@ -12,6 +12,16 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// </summary>
 public static partial class LitigationKeywordPlanner
 {
+    /// <summary>The former names not among the searched keywords — what a search started before ingestion (which
+    /// supplies the former names) still has to cover. <see cref="Build"/> adds every former name verbatim
+    /// (normalised), so once a search has been planned with them they are never reported again.</summary>
+    public static IReadOnlyList<string> UnsearchedNames(IEnumerable<string> names, IEnumerable<LitigationKeyword> searched)
+    {
+        var have = searched.Select(k => CanonicalKey(NormalizeDisplay(k.Value))).ToHashSet(StringComparer.Ordinal);
+        return names.Select(NormalizeDisplay).Where(n => n.Length > 0 && !have.Contains(CanonicalKey(n)))
+            .DistinctBy(CanonicalKey, StringComparer.Ordinal).ToList();
+    }
+
     public static IReadOnlyList<LitigationKeyword> Build(
         string legalName,
         IEnumerable<string>? historicalNames = null,
@@ -58,7 +68,7 @@ public static partial class LitigationKeywordPlanner
 
     private static string CanonicalKey(string value) => value.ToUpperInvariant();
 
-    [GeneratedRegex(@"\s+(?:PRIVATE\s+LIMITED|PVT\.?\s+LTD\.?|LIMITED|LTD\.?)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\s+(?:PRIVATE\s+LIMITED|PVT\.?\s+LTD\.?|LIMITED\s+LIABILITY\s+PARTNERSHIP|L\.?L\.?P\.?|LIMITED|LTD\.?)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex LegalSuffix();
 
     [GeneratedRegex(@"\s+", RegexOptions.CultureInvariant)]
@@ -113,7 +123,7 @@ public enum LitigationKeywordSource
     GeneratedHindiSpelling,
     /// <summary>Another written form of the name from <see cref="NameFormVariants"/>: Corp for Corporation, a joined word split, an acronym spaced (#489).</summary>
     GeneratedNameForm,
-    /// <summary>The initials of the name (BPCL). Not unique, so a search term only (#489).</summary>
+    /// <summary>The initials of the name (BPCL). No longer generated (owner 2026-10-16); kept so searches that used them still read back.</summary>
     GeneratedAcronym,
     /// <summary>An acronym in the name written out, accepted only when its initials spell the acronym (#489).</summary>
     GeneratedAcronymExpansion
