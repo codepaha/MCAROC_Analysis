@@ -86,14 +86,16 @@ public sealed class FakeReferenceTool(string bid) : HttpMessageHandler
                 "getAssetTeams" when AssetStatusFailsAfterUnlock && Calls.Contains("addAsset") =>
                     new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("down") },
                 "getAssetTeams" => Json(new { teams = new[] { new { teamId = 42, addedAt = AddedAt?.ToString("yyyy-MM-ddTHH:mm:sszzz"), creditUsed = AddedAt is not null } } }),
-                "getUpgradeStatusForCompanies" => Json(new { mca_status = McaStatus }),
+                "getUpgradeStatusForCompanies" or "getUpgradeStatusForLLPs" => Json(new { mca_status = McaStatus }),
                 "getUpgradeStatusForUnlockingAsset" => Json(new { mca_status = UnlockMcaStatus }),
                 "getCompanyPreview" => Json(new { about_company = new { summary = new
                 {
                     cin = PreviewCin, legal_name = "Fake Test Company Private Limited", company_llp_status = "Active",
                     registered_address = new { state = "Maharashtra" }
                 } } }),
-                "requestProbeDataUpdate" => RequestRefresh(),
+                // Like the real tool: the update action 404s for a company it has never probed; the first probe is requestProbeData.
+                "requestProbeDataUpdate" when DataAsOf is null => new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("no probe to update") },
+                "requestProbeDataUpdate" or "requestProbeData" => RequestRefresh(),
                 "getDataEntryRequestStatus" => Json(RefreshPending ? new { status = "REQUESTED" } : new { status = "NO PENDING REQUEST" }),
                 "getDataStatus" => Json(new { downloaded = DataAsOf?.ToString("yyyy-MM-ddTHH:mm:sszzz") }),
                 _ => new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("no stub for " + action) }

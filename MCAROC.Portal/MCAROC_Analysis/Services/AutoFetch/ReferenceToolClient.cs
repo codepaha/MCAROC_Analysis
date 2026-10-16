@@ -601,22 +601,36 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         }, ct);
     }
 
-    /// <summary><c>getUpgradeStatusForCompanies</c> — false while the government MCA portal is in maintenance,
-    /// when the tool itself advises against starting a refresh.</summary>
-    public Task<bool> IsMcaAvailableForRefreshAsync(CancellationToken ct)
+    /// <summary><c>getUpgradeStatusForCompanies</c>, or <c>getUpgradeStatusForLLPs</c> for an LLP (as the tool's own UI
+    /// asks) — false while the government MCA portal is in maintenance, when the tool itself advises against starting a
+    /// probe or refresh.</summary>
+    public Task<bool> IsMcaAvailableForRefreshAsync(bool isLlp, CancellationToken ct)
     {
         EnsureConfigured();
         return WithSessionRecoveryAsync(async () =>
         {
-            using var doc = await GetJsonAsync("server/common/mcastatus/service.php", new { action = "getUpgradeStatusForCompanies" }, "MCA status", ct);
-            var status = Text(doc.RootElement, "mca_status")
-                ?? throw new ReferenceToolException("The reference tool's MCA-status response had no mca_status.", ReferenceToolFailureKind.ContractChanged);
-            return string.Equals(status, "NORMAL", StringComparison.OrdinalIgnoreCase);
+            using var doc = await GetJsonAsync("server/common/mcastatus/service.php",
+                new { action = isLlp ? "getUpgradeStatusForLLPs" : "getUpgradeStatusForCompanies" }, "MCA status", ct);
+            return McaAllows(doc.RootElement, "refresh");
         }, ct);
     }
 
-    /// <summary><c>requestProbeDataUpdate</c> — asks the tool to refresh the company's data. Free, and safe to
-    /// repeat: the tool keeps one pending request per company.</summary>
+    /// <summary>NORMAL, or ALERT — a peak-filing-period notice the tool's own UI shows as "Do you want to continue?"
+    /// and then proceeds past (it keeps retrying MCA itself). Any other status (maintenance) holds off.</summary>
+    private bool McaAllows(JsonElement root, string purpose)
+    {
+        var status = Text(root, "mca_status")
+            ?? throw new ReferenceToolException("The reference tool's MCA-status response had no mca_status.", ReferenceToolFailureKind.ContractChanged);
+        if (string.Equals(status, "NORMAL", StringComparison.OrdinalIgnoreCase)) return true;
+        if (!string.Equals(status, "ALERT", StringComparison.OrdinalIgnoreCase)) return false;
+        logger.LogWarning("The reference tool reports an MCA alert ({AlertText}); continuing with the {Purpose} as its own UI allows.",
+            Text(root, "alert_text"), purpose);
+        return true;
+    }
+
+    /// <summary>Asks the tool to probe the company: <c>requestProbeData</c> for one it has never probed (its UI's
+    /// "Request a Probe"), else <c>requestProbeDataUpdate</c> (its "Refresh"); the update action returns HTTP 404 for a
+    /// never-probed company. Free, and safe to repeat: the tool keeps one pending request per company.</summary>
     public Task RequestRefreshAsync(string bid, CancellationToken ct)
     {
         EnsureConfigured();
@@ -626,12 +640,30 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
                 ?? throw new ReferenceToolException(
                     "The reference tool's user name is unknown (the session never reported one) — set ReferenceTool:ToolUserName.",
                     ReferenceToolFailureKind.Other);
+            bool neverProbed;
+            using (var dataStatus = await GetJsonAsync("server/common/api/service.php", new { action = "getDataStatus", bid }, "data status", ct))
+                neverProbed = IsNeverProbed(dataStatus.RootElement);
+            var action = neverProbed ? "requestProbeData" : "requestProbeDataUpdate";
             using var doc = await GetJsonAsync("server/common/urs/service.php",
-                new { action = "requestProbeDataUpdate", bid, userName, platform = "b2c" }, "refresh request", ct);
+                new { action, bid, userName, platform = "b2c" }, neverProbed ? "first probe request" : "refresh request", ct);
             var status = Text(doc.RootElement, "status");
             if (status is null || !(status.Equals("PENDING", StringComparison.OrdinalIgnoreCase) || status.Equals("REQUESTED", StringComparison.OrdinalIgnoreCase)))
                 throw new ReferenceToolException($"The reference tool did not accept the refresh request (status '{status ?? "none"}').", ReferenceToolFailureKind.ContractChanged);
         }, ct);
+    }
+
+    /// <summary>The tool's own test for "Request a Probe": no QA date (<c>qa.date</c>), and nothing downloaded either.
+    /// The QA block may sit at the root, under <c>data</c> or under <c>about_company.datastats</c>.</summary>
+    public static bool IsNeverProbed(JsonElement root)
+    {
+        var data = root.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Object ? d
+            : root.TryGetProperty("about_company", out var about) && about.ValueKind == JsonValueKind.Object
+              && about.TryGetProperty("datastats", out var stats) && stats.ValueKind == JsonValueKind.Object ? stats
+            : root;
+        var qaDate = data.TryGetProperty("qa", out var qa) && qa.ValueKind == JsonValueKind.Object ? Text(qa, "date") : null;
+        var downloaded = Text(data, "downloaded");
+        var hasDownloadStatus = data.TryGetProperty("download_status", out var ds) && ds.ValueKind == JsonValueKind.Object;
+        return string.IsNullOrWhiteSpace(qaDate) && string.IsNullOrWhiteSpace(downloaded) && !hasDownloadStatus;
     }
 
     /// <summary><c>getDataEntryRequestStatus</c> — whether a refresh is still pending at the tool.</summary>
@@ -692,9 +724,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         return WithSessionRecoveryAsync(async () =>
         {
             using var doc = await GetJsonAsync("server/common/mcastatus/service.php", new { action = "getUpgradeStatusForUnlockingAsset" }, "MCA status", ct);
-            var status = Text(doc.RootElement, "mca_status")
-                ?? throw new ReferenceToolException("The reference tool's MCA-status response had no mca_status.", ReferenceToolFailureKind.ContractChanged);
-            return string.Equals(status, "NORMAL", StringComparison.OrdinalIgnoreCase);
+            return McaAllows(doc.RootElement, "unlock");
         }, ct);
     }
 

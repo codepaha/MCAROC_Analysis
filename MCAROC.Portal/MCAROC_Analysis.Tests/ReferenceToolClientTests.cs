@@ -543,4 +543,19 @@ public class ReferenceToolClientTests : IDisposable
                 : route.Respond(request));
         }
     }
+
+    // Live 2026-10-16 (a newly unlocked LLP): the tool offers "Request a Probe" and its update action 404s until the first probe.
+    [Theory]
+    [InlineData("""{"downloaded":null,"download_status":null,"qa":{"verified":false,"date":null}}""", true)]
+    [InlineData("""{"data":{"downloaded":null,"qa":{"date":null}}}""", true)]
+    [InlineData("""{"about_company":{"datastats":{"downloaded":null,"download_status":null,"qa":{"verified":false,"date":null}}}}""", true)]
+    [InlineData("""{}""", true)]
+    [InlineData("""{"qa":{"verified":true,"date":"2026-09-01"}}""", false)]
+    [InlineData("""{"downloaded":"2026-10-13T10:00:00+05:30"}""", false)]
+    [InlineData("""{"data":{"download_status":{"updatedAt":"2026-10-13T10:00:00+05:30"}}}""", false)]
+    public void A_company_is_never_probed_only_with_no_QA_date_and_nothing_downloaded(string json, bool neverProbed)
+    {
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(neverProbed, ReferenceToolClient.IsNeverProbed(doc.RootElement));
+    }
 }
