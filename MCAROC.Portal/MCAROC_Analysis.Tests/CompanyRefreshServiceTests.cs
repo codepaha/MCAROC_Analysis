@@ -261,6 +261,31 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_MCA_peak_period_alert_still_requests_the_refresh()
+    {
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3), McaStatus = "ALERT" };
+
+        var gate = await EvaluateAsync(tool);
+
+        Assert.NotEqual(RefreshGateKind.Deferred, gate.Kind);
+        Assert.Equal(1, tool.Count("requestProbeDataUpdate"));
+    }
+
+    [Fact]
+    public async Task A_refused_refresh_request_waits_on_a_request_already_pending_at_the_tool()
+    {
+        // A company the tool has never fully probed: its UI offers "Request a Probe", and our refresh call gets a 404.
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3), RefreshRequestStatus = System.Net.HttpStatusCode.NotFound, RefreshPending = true };
+
+        var gate = await EvaluateAsync(tool);
+
+        Assert.Equal(RefreshGateKind.Waiting, gate.Kind);
+        var l = await LifecycleAsync();
+        Assert.NotNull(l.ActiveRefreshId);
+        Assert.Equal(CompanyReportLifecycleState.Refreshing, l.State);
+    }
+
+    [Fact]
     public async Task A_failed_refresh_request_gives_the_claim_back()
     {
         var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = Now.AddDays(-3), RefreshRequestStatus = System.Net.HttpStatusCode.ServiceUnavailable };
@@ -286,6 +311,20 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
         Assert.Equal(AutoFetchJobStatus.Failed, job.Status);
         Assert.Contains("not unlocked", job.FailureReason);
         Assert.Equal(0, tool.Count("publishProbedData"));
+    }
+
+    [Fact]
+    public async Task A_never_probed_company_waits_for_its_first_probe_even_when_exporting_while_refreshing()
+    {
+        // ExportWhileRefreshing is on (the default here), but the tool has no data date: nothing to export yet.
+        var tool = new FakeReferenceTool(Bid) { AddedAt = Now.AddMonths(-2), DataAsOf = null };
+        var jobId = await SeedJobAsync();
+
+        await ProcessAsync(tool, jobId);
+
+        Assert.Equal(AutoFetchJobStatus.WaitingForRefresh, (await JobAsync(jobId)).Status);
+        Assert.Equal(0, tool.Count("publishProbedData"));
+        Assert.Equal(1, tool.Count("requestProbeDataUpdate"));
     }
 
     [Fact]

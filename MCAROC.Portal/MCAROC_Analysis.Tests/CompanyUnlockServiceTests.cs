@@ -345,6 +345,19 @@ public sealed class CompanyUnlockServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_MCA_peak_period_alert_does_not_hold_off_an_approved_unlock()
+    {
+        var tool = LockedTool();
+        tool.UnlockMcaStatus = "ALERT";
+        var sp = Services(tool);
+        var (requestId, _) = await SeedJobAsync();
+        await ApproveAsync(sp, requestId);
+
+        Assert.Equal(UnlockOutcome.Unlocked, (await ExecuteAsync(sp, requestId)).Outcome);
+        Assert.Equal(1, tool.Count("addAsset"));
+    }
+
+    [Fact]
     public async Task A_failed_paid_call_is_recorded_as_spent_and_never_retried_without_a_new_approval()
     {
         var tool = LockedTool();

@@ -609,10 +609,21 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         return WithSessionRecoveryAsync(async () =>
         {
             using var doc = await GetJsonAsync("server/common/mcastatus/service.php", new { action = "getUpgradeStatusForCompanies" }, "MCA status", ct);
-            var status = Text(doc.RootElement, "mca_status")
-                ?? throw new ReferenceToolException("The reference tool's MCA-status response had no mca_status.", ReferenceToolFailureKind.ContractChanged);
-            return string.Equals(status, "NORMAL", StringComparison.OrdinalIgnoreCase);
+            return McaAllows(doc.RootElement, "refresh");
         }, ct);
+    }
+
+    /// <summary>NORMAL, or ALERT — a peak-filing-period notice the tool's own UI shows as "Do you want to continue?"
+    /// and then proceeds past (it keeps retrying MCA itself). Any other status (maintenance) holds off.</summary>
+    private bool McaAllows(JsonElement root, string purpose)
+    {
+        var status = Text(root, "mca_status")
+            ?? throw new ReferenceToolException("The reference tool's MCA-status response had no mca_status.", ReferenceToolFailureKind.ContractChanged);
+        if (string.Equals(status, "NORMAL", StringComparison.OrdinalIgnoreCase)) return true;
+        if (!string.Equals(status, "ALERT", StringComparison.OrdinalIgnoreCase)) return false;
+        logger.LogWarning("The reference tool reports an MCA alert ({AlertText}); continuing with the {Purpose} as its own UI allows.",
+            Text(root, "alert_text"), purpose);
+        return true;
     }
 
     /// <summary><c>requestProbeDataUpdate</c> — asks the tool to refresh the company's data. Free, and safe to
@@ -692,9 +703,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         return WithSessionRecoveryAsync(async () =>
         {
             using var doc = await GetJsonAsync("server/common/mcastatus/service.php", new { action = "getUpgradeStatusForUnlockingAsset" }, "MCA status", ct);
-            var status = Text(doc.RootElement, "mca_status")
-                ?? throw new ReferenceToolException("The reference tool's MCA-status response had no mca_status.", ReferenceToolFailureKind.ContractChanged);
-            return string.Equals(status, "NORMAL", StringComparison.OrdinalIgnoreCase);
+            return McaAllows(doc.RootElement, "unlock");
         }, ct);
     }
 
