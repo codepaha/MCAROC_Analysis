@@ -324,7 +324,8 @@ public sealed class CompanyRefreshServiceTests : IAsyncLifetime
 
         Assert.Equal(AutoFetchJobStatus.WaitingForRefresh, (await JobAsync(jobId)).Status);
         Assert.Equal(0, tool.Count("publishProbedData"));
-        Assert.Equal(1, tool.Count("requestProbeDataUpdate"));
+        Assert.Equal(1, tool.Count("requestProbeData"));   // "Request a Probe", not the update action that 404s
+        Assert.Equal(0, tool.Count("requestProbeDataUpdate"));
     }
 
     [Fact]

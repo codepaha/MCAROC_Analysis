@@ -91,7 +91,7 @@ public sealed class CompanyRefreshService(
             return new RefreshGateResult(RefreshGateKind.Ready, $"The reference tool's data is current (as of {Ist.Format(lastFresh)}).", lastFresh);
         }
 
-        if (!await client.IsMcaAvailableForRefreshAsync(ct))
+        if (!await client.IsMcaAvailableForRefreshAsync(identifier.Contains('-'), ct))
             return new RefreshGateResult(RefreshGateKind.Deferred, "The MCA portal is under maintenance; the refresh will be requested once it is back.");
 
         var claimId = NewClaimId();
