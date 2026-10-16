@@ -457,13 +457,22 @@ public class FilingBatchProcessor(
         }
     }
 
+    /// <summary>A document still on its way through processing — any state before Completed/Failed/Skipped and the
+    /// unreadable-PDF outcomes, not just Discovered/TextExtracting: a document caught in Classified or TextExtracted
+    /// was missed, the filing was extracted without it, and it then sat Pending forever (live 2026-10-16, an MGT-8
+    /// attachment of a large company's MGT-7 filing kept the whole batch open).</summary>
+    private static readonly System.Linq.Expressions.Expression<Func<McaFilingDocument, bool>> StillProcessing = d =>
+        d.DuplicateOfDocumentId == null &&
+        (d.ProcessingStatus == FilingDocumentProcessingStatus.Discovered
+            || d.ProcessingStatus == FilingDocumentProcessingStatus.Classified
+            || d.ProcessingStatus == FilingDocumentProcessingStatus.TextExtracting
+            || d.ProcessingStatus == FilingDocumentProcessingStatus.TextExtracted
+            || d.ProcessingStatus == FilingDocumentProcessingStatus.AiQueued
+            || d.ProcessingStatus == FilingDocumentProcessingStatus.AiProcessing);
+
     private async Task MaybeEnqueueFilingExtractionAsync(long filingId, CancellationToken ct)
     {
-        var pendingCount = await db.McaFilingDocuments.CountAsync(d =>
-            d.FilingId == filingId &&
-            d.DuplicateOfDocumentId == null &&
-            (d.ProcessingStatus == FilingDocumentProcessingStatus.Discovered
-                || d.ProcessingStatus == FilingDocumentProcessingStatus.TextExtracting), ct);
+        var pendingCount = await db.McaFilingDocuments.Where(d => d.FilingId == filingId).Where(StillProcessing).CountAsync(ct);
 
         if (pendingCount == 0)
         {
@@ -488,6 +497,24 @@ public class FilingBatchProcessor(
             await MaybeCompleteBatchAsync(filing.BatchId, ct);
     }
 
+    /// <summary>Gives any document still Pending in an already-extracted filing that extraction's outcome (the first
+    /// row, as the in-progress recovery does), and re-checks batch completion if that changed anything.</summary>
+    private async Task SettleLatePendingAsync(long filingId, CancellationToken ct)
+    {
+        var status = await db.McaFilingExtractions.Where(e => e.FilingId == filingId).OrderBy(e => e.ExtractionId)
+            .Select(e => (ExtractionStatus?)e.Status).FirstOrDefaultAsync(ct);
+        if (status is null) return;
+        var settled = await db.McaFilingDocuments
+            .Where(d => d.FilingId == filingId && d.AiExtractionStatus == AiExtractionStatus.Pending)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.AiExtractionStatus,
+                status == ExtractionStatus.Success ? AiExtractionStatus.Success : AiExtractionStatus.Failed), ct);
+        if (settled > 0)
+        {
+            var batchId = await db.McaFilings.Where(f => f.FilingId == filingId).Select(f => f.BatchId).FirstAsync(ct);
+            await MaybeCompleteBatchAsync(batchId, ct);
+        }
+    }
+
     public async Task ExtractFilingAsync(long filingId, CancellationToken ct)
     {
         var filing = await db.McaFilings.FirstAsync(f => f.FilingId == filingId, ct);
@@ -504,7 +531,18 @@ public class FilingBatchProcessor(
 
         var alreadyExtracted = await db.McaFilingExtractions.AnyAsync(e => e.FilingId == filingId, ct);
         if (alreadyExtracted)
-            return; // cheap early-out; the real guarantee against a duplicate paid call is the claim below
+        {
+            // Cheap early-out; the real guarantee against a duplicate paid call is the claim below. A document that
+            // turned Pending after the filing was extracted would never be claimed again: settle it with the filing's
+            // outcome so the batch can complete.
+            await SettleLatePendingAsync(filingId, ct);
+            return;
+        }
+
+        // Every document of the filing goes into one extraction, so wait for the slowest (an OCR'd attachment).
+        // The last one to finish triggers this again (MaybeEnqueueFilingExtractionAsync).
+        if (await db.McaFilingDocuments.Where(d => d.FilingId == filingId).Where(StillProcessing).AnyAsync(ct))
+            return;
 
         var documents = await db.McaFilingDocuments
             .Where(d => d.FilingId == filingId && d.ProcessingStatus == FilingDocumentProcessingStatus.Completed)
@@ -900,6 +938,10 @@ public class FilingBatchProcessor(
         var filingIdsToEnqueue = filingsNeedingExtraction.Except(alreadyExtractedFilingIds).ToList();
         foreach (var id in filingIdsToEnqueue)
             queue.Enqueue(new ExtractFilingWorkItem(id) { Lane = filingLanes[id] });
+        // Pending documents whose filing was already extracted are never claimed again — settle them so their batch
+        // can complete (also clears batches stranded before this fix).
+        foreach (var id in alreadyExtractedFilingIds.Distinct())
+            await SettleLatePendingAsync(id, ct);
 
         return staleDocuments.Count + stuckBatches.Count + filingIdsToEnqueue.Count;
     }
