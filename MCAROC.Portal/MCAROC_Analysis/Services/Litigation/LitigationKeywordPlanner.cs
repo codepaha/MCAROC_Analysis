@@ -68,7 +68,7 @@ public static partial class LitigationKeywordPlanner
 
     private static string CanonicalKey(string value) => value.ToUpperInvariant();
 
-    [GeneratedRegex(@"\s+(?:PRIVATE\s+LIMITED|PVT\.?\s+LTD\.?|LIMITED|LTD\.?)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\s+(?:PRIVATE\s+LIMITED|PVT\.?\s+LTD\.?|LIMITED\s+LIABILITY\s+PARTNERSHIP|L\.?L\.?P\.?|LIMITED|LTD\.?)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex LegalSuffix();
 
     [GeneratedRegex(@"\s+", RegexOptions.CultureInvariant)]

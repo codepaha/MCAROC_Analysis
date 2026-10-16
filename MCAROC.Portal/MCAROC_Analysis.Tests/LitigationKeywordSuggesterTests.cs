@@ -31,6 +31,40 @@ public class LitigationKeywordSuggesterTests(ITestOutputHelper output)
             Assert.Contains(expected, values);
     }
 
+    /// <summary>The registry writes every name in capitals: ordinary words must not be taken for acronyms, real acronyms still are.</summary>
+    [Fact]
+    public void An_all_capitals_registry_name_spells_out_only_real_acronyms()
+    {
+        var llp = Suggest("NATURE EARTH KHARKHODA LLP");
+        Print(llp);
+        var values = llp.Select(k => k.Value).ToList();
+        Assert.Contains("NATURE EARTH KHARKHODA", values);
+        Assert.DoesNotContain(values, v => v.Contains("N A T U R E") || v.Contains("N.A.T") || v.Contains("E A R T H") || v.Contains("E.A.R"));
+
+        var bank = Suggest("HDFC BANK LIMITED").Select(k => k.Value).ToList();
+        Assert.Contains("H D F C BANK", bank);
+        Assert.Contains("HDFC BANK", bank);
+        Assert.DoesNotContain(bank, v => v.Contains("B A N K"));
+
+        var bpcl = Suggest("BHARAT PETROLEUM CORPORATION LIMITED").Select(k => k.Value).ToList();
+        Assert.Contains("BPCL", bpcl);
+        Assert.Contains("BHARAT PETROLEUM CORPORATION", bpcl);
+        Assert.DoesNotContain(bpcl, v => v.Contains("B H A R A T") || v.Contains("P.E.T"));
+
+        var sbi = Suggest("SBI CARDS AND PAYMENT SERVICES LIMITED").Select(k => k.Value).ToList();
+        Assert.Contains("S B I CARDS AND PAYMENT SERVICES", sbi);
+        Assert.DoesNotContain(sbi, v => v.Contains("C A R D S"));
+    }
+
+    [Theory]
+    [InlineData("NATURE EARTH KHARKHODA LLP")]
+    [InlineData("Nature Earth Kharkhoda LLP")]
+    [InlineData("NATURE EARTH KHARKHODA L.L.P.")]
+    [InlineData("NATURE EARTH KHARKHODA LIMITED LIABILITY PARTNERSHIP")]
+    public void The_planner_searches_an_LLP_without_its_legal_form(string name) =>
+        Assert.Contains(LitigationKeywordPlanner.Build(name), k => k.Value.Equals("NATURE EARTH KHARKHODA", StringComparison.OrdinalIgnoreCase)
+            && k.Source == LitigationKeywordSource.GeneratedLegalSuffixVariant);
+
     [Fact]
     public void Hero_FinCorp_gets_the_forms_the_owner_listed()
     {

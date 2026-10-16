@@ -27,6 +27,25 @@ public static partial class NameFormVariants
     private const int MinCoreLetters = 5;
     private const int MinInitials = 3;
 
+    /// <summary>Short words of an all-capitals name that are words, not acronyms (see <see cref="IsAcronymWord"/>).</summary>
+    private static readonly HashSet<string> ShortWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "AND", "OF", "THE", "FOR", "NEW", "ONE", "AIR", "SUN", "OIL", "GAS", "ART", "TEA", "ECO", "BIO", "SEA", "SKY", "BAY", "TOP", "BIG", "RED",
+        "ACE", "AID", "ALL", "ARC", "ARK", "AUM", "OM", "SAI", "SRI", "JAI", "RAJ", "DEV", "RAM", "LAL", "DAS", "SON", "CO", "INC", "LLP", "PVT", "LTD",
+        "AGE", "ERA", "EYE", "ICE", "INN", "JET", "KEY", "MAX", "PRO", "RAY", "SUR", "VAN", "WAY", "WEB", "ZEN", "GEO", "NEO", "MY", "BY", "TO", "IN", "ON", "AT"
+    };
+
+    /// <summary>A word written as an acronym (HDFC in "HDFC Bank"). In a name with lower-case letters a capitalised word is one on purpose. The
+    /// registry writes every name in capitals, so there the word must also look like one: no vowel (HDFC, BPCL, NTPC, MRF), or at most three letters
+    /// and not a common word (SBI, LIC, ITC). "NATURE", "BANK" and "STEEL" are words.</summary>
+    internal static bool IsAcronymWord(string word, bool allCapitals)
+    {
+        if (word.Length < 2 || word.Length > 6 || !word.All(char.IsLetter) || !word.All(char.IsUpper)) return false;
+        if (!allCapitals) return true;
+        if (!word.Any(c => "AEIOUY".Contains(c))) return true;
+        return word.Length <= 3 && !ShortWords.Contains(word);
+    }
+
     public static IReadOnlyList<GeneratedKeyword> Generate(string? legalName)
     {
         var name = Whitespace().Replace(legalName?.Trim() ?? "", " ");
@@ -36,14 +55,19 @@ public static partial class NameFormVariants
         var shortSuffix = ShortSuffix(suffix);                                     // "Ltd"
         var words = core.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (words.Length == 0) return [];
+        var allCapitals = !name.Any(char.IsLower);
 
         var results = new List<GeneratedKeyword>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { name, core };
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { name };
         void Add(string value, LitigationKeywordSource source, string reason)
         {
             value = Whitespace().Replace(value, " ").Trim();
             if (value.Length > 0 && seen.Add(value)) results.Add(new GeneratedKeyword(value, source, reason));
         }
+
+        // The name without its legal form, which court records routinely drop ("NATURE EARTH KHARKHODA" for "... LLP").
+        if (suffix.Length > 0 && Letters(words) >= MinCoreLetters)
+            Add(core, LitigationKeywordSource.GeneratedNameForm, $"without \"{suffix}\"");
 
         // Private Limited written short (a generated form, so it follows the generated-keywords switch).
         if (suffix.Equals("PRIVATE LIMITED", StringComparison.OrdinalIgnoreCase))
@@ -79,15 +103,15 @@ public static partial class NameFormVariants
         for (var i = 0; i < words.Length; i++)
         {
             var w = words[i];
-            if (w.Length < 2 || w.Length > 6 || !w.All(char.IsUpper) || !w.All(char.IsLetter) || !IsAcronymInMixedName(words)) continue;
+            if (!IsAcronymWord(w, allCapitals) || !IsAcronymInMixedName(words)) continue;
             Add(Join(words, i, string.Join(' ', w.ToCharArray())), LitigationKeywordSource.GeneratedNameForm, $"\"{w}\" written letter by letter");
             Add(Join(words, i, string.Join('.', w.ToCharArray())), LitigationKeywordSource.GeneratedNameForm, $"\"{w}\" written with full stops");
         }
 
         // Initials of the name, legal form included (Bharat Petroleum Corporation Limited = BPCL; Hero FinCorp Limited = HFCL).
         var initials = Initials(words.SelectMany(CamelParts).Concat(suffix.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .Where(s => s.Equals("LIMITED", StringComparison.OrdinalIgnoreCase) || s.Equals("LTD", StringComparison.OrdinalIgnoreCase))));
-        var hasAcronymWord = words.Any(w => w.Length > 1 && w.All(char.IsUpper) && w.All(char.IsLetter));
+            .Where(s => s.Equals("LIMITED", StringComparison.OrdinalIgnoreCase) || s.Equals("LTD", StringComparison.OrdinalIgnoreCase))), allCapitals);
+        var hasAcronymWord = words.Any(w => IsAcronymWord(w, allCapitals));
         if (!hasAcronymWord && initials.Length >= MinInitials)
         {
             Add(initials, LitigationKeywordSource.GeneratedAcronym, "initials of the name");
@@ -109,14 +133,14 @@ public static partial class NameFormVariants
 
     private static bool IsAcronymInMixedName(string[] words) => words.Any(w => w.Any(char.IsLower)) || words.Length > 1;
 
-    private static string Initials(IEnumerable<string> words)
+    private static string Initials(IEnumerable<string> words, bool allCapitals)
     {
         var sb = new StringBuilder();
         foreach (var w in words)
         {
             var upper = w.ToUpperInvariant();
             if (upper is "AND" or "OF" or "THE" or "&") continue;
-            if (w.Length > 1 && w.All(char.IsUpper) && w.All(char.IsLetter)) { sb.Append(upper); continue; }   // an acronym word keeps its letters
+            if (IsAcronymWord(w, allCapitals)) { sb.Append(upper); continue; }   // an acronym word keeps its letters
             var first = w.FirstOrDefault(char.IsLetter);
             if (first != default) sb.Append(char.ToUpperInvariant(first));
         }
