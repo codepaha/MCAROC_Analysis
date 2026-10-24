@@ -453,6 +453,19 @@ public class FilingBatchProcessor(
                 logger.LogError(ex, "Document {DocumentId} failed after {Retries} retries", filingDocumentId, document.RetryCount);
                 document.ProcessingStatus = FilingDocumentProcessingStatus.Failed;
                 await db.SaveChangesAsync(ct);
+
+                // A failed document is as settled as a completed one: its siblings' extraction waits for the last of them
+                // (ExtractFilingAsync) and the batch for every one, so wake both here too or they wait for a restart.
+                try
+                {
+                    await MaybeEnqueueFilingExtractionAsync(document.FilingId, ct);
+                    await MaybeCompleteBatchAsync(document.BatchId, ct);
+                }
+                catch (Exception settleEx) when (!ct.IsCancellationRequested)
+                {
+                    logger.LogError(settleEx, "Could not settle filing {FilingId} after document {DocumentId} failed; startup recovery will",
+                        document.FilingId, filingDocumentId);
+                }
             }
         }
     }

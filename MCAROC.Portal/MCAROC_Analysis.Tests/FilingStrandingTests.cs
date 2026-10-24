@@ -120,7 +120,7 @@ public class FilingStrandingTests : IAsyncLifetime
 
     private static McaFilingDocument Doc(McaFilingBatch batch, McaFiling filing, string name, FilingDocumentProcessingStatus status, AiExtractionStatus ai) => new()
     {
-        FilingId = filing.FilingId, BatchId = batch.BatchId, RequestId = batch.RequestId, OriginalFileName = name, StoragePath = @"C:ake\" + name,
+        FilingId = filing.FilingId, BatchId = batch.BatchId, RequestId = batch.RequestId, OriginalFileName = name, StoragePath = @"C:\fake\" + name,
         FileHash = Guid.NewGuid().ToString("N"), Category = FilingCategory.Charge, FormType = "CHG-1", ProcessingStatus = status, AiExtractionStatus = ai,
         UpdatedAt = DateTime.UtcNow
     };
@@ -142,6 +142,56 @@ public class FilingStrandingTests : IAsyncLifetime
         Assert.False(await verify.McaFilingExtractions.AnyAsync(e => e.FilingId == filing.FilingId));   // no call made yet
         Assert.Equal(AiExtractionStatus.Pending,
             (await verify.McaFilingDocuments.AsNoTracking().SingleAsync(d => d.FilingDocumentId == ready.FilingDocumentId)).AiExtractionStatus);
+    }
+
+    private sealed class ThrowingPdfExtractor() : PdfTextExtractor(NullLogger<PdfTextExtractor>.Instance, "tesseract")
+    {
+        public override Task<PdfExtractionResult> ExtractAsync(string pdfPath, string tempDir, CancellationToken ct) =>
+            throw new IOException("OCR crashed");
+    }
+
+    /// <summary>Review of #516: the extraction run for a filing returns while a sibling is still processing and leaves it to the last
+    /// sibling to trigger again. When that last sibling fails on its final retry instead of completing, it must still trigger it.</summary>
+    [Fact]
+    public async Task A_last_document_that_fails_for_good_still_releases_its_filing_and_completes_the_batch()
+    {
+        await using var db = CreateContext();
+        var (batch, filing) = await SeedFilingAsync(db);
+        var textPath = Path.Combine(Path.GetTempPath(), $"stranding-{Guid.NewGuid():N}.txt");
+        await File.WriteAllTextAsync(textPath, "Form CHG-1 particulars of charge");
+        try
+        {
+            var ready = Doc(batch, filing, "chg1.pdf", FilingDocumentProcessingStatus.Completed, AiExtractionStatus.Pending);
+            ready.ExtractedTextPath = textPath;
+            var last = Doc(batch, filing, "attachment.pdf", FilingDocumentProcessingStatus.Discovered, AiExtractionStatus.NotApplicable);
+            last.RetryCount = 2; // the next throw is its last attempt
+            db.McaFilingDocuments.AddRange(ready, last);
+            await db.SaveChangesAsync();
+
+            var queue = new FilingProcessingQueue();
+            var processor = new FilingBatchProcessor(db, Path.GetTempPath(), new ThrowingPdfExtractor(), new ThrowingExtraction(), queue,
+                new DocumentChunkingQueue(), NullLogger<FilingBatchProcessor>.Instance);
+
+            await processor.ExtractFilingAsync(filing.FilingId, default);      // consumed at the barrier: the attachment is still processing
+            Assert.Equal(0, queue.Count(FilingWorkKind.Extraction));
+            await processor.ProcessDocumentAsync(last.FilingDocumentId, default);
+            Assert.Equal(0, queue.Count(FilingWorkKind.Document));             // failed for good, not retried
+
+            while (queue.Count(FilingWorkKind.Extraction) > 0)
+                await processor.ExtractFilingAsync(((ExtractFilingWorkItem)await queue.DequeueAsync(FilingWorkKind.Extraction, default)).FilingId, default);
+
+            await using var verify = CreateContext();
+            Assert.Equal(FilingDocumentProcessingStatus.Failed,
+                (await verify.McaFilingDocuments.AsNoTracking().SingleAsync(d => d.FilingDocumentId == last.FilingDocumentId)).ProcessingStatus);
+            Assert.Equal(AiExtractionStatus.Failed,
+                (await verify.McaFilingDocuments.AsNoTracking().SingleAsync(d => d.FilingDocumentId == ready.FilingDocumentId)).AiExtractionStatus);
+            Assert.Equal(FilingBatchStatus.CompletedWithErrors,
+                (await verify.McaFilingBatches.AsNoTracking().SingleAsync(b => b.BatchId == batch.BatchId)).Status);
+        }
+        finally
+        {
+            File.Delete(textPath);
+        }
     }
 
     [Fact]
