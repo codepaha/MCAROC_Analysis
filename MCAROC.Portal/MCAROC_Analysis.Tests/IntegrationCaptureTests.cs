@@ -253,6 +253,63 @@ public sealed class IntegrationCaptureTests : IDisposable
         Assert.Contains("not kept", record.GetProperty("bodyNote").GetString());
     }
 
+    /// <summary>Found reading the 2026-09-22 traces: who in our account unlocked a company, and our other team. A numeric id stays a number (0), so a
+    /// replayed reply still parses: an unlock needs a team id to charge.</summary>
+    [Fact]
+    public void Account_ids_in_a_reply_are_replaced_and_numbers_stay_numbers()
+    {
+        var redacted = CaptureRedactor.RedactJson(System.Text.Json.Nodes.JsonNode.Parse(
+            """{"teams":[{"teamId":120019,"addedAt":"2026-09-22T09:41:59+05:30","created_by":116723,"srcTeamId":120019,"createdBy":"Some Person"}]}"""))!;
+        var team = redacted["teams"]![0]!;
+        Assert.Equal(CaptureRedactor.RedactedNumber, team["teamId"]!.GetValue<long>());
+        Assert.Equal(CaptureRedactor.RedactedNumber, team["created_by"]!.GetValue<long>());
+        Assert.Equal(CaptureRedactor.RedactedNumber, team["srcTeamId"]!.GetValue<long>());
+        Assert.Equal(CaptureRedactor.Redacted, team["createdBy"]!.GetValue<string>());
+        Assert.Equal("2026-09-22T09:41:59+05:30", team["addedAt"]!.GetValue<string>());
+        Assert.DoesNotContain("116723", redacted.ToJsonString());
+    }
+
+    /// <summary>Review of #521: a capture written before created_by and srcTeamId joined the list still carries them, and the pattern check cannot see a
+    /// numeric id, so promoting a capture redacts it again by today's rules (payload, plain query, request body and reply).</summary>
+    [Fact]
+    public void An_older_capture_is_redacted_again_by_todays_rules()
+    {
+        var old = System.Text.Json.Nodes.JsonNode.Parse("""
+            {"service":"reference-tool","url":"https://reference.test/server/user/service.php","action":"getAssetTeams",
+             "payload":{"action":"getAssetTeams","bid":"abc","created_by":116723},"query":{"v":"3.1.6","userId":"116723"},"requestBody":null,
+             "status":200,"contentType":"application/json",
+             "body":{"teams":[{"teamId":0,"addedAt":"2026-09-22T09:41:59+05:30","created_by":116723,"srcTeamId":120019}]}}
+            """)!.AsObject();
+        Assert.Empty(CaptureRedactor.FindLeaks(old.ToJsonString())); // what the leak check alone would let through
+
+        var record = CaptureRedactor.Reredact(old);
+        var promoted = record.ToJsonString(CaptureRedactor.Json);   // as the promotion tool writes it
+
+        Assert.DoesNotContain("116723", promoted);
+        Assert.DoesNotContain("120019", promoted);
+        Assert.Equal("2026-09-22T09:41:59+05:30", record["body"]!["teams"]![0]!["addedAt"]!.GetValue<string>()); // company facts kept
+        Assert.Equal("abc", record["payload"]!["bid"]!.GetValue<string>());
+        Assert.Contains("116723", old.ToJsonString());             // the input is not changed in place
+    }
+
+    /// <summary>Review of #521: a reply recorded as a string that is itself JSON is redacted field by field too, not by pattern only.</summary>
+    [Fact]
+    public void An_older_capture_whose_reply_is_json_text_is_redacted_field_by_field()
+    {
+        var old = new System.Text.Json.Nodes.JsonObject
+        {
+            ["url"] = "https://reference.test/server/user/service.php", ["action"] = "getAssetTeams",
+            ["body"] = """{"teams":[{"teamId":120019,"addedAt":"2026-09-22T09:41:59+05:30","created_by":116723,"srcTeamId":120019}]}"""
+        };
+        Assert.Empty(CaptureRedactor.FindLeaks(old.ToJsonString(CaptureRedactor.Json)));
+
+        var body = CaptureRedactor.Reredact(old)["body"]!.GetValue<string>();
+
+        Assert.DoesNotContain("116723", body);
+        Assert.DoesNotContain("120019", body);
+        Assert.Equal("2026-09-22T09:41:59+05:30", System.Text.Json.Nodes.JsonNode.Parse(body)!["teams"]![0]!["addedAt"]!.GetValue<string>());
+    }
+
     [Fact]
     public void A_fixture_left_with_nul_characters_fails_the_leak_check() =>
         Assert.Contains(CaptureRedactor.FindLeaks("{\"body\":\"{\\u0000\\\"\\u0000p\\u0000\"}"), l => l.StartsWith("encoding artifact"));

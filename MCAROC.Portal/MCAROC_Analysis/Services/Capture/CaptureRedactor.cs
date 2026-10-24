@@ -11,7 +11,11 @@ public static partial class CaptureRedactor
 {
     public const string Redacted = "<redacted>";
 
-    /// <summary>Indented, and without escaping "&lt;" or "&amp;": a fixture is read by people, and "<redacted>" would hide the marker from the leak check.</summary>
+    /// <summary>What a numeric account field (a team or user id) becomes: still a number, so a replayed reply parses as the client expects (an unlock
+    /// needs a team to charge), and plainly not a real id.</summary>
+    public const long RedactedNumber = 0;
+
+    /// <summary>Indented, and without escaping "&lt;" or "&amp;": a fixture is read by people, and an escaped marker (backslash-u003C) would hide it from the leak check.</summary>
     public static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     /// <summary>Hosts a committed fixture may name: the placeholders written in place of the real services, and our own order-document bucket.</summary>
@@ -22,6 +26,8 @@ public static partial class CaptureRedactor
     {
         "u", "p", "password", "pwd", "secret_key", "secretKey", "jwtToken", "jwt", "token", "access_token", "authorization", "cookie",
         "userId", "user_id", "userName", "user_name", "username", "email", "mobile", "phone", "teamId", "team_id", "mcc",
+        // Who in our account did something, and our other teams (getAssetTeams), found reading the 2026-09-22 traces.
+        "created_by", "createdBy", "added_by", "addedBy", "updated_by", "updatedBy", "srcTeamId", "src_team_id", "owner_id", "ownerId",
         // A presigned document link's access material, when it appears as its own field.
         "X-Amz-Credential", "X-Amz-Security-Token", "X-Amz-Signature", "X-Goog-Credential", "X-Goog-Signature", "AWSAccessKeyId", "Signature",
     };
@@ -39,7 +45,10 @@ public static partial class CaptureRedactor
         {
             case JsonObject obj:
                 foreach (var (key, value) in obj.ToList())
-                    obj[key] = SecretKeys.Contains(key) && value is not (JsonObject or JsonArray) ? Redacted : RedactJson(value?.DeepClone(), everything);
+                    obj[key] = !SecretKeys.Contains(key) || value is JsonObject or JsonArray ? RedactJson(value?.DeepClone(), everything)
+                        : value is JsonValue n && n.GetValueKind() == JsonValueKind.Number ? JsonValue.Create(RedactedNumber)
+                        : value is null ? null
+                        : Redacted;
                 return obj;
             case JsonArray arr:
                 for (var i = 0; i < arr.Count; i++) arr[i] = RedactJson(arr[i]?.DeepClone(), everything);
@@ -53,6 +62,25 @@ public static partial class CaptureRedactor
             default:
                 return node;
         }
+    }
+
+    /// <summary>A recorded call (capture format) redacted again by today's rules: its payload, plain query, request body and reply. A capture written before a
+    /// field joined <see cref="SecretKeys"/> (created_by and srcTeamId did, after the 2026-09-22 traces) still carries it, and the pattern check behind
+    /// <see cref="FindLeaks"/> cannot see a numeric id; promoting a capture therefore always runs this.</summary>
+    public static JsonObject Reredact(JsonObject record)
+    {
+        var copy = record.DeepClone().AsObject();
+        var account = IsAccountCall(copy["url"]?.GetValue<string>() ?? "", copy["action"]?.GetValue<string>());
+        copy["payload"] = RedactJson(copy["payload"]?.DeepClone());
+        copy["query"] = RedactJson(copy["query"]?.DeepClone());
+        copy["requestBody"] = RedactJson(copy["requestBody"]?.DeepClone(), everything: account);
+        copy["body"] = copy["body"] switch
+        {
+            // A reply kept as text may itself be JSON: RedactBody parses it and redacts field by field (patterns alone miss a numeric id).
+            JsonValue v when v.TryGetValue<string>(out var text) => JsonValue.Create(RedactBody(text, account)),
+            var body => RedactJson(body?.DeepClone(), everything: account),
+        };
+        return copy;
     }
 
     /// <summary>A response body as text: JSON redacted field by field, anything else by pattern (tokens, cookies, e-mail addresses, hosts).</summary>

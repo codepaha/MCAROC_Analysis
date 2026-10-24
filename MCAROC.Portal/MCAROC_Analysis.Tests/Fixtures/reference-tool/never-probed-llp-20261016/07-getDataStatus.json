@@ -1,0 +1,28 @@
+{
+  "service": "reference-tool",
+  "capturedUtc": null,
+  "source": "Not recorded: a company the tool has never probed has no qa date, nothing downloaded and no download status (contract doc 4.3). Replace with the next live capture.",
+  "method": "GET",
+  "url": "https://reference.test/server/common/api/service.php",
+  "action": "getDataStatus",
+  "payload": {
+    "action": "getDataStatus",
+    "bid": "9c4b43bb7e5bc7b46269dceded829a95f9d5332aa093645760c1a1a63cb82bf2"
+  },
+  "requestBody": null,
+  "query": {
+    "v": "3.1.6",
+    "cv": "8.1.28"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "contentLength": null,
+  "body": {
+    "master_updated": null,
+    "qa": {
+      "verified": false,
+      "date": null,
+      "status": "NOT-VERIFIED"
+    }
+  }
+}

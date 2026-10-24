@@ -1,0 +1,24 @@
+{
+  "service": "reference-tool",
+  "capturedUtc": null,
+  "method": "GET",
+  "url": "https://reference.test/server/common/urs/service.php",
+  "action": "getDataEntryRequestStatus",
+  "payload": {
+    "action": "getDataEntryRequestStatus",
+    "bid": "820da3a600731f57a818e0ee4f6a38fc31d0390e63db59fffe45fed026022f32",
+    "platform": "b2c"
+  },
+  "requestBody": null,
+  "query": {
+    "v": "3.1.6",
+    "cv": "8.1.26"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "contentLength": null,
+  "body": {
+    "status": "NO PENDING REQUEST"
+  },
+  "source": "Live trace 2026-09-22: COASTAL PROJECTS LIMITED, unlocked, data over 24 hours old"
+}

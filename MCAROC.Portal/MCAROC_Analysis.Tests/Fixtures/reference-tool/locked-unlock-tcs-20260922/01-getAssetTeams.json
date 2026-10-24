@@ -1,0 +1,30 @@
+{
+  "service": "reference-tool",
+  "capturedUtc": null,
+  "method": "GET",
+  "url": "https://reference.test/server/user/service.php",
+  "action": "getAssetTeams",
+  "payload": {
+    "action": "getAssetTeams",
+    "bid": "906e9874d21b364eefdf2df0c6fc0ef149d82fa9e7e84529cfb68711cce3f6c7"
+  },
+  "requestBody": null,
+  "query": {
+    "v": "3.1.6",
+    "cv": "8.1.26"
+  },
+  "status": 200,
+  "contentType": "text/html",
+  "contentLength": null,
+  "body": {
+    "teams": [
+      {
+        "teamId": 0,
+        "addedAt": null,
+        "creditUsed": false,
+        "created_by": 0
+      }
+    ]
+  },
+  "source": "Live trace 2026-09-22: TATA CONSULTANCY SERVICES LIMITED, locked, unlocked for 1 credit"
+}
