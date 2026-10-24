@@ -113,5 +113,9 @@ public enum AuditActionType
 
     // Append new values so existing enum ordinals remain stable.
     PreLoginAssignmentCreated,
-    PreLoginAssignmentCompleted
+    PreLoginAssignmentCompleted,
+
+    // E2E run record (#514): what a run's record shows that no other table holds.
+    DossierDownloaded,
+    PreflightRun
 }

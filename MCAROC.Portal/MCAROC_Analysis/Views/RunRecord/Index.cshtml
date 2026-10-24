@@ -1,0 +1,109 @@
+@using MCAROC_Analysis.Services.E2e
+@model RunRecord
+@{
+    ViewData["Title"] = $"Run record · {Model.RequestNumber}";
+    string StateClass(string state) => state switch
+    {
+        "Succeeded" => "text-bg-success",
+        "SucceededWithWarnings" => "text-bg-warning",
+        "NeedsAttention" or "Failed" => "text-bg-danger",
+        "Skipped" => "text-bg-secondary",
+        _ => "text-bg-light"
+    };
+}
+
+<div class="container py-3" id="run-record-page" style="max-width:1100px;">
+    <div class="d-flex flex-wrap align-items-baseline gap-2 mb-1">
+        <h1 class="h4 mb-0">Run record</h1>
+        <a class="ms-auto btn btn-sm btn-outline-primary" href="/Requests/@Model.RequestId/run-record?format=md">Download as Markdown</a>
+        <a class="btn btn-sm btn-outline-secondary" href="/Requests/@Model.RequestId">Back to the request</a>
+    </div>
+    <p class="text-muted">Everything this request's run did, for the end-to-end test record. Opening and reviewing the dossier is up to you; the Markdown has a box for it.</p>
+
+    <div class="card shadow-sm mb-3"><div class="card-body">
+        <div class="fw-semibold">@Model.RequestNumber · @Model.CompanyName</div>
+        <div class="small text-muted">@(Model.Identifier ?? "No identifier") (@Model.EntityType) · client @(Model.ClientName ?? "—") · created @Ist.Format(Model.CreatedUtc)</div>
+        <div class="mt-2" id="run-record-preflight">
+            @if (Model.PreflightBefore is { } p)
+            {
+                <span class="badge @(p.Overall == "Pass" ? "text-bg-success" : p.Overall == "Warn" ? "text-bg-warning" : "text-bg-danger")">Pre-flight @p.Overall</span>
+                <span class="small text-muted">at @Ist.Format(Model.PreflightAtUtc)</span>
+                @foreach (var c in p.Checks.Where(c => c.Outcome != "Pass"))
+                {
+                    <div class="small">@c.Key: @c.Outcome. @c.Detail</div>
+                }
+            }
+            else
+            {
+                <span class="badge text-bg-danger">No pre-flight check before this request</span>
+            }
+        </div>
+    </div></div>
+
+    <h2 class="h6">Pipeline: @(Model.PipelineOutcome ?? "no run")</h2>
+    @if (Model.PipelineCreatedUtc is { } started)
+    {
+        <p class="small text-muted">Started @Ist.Format(started) · core ready @Ist.Format(Model.CoreReadyUtc) · completed @Ist.Format(Model.PipelineCompletedUtc)</p>
+    }
+    <div class="card shadow-sm mb-3">
+        <table class="table table-sm mb-0 align-middle">
+            <thead class="table-light"><tr><th>Stage</th><th>State</th><th>Reason</th><th class="text-end">Attempts</th><th>Updated</th></tr></thead>
+            <tbody>
+            @foreach (var s in Model.Stages)
+            {
+                <tr data-stage="@s.Stage">
+                    <td>@s.Stage</td>
+                    <td><span class="badge @StateClass(s.State)">@s.State@(s.SkipKind is null ? "" : $" ({s.SkipKind})")</span></td>
+                    <td><div>@s.ReasonCode</div>@if (s.ReasonDetail is not null) { <div class="small text-muted">@s.ReasonDetail</div> }</td>
+                    <td class="text-end">@s.Attempts</td>
+                    <td class="small">@Ist.Format(s.UpdatedUtc)</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+
+    @if (Model.Fetch is { } f)
+    {
+        <h2 class="h6">Fetch: @f.Status</h2>
+        <div class="card shadow-sm mb-3"><div class="card-body small" id="run-record-fetch">
+            <div class="@(f.RegistryListed < f.RegistryTotal ? "text-danger fw-semibold" : "")">Registry listed @f.RegistryListed.ToString("N0") of @f.RegistryTotal.ToString("N0") documents</div>
+            <div>Files: @f.FilesDownloaded.ToString("N0") of @f.FilesTotal.ToString("N0") downloaded, @f.FilesFailed.ToString("N0") failed (@((f.BytesDownloaded / (1024.0 * 1024)).ToString("N1")) MB) · attempts @f.Attempts</div>
+            @if (f.FailureReason is not null) { <div class="text-danger">Failure: @f.FailureReason</div> }
+            @foreach (var w in f.Warnings) { <div class="text-warning-emphasis">Warning: @w</div> }
+            @if (Model.Lifecycle is { } l)
+            {
+                <div class="mt-2 text-muted">Company in the reference tool: @l.State · unlocked @Ist.Format(l.UnlockedUtc) · refresh requested @Ist.Format(l.LastRefreshRequestedUtc) · data as of @Ist.Format(l.LastRefreshCompletedUtc)</div>
+            }
+        </div></div>
+    }
+
+    <h2 class="h6">Litigation search: @(Model.Litigation?.Status ?? "not run")</h2>
+    @if (Model.Litigation is { } lit)
+    {
+        <p class="small text-muted">@lit.Cases.ToString("N0") cases, @lit.CasesShown.ToString("N0") shown (the rest set aside by attribution)</p>
+        <div class="card shadow-sm mb-3">
+            <table class="table table-sm mb-0" id="run-record-keywords">
+                <thead class="table-light"><tr><th>#</th><th>Planned keyword</th><th>Source</th><th>Reason</th></tr></thead>
+                <tbody>
+                @for (var i = 0; i < lit.Keywords.Count; i++)
+                {
+                    <tr><td>@(i + 1)</td><td>@lit.Keywords[i].Value</td><td class="small">@lit.Keywords[i].Source</td><td class="small text-muted">@lit.Keywords[i].Reason</td></tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <h2 class="h6">Dossier</h2>
+    <div class="card shadow-sm mb-3"><div class="card-body small" id="run-record-dossier">
+        @if (Model.DossierDownloads.Count == 0)
+        {
+            <div class="text-muted">Not downloaded yet.</div>
+        }
+        @foreach (var d in Model.DossierDownloads)
+        {
+            <div>Downloaded @Ist.Format(d.AtUtc) by @d.By · @d.Variant · @(d.Bytes is { } b ? $"{b / 1024.0:N0} KB" : "size unknown") · @(d.Pages is { } pg ? $"{pg} pages" : "pages unknown")</div>
+        }
+    </div></div>
+</div>
