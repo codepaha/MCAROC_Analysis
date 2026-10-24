@@ -8,10 +8,11 @@
     var running = !job.IsTerminal;
     var failed = job.Status == AutoFetchJobStatus.Failed;
 }
-@* Auto-fetch progress. While the job runs this polls /Requests/{id}/autofetch/status every 3s and
-   reloads the page once the job reaches a terminal state (the tabs below only fill after ingestion). *@
+@* Auto-fetch progress. While the job runs this polls /Requests/{id}/autofetch/status every 3s and reloads the page once the job reaches a
+   terminal state (the tabs below only fill after ingestion), or when it starts or stops waiting for an unlock approval (the approve box is
+   drawn here, on the server). *@
 <div class="pi-panel mb-3 mca-autofetch @(failed ? "border-danger" : "")" id="mcaAutoFetch"
-     data-status-url="/Requests/@r.RequestId/autofetch/status" data-running="@(running ? "1" : "0")" style="padding:18px 22px;">
+     data-status-url="/Requests/@r.RequestId/autofetch/status?shown=@job.Status" data-running="@(running ? "1" : "0")" style="padding:18px 22px;">
     <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
         <div>
             <div class="pi-kicker">Auto-fetch from the reference tool</div>
@@ -99,7 +100,7 @@
                     .then(function (r) { return r.ok ? r.json() : null; })
                     .then(function (s) {
                         if (!s) return;
-                        if (s.isTerminal) { location.reload(); return; }
+                        if (s.isTerminal || s.reloadPage) { location.reload(); return; }
                         if (bar) bar.style.width = Math.max(2, s.progressPercent) + '%';
                         if (msg) msg.textContent = s.statusMessage || s.status;
                         if (files && s.filesTotal > 0) files.textContent = s.filesDownloaded.toLocaleString() + ' / ' + s.filesTotal.toLocaleString();

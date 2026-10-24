@@ -423,14 +423,26 @@ public partial class AutoFetchController(
             .ToListAsync(ct);
     }
 
+    /// <param name="shown">The job status the polling page was rendered with: when it differs in a way the page's server-rendered parts depend
+    /// on, the reply asks the page to reload (<see cref="ShouldReloadPage"/>).</param>
     [HttpGet("/Requests/{id:long}/autofetch/status")]
-    public async Task<IActionResult> Status(long id, CancellationToken ct)
+    public async Task<IActionResult> Status(long id, CancellationToken ct, [FromQuery] string? shown = null)
     {
         var job = await db.AutoFetchJobs.AsNoTracking().FirstOrDefaultAsync(j => j.RequestId == id, ct);
         if (job is null) return NotFound();
         var requestStatus = await db.Requests.AsNoTracking().Where(r => r.RequestId == id).Select(r => r.RequestStatus).FirstOrDefaultAsync(ct);
         Response.Headers.CacheControl = "no-store";
-        return Ok(ToDto(job, requestStatus));
+        return Ok(ToDto(job, requestStatus) with { ReloadPage = ShouldReloadPage(shown, job) });
+    }
+
+    /// <summary>Whether a page rendered while the job was <paramref name="shown"/> must reload to show the job as it is now. The approve-unlock box
+    /// is drawn by the server, so a job that starts waiting for an unlock approval after the page loaded (or stops waiting, approved from the
+    /// alert on another page) needs a reload; until 2026-10 only a finished job did, and the box appeared only after a manual refresh (#514).</summary>
+    public static bool ShouldReloadPage(string? shown, AutoFetchJob job)
+    {
+        if (job.IsTerminal) return true;
+        if (!Enum.TryParse<AutoFetchJobStatus>(shown, ignoreCase: true, out var was) || was == job.Status) return false;
+        return was == AutoFetchJobStatus.WaitingForUnlock || job.Status == AutoFetchJobStatus.WaitingForUnlock;
     }
 
     [HttpPost("/Requests/{id:long}/autofetch/retry")]

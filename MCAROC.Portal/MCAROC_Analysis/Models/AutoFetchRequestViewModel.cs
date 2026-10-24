@@ -89,4 +89,5 @@ public sealed record AutoFetchStatusDto(
     int RegistryListedCount,
     string RequestStatus,
     DateTime? StartedUtc,
-    DateTime? CompletedUtc);
+    DateTime? CompletedUtc,
+    bool ReloadPage = false);
