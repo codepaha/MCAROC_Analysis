@@ -89,7 +89,12 @@ builder.Services.Configure<ReferenceToolOptions>(builder.Configuration.GetSectio
 // Singleton: the session cookie/signing key/user id must be shared across every job/request scope, not
 // re-logged-in per scope — see ReferenceToolSession's own doc comment for why this bit us before.
 builder.Services.AddSingleton<ReferenceToolSession>();
-builder.Services.AddHttpClient<ReferenceToolClient>(client => client.Timeout = TimeSpan.FromMinutes(10))
+// #514: in Development only, IntegrationCapture:Directory writes every reference-tool and litigation-API call there, redacted, for test fixtures.
+var captureDirectory = builder.Configuration[$"{MCAROC_Analysis.Services.Capture.CaptureHandler.SectionName}:Directory"];
+var capture = builder.Environment.IsDevelopment() && !string.IsNullOrWhiteSpace(captureDirectory);
+Func<string, Func<IServiceProvider, DelegatingHandler>> captureFor = service => sp => new MCAROC_Analysis.Services.Capture.CaptureHandler(
+    service, captureDirectory!, sp.GetRequiredService<ILogger<MCAROC_Analysis.Services.Capture.CaptureHandler>>());
+var referenceToolHttp = builder.Services.AddHttpClient<ReferenceToolClient>(client => client.Timeout = TimeSpan.FromMinutes(10))
     // The session cookie is sent as an explicit header per request; the handler's own cookie container
     // must stay off or it silently drops that header.
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
@@ -97,6 +102,7 @@ builder.Services.AddHttpClient<ReferenceToolClient>(client => client.Timeout = T
         UseCookies = false,
         AutomaticDecompression = System.Net.DecompressionMethods.All
     });
+if (capture) referenceToolHttp.AddHttpMessageHandler(captureFor(MCAROC_Analysis.Services.Capture.CaptureService.ReferenceTool));
 builder.Services.AddSingleton<AutoFetchQueue>();
 builder.Services.AddScoped<AutoFetchJobService>();
 builder.Services.AddHostedService<AutoFetchWorker>();
@@ -175,7 +181,7 @@ builder.Services.AddHostedService<PipelineReconcilerWorker>();
 // retain the raw report for #242 to persist. Inert until BprLitigation:BaseUrl/Id/SecretKey are configured
 // (user-secrets/environment only — see BprLitigationOptions).
 builder.Services.Configure<BprLitigationOptions>(builder.Configuration.GetSection(BprLitigationOptions.SectionName));
-builder.Services.AddHttpClient<BprLitigationClient>((sp, client) =>
+var litigationHttp = builder.Services.AddHttpClient<BprLitigationClient>((sp, client) =>
 {
     var opts = sp.GetRequiredService<IOptions<BprLitigationOptions>>().Value;
     if (!string.IsNullOrWhiteSpace(opts.BaseUrl))
@@ -195,6 +201,7 @@ builder.Services.AddHttpClient<BprLitigationClient>((sp, client) =>
     AllowAutoRedirect = false,
     ConnectCallback = BprLitigationClient.CreateSafeConnectCallback()
 });
+if (capture) litigationHttp.AddHttpMessageHandler(captureFor(MCAROC_Analysis.Services.Capture.CaptureService.LitigationApi));
 builder.Services.AddSingleton<LitigationSearchQueue>();
 builder.Services.AddScoped<LitigationSearchJobService>();
 builder.Services.AddHostedService<LitigationSearchWorker>();
