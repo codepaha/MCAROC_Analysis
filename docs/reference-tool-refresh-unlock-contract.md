@@ -447,7 +447,115 @@ if (isStale)
 
 ---
 
-## 7. Captured Artifacts Inventory
+## 7. Reference Documents Registry (Paging Protocol) — Live Verified 2026-10-24
+
+Verified on **GODREJ PROPERTIES LIMITED** (`bid: <64_HEX_BID>`), spanning 1,354 documents across 4 sections:
+- `annual` (Annual Returns & eForms): 291 documents
+- `charge` (Charge Documents): 78 documents
+- `incorporation` (Incorporation Documents): 181 documents
+- `scanned` (Scanned Documents): 804 documents
+
+### 7.1 Initial Registry Request: `referenceDocs`
+- **Method:** `POST` or `GET`
+- **URL:** `server/common/docService/service.php?qp=<JWT>&v=3.1.7&cv=8.1.29`
+- **Request Payload:**
+  ```json
+  {
+    "action": "referenceDocs",
+    "bid": "<64_HEX_BID>"
+  }
+  ```
+- **Response Structure (HTTP 200 OK):**
+  JSON object with keys for each section: `"annual"`, `"charge"`, `"incorporation"`, `"scanned"`.
+  Each section value is a JSON string (or JSON object) containing:
+  - `totalCount`: total document count for the section.
+  - `data`: array containing up to 100 documents for the first page.
+
+If `totalCount` exceeds the first page count (100 items), subsequent pages must be retrieved per section using the dedicated section pagination endpoints below.
+
+### 7.2 Section Pagination Endpoints
+All pagination requests target `server/common/docService/service.php?qp=<JWT>&v=3.1.7&cv=8.1.29`.
+
+#### 7.2.1 Annual Returns & eForms: `getRefDocs`
+- **Action:** `getRefDocs`
+- **Request Payload:**
+  ```json
+  {
+    "action": "getRefDocs",
+    "bid": "<64_HEX_BID>",
+    "section": "AnnualReturnsEform",
+    "offset": 100,
+    "count": 100,
+    "platform": "b2c"
+  }
+  ```
+- **Response:** `{ "data": [ ... ], "totalCount": 291 }`
+
+#### 7.2.2 Charge Documents: `getRefDocs`
+- **Action:** `getRefDocs`
+- **Request Payload:**
+  ```json
+  {
+    "action": "getRefDocs",
+    "bid": "<64_HEX_BID>",
+    "section": "ChargeDocuments",
+    "offset": 100,
+    "count": 100,
+    "platform": "b2c"
+  }
+  ```
+- **Response:** `{ "data": [ ... ], "totalCount": 78 }`
+
+#### 7.2.3 Incorporation Documents: `getIncorporationDocs`
+- **Action:** `getIncorporationDocs`
+- **Request Payload:**
+  ```json
+  {
+    "action": "getIncorporationDocs",
+    "bid": "<64_HEX_BID>",
+    "offset": 100,
+    "count": 100,
+    "platform": "b2c"
+  }
+  ```
+- **Response:** `{ "data": [ ... ], "totalCount": 181 }`
+
+#### 7.2.4 Scanned Documents: `getScannedDocs`
+- **Action:** `getScannedDocs`
+- **Request Payload:**
+  ```json
+  {
+    "action": "getScannedDocs",
+    "bid": "<64_HEX_BID>",
+    "offset": 100,
+    "count": 100,
+    "platform": "b2c"
+  }
+  ```
+- **Response:** `{ "data": [ ... ], "totalCount": 804 }`
+
+### 7.3 Document Item Schema
+Each document in `data` has the following schema:
+```json
+{
+  "docId": "35308_000000000_form8_01-12-1987_0",
+  "docName": "Form 8-01/12/87",
+  "docType": "Form 8",
+  "docCategory": "Creation of charge",
+  "date": "1987-12-01",
+  "awsPath": "corporate_registry/<DOC_PATH>.pdf",
+  "attachments": [
+    {
+      "mcaName": "Form 8-01/12/87",
+      "awsPath": "corporate_registry/<ATTACHMENT_PATH>.pdf"
+    }
+  ]
+}
+```
+
+---
+
+## 8. Captured Artifacts Inventory
 
 All raw JSON traces and screenshots are maintained outside the repository at `E:\Downloads\ref-app-unlock-refresh\`:
 

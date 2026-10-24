@@ -1,0 +1,24 @@
+{
+  "service": "reference-tool",
+  "capturedUtc": "2026-10-24T11:49:21.7561513Z",
+  "method": "GET",
+  "url": "https://reference.test/server/common/docService/service.php",
+  "action": "getScannedDocs",
+  "payload": {
+    "action": "getScannedDocs",
+    "bid": "86cba9e49b03c2134d6c298d30fcf638c93f9f7c1bf6e1a49f0a78ed3afda88f",
+    "offset": 800,
+    "count": 100,
+    "platform": "b2c"
+  },
+  "requestBody": null,
+  "query": {
+    "v": "3.1.7",
+    "cv": "8.1.29"
+  },
+  "status": 200,
+  "contentType": "text/html",
+  "contentLength": null,
+  "body": "{\r\n  \"data\": [\r\n    {\r\n      \"section\": \"OtherDocumentsAttachment\",\r\n      \"bid\": \"86cba9e49b03c2134d6c298d30fcf638c93f9f7c1bf6e1a49f0a78ed3afda88f\",\r\n      \"description\": \"Others-070806\",\r\n      \"downloadedTime\": \"2018-05-11T09:47:22+05:30\",\r\n      \"fileHash\": \"dfc3b5eba75b3e754443cfda4ba534dc5e81af75f917d455e15d6c9cefa4de73\",\r\n      \"formName\": null,\r\n      \"pageCount\": null,\r\n      \"mcaName\": \"Others-070806\",\r\n      \"documentDate\": \"2006-08-07T05:30:00+05:30\",\r\n      \"mcaCategory\": \"Other Documents Attachment\",\r\n      \"formFilter\": null,\r\n      \"size\": 30.96,\r\n      \"awsPath\": \"442/L74120MH1985PLC035308/mca/OtherDocumentsAttachment/efde4d63b649a4d84c54b7c12c417ae8v1.DUP2.pdf\",\r\n      \"formType\": null,\r\n      \"docId\": \"efde4d63b649a4d84c54b7c12c417ae8v1.DUP2\"\r\n    },\r\n    {\r\n      \"bid\": \"86cba9e49b03c2134d6c298d30fcf638c93f9f7c1bf6e1a49f0a78ed3afda88f\",\r\n      \"section\": \"OtherDocumentsAttachment\",\r\n      \"description\": \"Others-070806\",\r\n      \"downloadedTime\": \"2018-05-11T09:47:22+05:30\",\r\n      \"fileHash\": \"8fdd48820085647c331e0675abf528266ec9f60458f9c5567402579e4bb06165\",\r\n      \"formName\": null,\r\n      \"pageCount\": null,\r\n      \"mcaName\": \"Others-070806\",\r\n      \"documentDate\": \"2006-08-07T05:30:00+05:30\",\r\n      \"mcaCategory\": \"Other Documents Attachment\",\r\n      \"formFilter\": null,\r\n      \"size\": 65.41,\r\n      \"awsPath\": \"442/L74120MH1985PLC035308/mca/OtherDocumentsAttachment/efde4d63b649a4d84c54b7c12c417ae8v1.DUP3.pdf\",\r\n      \"formType\": null,\r\n      \"docId\": \"efde4d63b649a4d84c54b7c12c417ae8v1.DUP3\"\r\n    },\r\n    {\r\n      \"bid\": \"86cba9e49b03c2134d6c298d30fcf638c93f9f7c1bf6e1a49f0a78ed3afda88f\",\r\n      \"section\": \"OtherDocumentsAttachment\",\r\n      \"description\": \"Others-110706\",\r\n      \"downloadedTime\": \"2018-05-11T09:47:16+05:30\",\r\n      \"fileHash\": \"6dde41e19a437bb664bb98175011925b556c03378543db2340156b7b8e77172a\",\r\n      \"formName\": null,\r\n      \"pageCount\": null,\r\n      \"mcaName\": \"Others-110706\",\r\n      \"documentDate\": \"2006-07-11T05:30:00+05:30\",\r\n      \"mcaCategory\": \"Other Documents Attachment\",\r\n      \"formFilter\": null,\r\n      \"size\": 54.73,\r\n      \"awsPath\": \"442/L74120MH1985PLC035308/mca/OtherDocumentsAttachment/570718276f631f357c1d4ee0e2c50c5ev1.pdf\",\r\n      \"formType\": null,\r\n      \"docId\": \"570718276f631f357c1d4ee0e2c50c5ev1\"\r\n    },\r\n    {\r\n      \"bid\": \"86cba9e49b03c2134d6c298d30fcf638c93f9f7c1bf6e1a49f0a78ed3afda88f\",\r\n      \"section\": \"OtherDocumentsAttachment\",\r\n      \"description\": \"Copy of the agreement-110706\",\r\n      \"downloadedTime\": \"2018-05-11T09:47:15+05:30\",\r\n      \"fileHash\": \"42dc96071177a2b26d69a731dbce5946e7f355d1ec88f2e7721dd02b3ef2de31\",\r\n      \"formName\": null,\r\n      \"pageCount\": null,\r\n      \"mcaName\": \"Copy of the agreement-110706\",\r\n      \"documentDate\": \"2006-07-11T05:30:00+05:30\",\r\n      \"mcaCategory\": \"Other Documents Attachment\",\r\n      \"formFilter\": null,\r\n      \"size\": 165.22,\r\n      \"awsPath\": \"442/L74120MH1985PLC035308/mca/OtherDocumentsAttachment/e688a3d155ea8acfdf92e57b01d08f73v1.pdf\",\r\n      \"formType\": null,\r\n      \"docId\": \"e688a3d155ea8acfdf92e57b01d08f73v1\"\r\n    }\r\n  ],\r\n  \"totalCount\": 804\r\n}",
+  "source": "Live reference tool registry paging for GODREJ PROPERTIES LIMITED (2026-10-24)"
+}
