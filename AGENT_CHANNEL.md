@@ -3,24 +3,27 @@
 
 ### 2026-10-24 — Antigravity: PR #509 review findings resolved (feat/prelogin-attribution-ui)
 
-Resolved both P1 review findings for PR #509:
+Resolved P1 review findings for PR #509:
 1. **Downloads retain stale report contents:**
    - In `PreLoginAttributionService`, injected `PreLoginReportService? reports = null` and `IWebHostEnvironment? environment = null` (with fallback to `services.GetService<T>()`).
    - Added guarded `TryPublishReportAsync` generating versioned DOCX reports matching the pattern in `PreLoginReportJobService.SingleCaseEditAsync`: `{jobId}-v{nextVersion}-{attemptId}-{generated.FileName}` in `App_Data/PreLoginReports`.
    - Wired versioned report publication and conditional update of `ReportStoragePath` into `AcceptSuggestionWithSyncAsync`, `UndoExclusionWithSyncAsync`, `ApplyOpenSuggestionsAsync`, and `CheckAttributionAsync` (Apply mode).
    - In all mutation paths, attempt report files are cleaned up on concurrency conflicts or rollback, and `oldReportPath` is safely deleted after transaction commit.
    - `AssignmentsController.Download` immediately serves the newly published report.
-2. **Stale Accept overriding prior rejection:**
+   - Inspected DOCX body text directly via `WordprocessingDocument.Open` in regression tests to verify excluded cases do not appear and restored cases appear.
+2. **Concurrent Reject vs Accept / Bulk Apply Serialization & Atomicity:**
+   - Ensured Reject operations participate in the job-level optimistic concurrency versioning (`DataVersion`).
+   - `RejectSuggestionAsync` runs in an explicit database transaction with a retry loop (`maxRetries = 3`), checks for conflicting decisions, and conditionally increments `PreLoginReportJobs.DataVersion = currentVersion + 1` via `ExecuteUpdateAsync` where `DataVersion == currentVersion`. If rows affected is 0, rolls back and retries.
+   - `AcceptSuggestionAsync` (without sync) runs in an explicit database transaction with a retry loop, checks for conflicting decisions, and conditionally increments `DataVersion = currentVersion + 1`.
+   - Wired `OnAfterConflictCheckAsync` test interception hook across all mutation paths (`RejectSuggestionAsync`, `AcceptSuggestionWithSyncAsync`, `ApplyOpenSuggestionsAsync`, `UndoExclusionWithSyncAsync`).
+   - Added deterministic two-`DbContext` concurrency tests:
+     - `Concurrent_Accept_And_Reject_Deterministic_TwoDbContext_Only_One_Wins`: pauses Accept right after conflict check, commits Reject on a second DbContext, resumes Accept, proving Accept detects the concurrency conflict, rolls back cleanly, and leaves the case excluded with decision `Rejected`.
+     - `Concurrent_ApplyOpenSuggestions_And_Reject_Deterministic_TwoDbContext`: pauses bulk Apply right after conflict check, commits Reject on a second DbContext, resumes bulk Apply, proving bulk Apply retries, refetches open suggestions, excludes the rejected case, and preserves the rejection.
+3. **Stale Accept overriding prior rejection:**
    - Validated in `AcceptSuggestionWithSyncAsync` and `AcceptSuggestionAsync` that the target case is an open suggestion (`!sc.IsExcluded && sc.AttributionOutcome == LitigationAttributionOutcome.NotTheCompany`).
    - Added pre-checks and in-transaction atomic verification ensuring no prior or concurrent decision of `Rejected`, `Accepted`, or `AutomaticallyApplied` exists. Stale Accept attempts fast-fail and return `false` cleanly without modifying `ModuleScopeCase`, mutating `DataJson`, or recording decisions.
    - Updated `ApplyOpenSuggestionsAsync` to filter out cases with prior decisions (especially analyst rejections) so bulk actions never override analyst rejections.
-   - Added regression test suite in `PreLoginAttributionUiTests.cs`:
-     - `Stale_Accept_Cannot_Override_Prior_Rejection_And_Does_Not_Mutate_State`
-     - `ApplyOpenSuggestions_Filters_Out_Prior_Rejections`
-     - `AcceptSuggestion_Regenerates_Report_Cleans_Old_File_And_Served_By_Download`
-     - `UndoExclusion_Regenerates_Report_And_Cleans_Old_File`
-     - `ApplyOpenSuggestions_Regenerates_Report_And_Cleans_Old_File`
-   - Verified all 17 `PreLoginAttributionUiTests` and 34 `PreLoginLitigationAcceptanceTests` pass cleanly.
+   - Regression test suite in `PreLoginAttributionUiTests.cs` (19 passing tests) and `PreLoginLitigationAcceptanceTests.cs` (34 passing tests).
 
 ### 2026-10-13 — Claude session: NEW tasks for Antigravity (owner-approved)
 

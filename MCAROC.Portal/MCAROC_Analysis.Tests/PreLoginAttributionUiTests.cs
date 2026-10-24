@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DocumentFormat.OpenXml.Packaging;
 using MCAROC_Analysis.Controllers;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
@@ -461,10 +462,10 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
         Assert.True(scAfter.IsExcluded);
         Assert.Equal("Analyst manual settlement exclusion", scAfter.ExclusionReason);
 
-        // Verify DataJson and DataVersion were NOT altered
+        // Verify DataJson was NOT altered, and DataVersion was incremented to serialize against concurrent Accept/Apply
         var jobAfter = await verifyDb.PreLoginReportJobs.FirstAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
         Assert.Equal(initialDataJson, jobAfter.DataJson);
-        Assert.Equal(initialVersion, jobAfter.DataVersion);
+        Assert.Equal(initialVersion + 1, jobAfter.DataVersion);
 
         // Verify decision was recorded as Rejected
         var decision = await verifyDb.PreLoginAttributionDecisions.FirstOrDefaultAsync(d => d.ScopeCaseId == item.ScopeCaseId && d.Action == PreLoginAttributionAction.Rejected);
@@ -744,6 +745,13 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
 
             var physicalFile = Assert.IsType<PhysicalFileResult>(downloadResult);
             Assert.Equal(updatedJob.ReportStoragePath, physicalFile.FileName);
+
+            // Inspect generated DOCX contents: excluded case must NOT appear in report body
+            using (var doc = WordprocessingDocument.Open(updatedJob.ReportStoragePath, false))
+            {
+                var bodyText = doc.MainDocumentPart!.Document.Body!.InnerText;
+                Assert.DoesNotContain("CS/2500/2023", bodyText);
+            }
         }
         finally
         {
@@ -812,6 +820,13 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
             {
                 Assert.False(File.Exists(applyReportPath));
             }
+
+            // Inspect generated DOCX contents: restored case MUST appear in report body
+            using (var doc = WordprocessingDocument.Open(finalJob.ReportStoragePath, false))
+            {
+                var bodyText = doc.MainDocumentPart!.Document.Body!.InnerText;
+                Assert.Contains("CS/2600/2023", bodyText);
+            }
         }
         finally
         {
@@ -865,6 +880,203 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
 
             Assert.True(File.Exists(updatedJob.ReportStoragePath));
             Assert.False(File.Exists(initialReportPath));
+
+            // Inspect generated DOCX contents: bulk applied case must NOT appear in report body
+            using (var doc = WordprocessingDocument.Open(updatedJob.ReportStoragePath, false))
+            {
+                var bodyText = doc.MainDocumentPart!.Document.Body!.InnerText;
+                Assert.DoesNotContain("CS/2700/2023", bodyText);
+            }
+        }
+        finally
+        {
+            foreach (var f in filesToCleanup)
+            {
+                if (File.Exists(f)) { try { File.Delete(f); } catch { } }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Concurrent_Accept_And_Reject_Deterministic_TwoDbContext_Only_One_Wins()
+    {
+        var env = new TestEnvironment();
+        var reportService = new PreLoginReportService(null!, env);
+        var filesToCleanup = new List<string>();
+
+        try
+        {
+            await using var db1 = Ctx();
+            await using var db2 = Ctx();
+
+            var cases = new List<LegalCaseRecord>
+            {
+                new("district", "Saket Court", "CNR28", "CS/2800/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "OMEGA TRADING EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-28", Petitioner: "OMEGA TRADING EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+            };
+            var (job, borrower, _) = await CreateJobWithTargetsAsync(db1, "OMEGA TRADING LIMITED", "Oliver Queen", cases);
+
+            // Initial report file
+            var reportsDir = Path.Combine(env.ContentRootPath, "App_Data", "PreLoginReports");
+            Directory.CreateDirectory(reportsDir);
+            var initialReportPath = Path.Combine(reportsDir, $"{job.PreLoginReportJobId}-v1-initial.docx");
+            var initGenerated = await reportService.GenerateFromDataAsync(job.Cin, PreLoginReportFormat.Sbi,
+                JsonSerializer.Deserialize<InstaReportData>(job.DataJson)!, CancellationToken.None);
+            await File.WriteAllBytesAsync(initialReportPath, initGenerated.Bytes);
+            filesToCleanup.Add(initialReportPath);
+
+            job.ReportStoragePath = initialReportPath;
+            await db1.SaveChangesAsync();
+
+            var backfillService = new PreLoginAssignmentBackfillService(db1);
+            await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+            var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+
+            // Service 1 on db1 (simulates Tab A attempting Accept)
+            var service1 = new PreLoginAttributionService(db1, options, new ServiceCollection().BuildServiceProvider(), null, reportService, env);
+            await service1.CheckAttributionAsync(job.PreLoginReportJobId);
+
+            // Service 2 on db2 (simulates Tab B attempting Reject)
+            var service2 = new PreLoginAttributionService(db2, options, new ServiceCollection().BuildServiceProvider(), null, reportService, env);
+
+            var suggestions = await service1.GetOpenSuggestionsAsync(job.PreLoginReportJobId);
+            var item = Assert.Single(suggestions);
+
+            // Set hook on service1: pause after conflict check, commit Reject on db2, then resume Accept on db1
+            var rejectRan = false;
+            service1.OnAfterConflictCheckAsync = async () =>
+            {
+                // Hook called: service1 has passed conflict SELECT under its transaction.
+                // Now db2 commits Reject!
+                var rejectOk = await service2.RejectSuggestionWithSyncAsync(item.ScopeCaseId, "AnalystReject");
+                Assert.True(rejectOk);
+                rejectRan = true;
+            };
+
+            // Call Accept on service1: must fail because Reject committed concurrently and bumped DataVersion!
+            var acceptOk = await service1.AcceptSuggestionWithSyncAsync(item.ScopeCaseId, "AnalystAccept");
+            Assert.True(rejectRan);
+            Assert.False(acceptOk);
+
+            // Verify final state: only Reject won
+            await using var verifyDb = Ctx();
+            var sc = await verifyDb.Set<ModuleScopeCase>().FirstAsync(x => x.ScopeCaseId == item.ScopeCaseId);
+            Assert.False(sc.IsExcluded);
+            Assert.True(sc.IncludedInReport);
+
+            var updatedJob = await verifyDb.PreLoginReportJobs.FirstAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+            var reportData = JsonSerializer.Deserialize<InstaReportData>(updatedJob.DataJson);
+            var c28 = Assert.Single(reportData!.LegalCases!.Cases, c => c.CaseRowId == "C-28");
+            Assert.False(c28.IsExcludedFromReport);
+
+            // Decision audit trail contains ONLY Rejected, NO Accepted
+            var decisions = await verifyDb.PreLoginAttributionDecisions.Where(d => d.ScopeCaseId == item.ScopeCaseId).ToListAsync();
+            Assert.DoesNotContain(decisions, d => d.Action == PreLoginAttributionAction.Accepted);
+            Assert.Contains(decisions, d => d.Action == PreLoginAttributionAction.Rejected);
+
+            // Downloaded report preserves the included case
+            var jobService = new PreLoginReportJobService(verifyDb, new PreLoginReportQueue(), reportService, env);
+            var controller = new AssignmentsController(verifyDb, jobService, service1);
+            var downloadResult = await controller.Download(updatedJob.BatchId, updatedJob.PreLoginReportJobId, CancellationToken.None);
+            var physicalFile = Assert.IsType<PhysicalFileResult>(downloadResult);
+
+            using (var doc = WordprocessingDocument.Open(physicalFile.FileName, false))
+            {
+                var bodyText = doc.MainDocumentPart!.Document.Body!.InnerText;
+                Assert.Contains("CS/2800/2023", bodyText);
+            }
+        }
+        finally
+        {
+            foreach (var f in filesToCleanup)
+            {
+                if (File.Exists(f)) { try { File.Delete(f); } catch { } }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Concurrent_ApplyOpenSuggestions_And_Reject_Deterministic_TwoDbContext()
+    {
+        var env = new TestEnvironment();
+        var reportService = new PreLoginReportService(null!, env);
+        var filesToCleanup = new List<string>();
+
+        try
+        {
+            await using var db1 = Ctx();
+            await using var db2 = Ctx();
+
+            var cases = new List<LegalCaseRecord>
+            {
+                new("district", "Saket Court", "CNR29A", "CS/2901/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "ZETA EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-29A", Petitioner: "ZETA EMPLOYEES UNION", Respondent: "UNION OF INDIA"),
+                new("district", "Saket Court", "CNR29B", "CS/2902/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "ETA EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-29B", Petitioner: "ETA EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+            };
+            var (job, borrower, _) = await CreateJobWithTargetsAsync(db1, "ZETA ETA LIMITED", "Zack Snyder", cases);
+
+            var reportsDir = Path.Combine(env.ContentRootPath, "App_Data", "PreLoginReports");
+            Directory.CreateDirectory(reportsDir);
+            var initialReportPath = Path.Combine(reportsDir, $"{job.PreLoginReportJobId}-v1-initial.docx");
+            var initGenerated = await reportService.GenerateFromDataAsync(job.Cin, PreLoginReportFormat.Sbi,
+                JsonSerializer.Deserialize<InstaReportData>(job.DataJson)!, CancellationToken.None);
+            await File.WriteAllBytesAsync(initialReportPath, initGenerated.Bytes);
+            filesToCleanup.Add(initialReportPath);
+
+            job.ReportStoragePath = initialReportPath;
+            await db1.SaveChangesAsync();
+
+            var backfillService = new PreLoginAssignmentBackfillService(db1);
+            await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+            var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+
+            var service1 = new PreLoginAttributionService(db1, options, new ServiceCollection().BuildServiceProvider(), null, reportService, env);
+            await service1.CheckAttributionAsync(job.PreLoginReportJobId);
+
+            var service2 = new PreLoginAttributionService(db2, options, new ServiceCollection().BuildServiceProvider(), null, reportService, env);
+
+            var suggestions = await service1.GetOpenSuggestionsAsync(job.PreLoginReportJobId);
+            Assert.Equal(2, suggestions.Count);
+            var item29A = Assert.Single(suggestions, s => s.CaseRowId == "C-29A");
+
+            // Pause service1 during bulk apply after conflict check; commit Reject on C-29A via db2
+            var rejectRan = false;
+            service1.OnAfterConflictCheckAsync = async () =>
+            {
+                if (!rejectRan)
+                {
+                    var rejectOk = await service2.RejectSuggestionWithSyncAsync(item29A.ScopeCaseId, "AnalystReject");
+                    Assert.True(rejectOk);
+                    rejectRan = true;
+                }
+            };
+
+            // Run bulk apply: first attempt hits conflict due to Reject bumping DataVersion, retries,
+            // filters out the now-rejected C-29A, and applies only C-29B!
+            var appliedCount = await service1.ApplyOpenSuggestionsAsync(job.PreLoginReportJobId, "AnalystBulk");
+            Assert.True(rejectRan);
+            Assert.Equal(1, appliedCount);
+
+            await using var verifyDb = Ctx();
+            var sc29A = await verifyDb.Set<ModuleScopeCase>().FirstAsync(x => x.ScopeCaseId == item29A.ScopeCaseId);
+            Assert.False(sc29A.IsExcluded);
+
+            var updatedJob = await verifyDb.PreLoginReportJobs.FirstAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+            var reportData = JsonSerializer.Deserialize<InstaReportData>(updatedJob.DataJson);
+            var c29ARecord = Assert.Single(reportData!.LegalCases!.Cases, c => c.CaseRowId == "C-29A");
+            Assert.False(c29ARecord.IsExcludedFromReport);
+            var c29BRecord = Assert.Single(reportData.LegalCases.Cases, c => c.CaseRowId == "C-29B");
+            Assert.True(c29BRecord.IsExcludedFromReport);
+
+            filesToCleanup.Add(updatedJob.ReportStoragePath!);
+
+            // Downloaded report has C-29A present and C-29B excluded
+            using (var doc = WordprocessingDocument.Open(updatedJob.ReportStoragePath!, false))
+            {
+                var bodyText = doc.MainDocumentPart!.Document.Body!.InnerText;
+                Assert.Contains("CS/2901/2023", bodyText);
+                Assert.DoesNotContain("CS/2902/2023", bodyText);
+            }
         }
         finally
         {

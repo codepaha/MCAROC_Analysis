@@ -61,6 +61,8 @@ public sealed class PreLoginAttributionService(
     private readonly PreLoginReportService? _reports = reports ?? services.GetService<PreLoginReportService>();
     private readonly IWebHostEnvironment? _environment = environment ?? services.GetService<IWebHostEnvironment>();
 
+    internal Func<Task>? OnAfterConflictCheckAsync { get; set; }
+
     public async Task<PreLoginAttributionRunResult> CheckAttributionAsync(long jobId, bool forceAll = false, CancellationToken ct = default)
     {
         var scope = await db.Set<ModuleScope>()
@@ -526,6 +528,11 @@ public sealed class PreLoginAttributionService(
                     continue;
                 }
 
+                if (OnAfterConflictCheckAsync != null)
+                {
+                    await OnAfterConflictCheckAsync();
+                }
+
                 await db.SaveChangesAsync(ct);
 
                 var rowsAffected = await db.PreLoginReportJobs
@@ -578,63 +585,124 @@ public sealed class PreLoginAttributionService(
 
     public async Task<bool> AcceptSuggestionAsync(long scopeCaseId, string decidedBy, bool autoSave, CancellationToken ct = default)
     {
-        var sc = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == scopeCaseId, ct);
-        if (sc is null) return false;
-
-        // Must be an open suggestion: outcome must be NotTheCompany and not already excluded
-        if (sc.IsExcluded || sc.AttributionOutcome != LitigationAttributionOutcome.NotTheCompany)
+        const int maxRetries = 3;
+        for (int attempt = 0; attempt < maxRetries; attempt++)
         {
-            logger?.LogWarning("Cannot accept suggestion for ScopeCaseId {ScopeCaseId}: Not an open suggestion (IsExcluded={IsExcluded}, Outcome={Outcome}).",
-                scopeCaseId, sc.IsExcluded, sc.AttributionOutcome);
-            return false;
+            db.ChangeTracker.Clear();
+
+            var sc = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == scopeCaseId, ct);
+            if (sc is null) return false;
+
+            // Must be an open suggestion: outcome must be NotTheCompany and not already excluded
+            if (sc.IsExcluded || sc.AttributionOutcome != LitigationAttributionOutcome.NotTheCompany)
+            {
+                logger?.LogWarning("Cannot accept suggestion for ScopeCaseId {ScopeCaseId}: Not an open suggestion (IsExcluded={IsExcluded}, Outcome={Outcome}).",
+                    scopeCaseId, sc.IsExcluded, sc.AttributionOutcome);
+                return false;
+            }
+
+            var lastDecision = await db.PreLoginAttributionDecisions.AsNoTracking()
+                .Where(d => d.ScopeCaseId == sc.ScopeCaseId)
+                .OrderByDescending(d => d.DecidedUtc)
+                .FirstOrDefaultAsync(ct);
+
+            if (lastDecision != null &&
+                (lastDecision.Action == PreLoginAttributionAction.Rejected ||
+                 lastDecision.Action == PreLoginAttributionAction.Accepted ||
+                 lastDecision.Action == PreLoginAttributionAction.AutomaticallyApplied))
+            {
+                logger?.LogWarning("Cannot accept suggestion for ScopeCaseId {ScopeCaseId}: Existing decision {Action} recorded.", scopeCaseId, lastDecision.Action);
+                return false;
+            }
+
+            var scope = await db.Set<ModuleScope>().AsNoTracking().FirstOrDefaultAsync(s => s.ScopeId == sc.ScopeId, ct);
+            if (scope is null) return false;
+
+            var job = await db.PreLoginReportJobs.AsNoTracking().FirstOrDefaultAsync(j => j.PreLoginReportJobId == scope.ExternalId, ct);
+            if (job is null) return false;
+
+            var currentVersion = job.DataVersion;
+
+            await using var tx = db.Database.CurrentTransaction != null ? null : await db.Database.BeginTransactionAsync(ct);
+            try
+            {
+                var hasConflictingDecision = await db.PreLoginAttributionDecisions
+                    .AnyAsync(d => d.ScopeCaseId == sc.ScopeCaseId &&
+                                   (d.Action == PreLoginAttributionAction.Rejected ||
+                                    d.Action == PreLoginAttributionAction.Accepted ||
+                                    d.Action == PreLoginAttributionAction.AutomaticallyApplied), ct);
+
+                if (hasConflictingDecision)
+                {
+                    if (tx != null) await tx.RollbackAsync(ct);
+                    db.ChangeTracker.Clear();
+                    logger?.LogWarning("Cannot accept suggestion for ScopeCaseId {ScopeCaseId}: Conflicting decision committed concurrently.", scopeCaseId);
+                    return false;
+                }
+
+                if (OnAfterConflictCheckAsync != null)
+                {
+                    await OnAfterConflictCheckAsync();
+                }
+
+                sc.IsExcluded = true;
+                if (string.IsNullOrWhiteSpace(sc.ExclusionReason))
+                {
+                    sc.ExclusionReason = $"[Accepted suggestion] {sc.AttributionReason}";
+                }
+                sc.IncludedInReport = false;
+                sc.UpdatedUtc = DateTime.UtcNow;
+
+                var targetKind = await ResolveTargetKindAsync(sc.TargetId, ct);
+
+                db.PreLoginAttributionDecisions.Add(new PreLoginAttributionDecision
+                {
+                    ScopeCaseId = sc.ScopeCaseId,
+                    PreLoginReportJobId = scope.ExternalId,
+                    CaseRowId = sc.Alias,
+                    TargetId = sc.TargetId ?? 0,
+                    TargetKind = targetKind,
+                    PartyName = Truncate(sc.AttributionParty ?? string.Empty, 500)!,
+                    ReasonKind = sc.AttributionRule ?? "suggestion-accepted",
+                    Action = PreLoginAttributionAction.Accepted,
+                    DecidedBy = decidedBy,
+                    DecidedUtc = DateTime.UtcNow
+                });
+
+                if (autoSave)
+                {
+                    await db.SaveChangesAsync(ct);
+
+                    var rowsAffected = await db.PreLoginReportJobs
+                        .Where(j => j.PreLoginReportJobId == job.PreLoginReportJobId && j.DataVersion == currentVersion)
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(x => x.DataVersion, currentVersion + 1), ct);
+
+                    if (rowsAffected == 0)
+                    {
+                        if (tx != null) await tx.RollbackAsync(ct);
+                        db.ChangeTracker.Clear();
+                        logger?.LogWarning("Concurrency conflict syncing accepted suggestion for job {JobId}. Attempt {Attempt} of {MaxRetries}.", job.PreLoginReportJobId, attempt + 1, maxRetries);
+                        await Task.Delay(50 * (attempt + 1), ct);
+                        continue;
+                    }
+
+                    if (tx != null) await tx.CommitAsync(ct);
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                logger?.LogError(ex, "Transaction failed saving accepted suggestion {ScopeCaseId} for job {JobId}", scopeCaseId, job.PreLoginReportJobId);
+                if (tx != null) await tx.RollbackAsync(ct);
+                db.ChangeTracker.Clear();
+                throw;
+            }
         }
 
-        var lastDecision = await db.PreLoginAttributionDecisions.AsNoTracking()
-            .Where(d => d.ScopeCaseId == sc.ScopeCaseId)
-            .OrderByDescending(d => d.DecidedUtc)
-            .FirstOrDefaultAsync(ct);
-
-        if (lastDecision != null &&
-            (lastDecision.Action == PreLoginAttributionAction.Rejected ||
-             lastDecision.Action == PreLoginAttributionAction.Accepted ||
-             lastDecision.Action == PreLoginAttributionAction.AutomaticallyApplied))
-        {
-            logger?.LogWarning("Cannot accept suggestion for ScopeCaseId {ScopeCaseId}: Existing decision {Action} recorded.", scopeCaseId, lastDecision.Action);
-            return false;
-        }
-
-        var scope = await db.Set<ModuleScope>().FirstOrDefaultAsync(s => s.ScopeId == sc.ScopeId, ct);
-        if (scope is null) return false;
-
-        sc.IsExcluded = true;
-        if (string.IsNullOrWhiteSpace(sc.ExclusionReason))
-        {
-            sc.ExclusionReason = $"[Accepted suggestion] {sc.AttributionReason}";
-        }
-        sc.IncludedInReport = false;
-        sc.UpdatedUtc = DateTime.UtcNow;
-
-        var targetKind = await ResolveTargetKindAsync(sc.TargetId, ct);
-
-        db.PreLoginAttributionDecisions.Add(new PreLoginAttributionDecision
-        {
-            ScopeCaseId = sc.ScopeCaseId,
-            PreLoginReportJobId = scope.ExternalId,
-            CaseRowId = sc.Alias,
-            TargetId = sc.TargetId ?? 0,
-            TargetKind = targetKind,
-            PartyName = Truncate(sc.AttributionParty ?? string.Empty, 500)!,
-            ReasonKind = sc.AttributionRule ?? "suggestion-accepted",
-            Action = PreLoginAttributionAction.Accepted,
-            DecidedBy = decidedBy,
-            DecidedUtc = DateTime.UtcNow
-        });
-
-        if (autoSave)
-        {
-            await db.SaveChangesAsync(ct);
-        }
-        return true;
+        logger?.LogError("Exceeded max retries accepting suggestion {ScopeCaseId} due to concurrency conflicts.", scopeCaseId);
+        return false;
     }
 
     public Task<bool> RejectSuggestionAsync(long scopeCaseId, string decidedBy = "Analyst", CancellationToken ct = default)
@@ -642,50 +710,108 @@ public sealed class PreLoginAttributionService(
 
     public async Task<bool> RejectSuggestionAsync(long scopeCaseId, string decidedBy, bool autoSave, CancellationToken ct = default)
     {
-        var sc = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == scopeCaseId, ct);
-        if (sc is null) return false;
-
-        var lastDecision = await db.PreLoginAttributionDecisions.AsNoTracking()
-            .Where(d => d.ScopeCaseId == sc.ScopeCaseId)
-            .OrderByDescending(d => d.DecidedUtc)
-            .FirstOrDefaultAsync(ct);
-
-        if (lastDecision != null &&
-            (lastDecision.Action == PreLoginAttributionAction.Rejected ||
-             lastDecision.Action == PreLoginAttributionAction.Accepted))
+        const int maxRetries = 3;
+        for (int attempt = 0; attempt < maxRetries; attempt++)
         {
-            logger?.LogWarning("Cannot reject suggestion for ScopeCaseId {ScopeCaseId}: Already decided ({Action}).", scopeCaseId, lastDecision.Action);
-            return false;
+            db.ChangeTracker.Clear();
+
+            var sc = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == scopeCaseId, ct);
+            if (sc is null) return false;
+
+            var lastDecision = await db.PreLoginAttributionDecisions.AsNoTracking()
+                .Where(d => d.ScopeCaseId == sc.ScopeCaseId)
+                .OrderByDescending(d => d.DecidedUtc)
+                .FirstOrDefaultAsync(ct);
+
+            if (lastDecision != null &&
+                (lastDecision.Action == PreLoginAttributionAction.Rejected ||
+                 lastDecision.Action == PreLoginAttributionAction.Accepted ||
+                 lastDecision.Action == PreLoginAttributionAction.AutomaticallyApplied))
+            {
+                logger?.LogWarning("Cannot reject suggestion for ScopeCaseId {ScopeCaseId}: Already decided ({Action}).", scopeCaseId, lastDecision.Action);
+                return false;
+            }
+
+            var scope = await db.Set<ModuleScope>().AsNoTracking().FirstOrDefaultAsync(s => s.ScopeId == sc.ScopeId, ct);
+            if (scope is null) return false;
+
+            var job = await db.PreLoginReportJobs.AsNoTracking().FirstOrDefaultAsync(j => j.PreLoginReportJobId == scope.ExternalId, ct);
+            if (job is null) return false;
+
+            var currentVersion = job.DataVersion;
+
+            await using var tx = db.Database.CurrentTransaction != null ? null : await db.Database.BeginTransactionAsync(ct);
+            try
+            {
+                var hasConflictingDecision = await db.PreLoginAttributionDecisions
+                    .AnyAsync(d => d.ScopeCaseId == sc.ScopeCaseId &&
+                                   (d.Action == PreLoginAttributionAction.Rejected ||
+                                    d.Action == PreLoginAttributionAction.Accepted ||
+                                    d.Action == PreLoginAttributionAction.AutomaticallyApplied), ct);
+
+                if (hasConflictingDecision)
+                {
+                    if (tx != null) await tx.RollbackAsync(ct);
+                    db.ChangeTracker.Clear();
+                    logger?.LogWarning("Cannot reject suggestion for ScopeCaseId {ScopeCaseId}: Conflicting decision committed concurrently.", scopeCaseId);
+                    return false;
+                }
+
+                if (OnAfterConflictCheckAsync != null)
+                {
+                    await OnAfterConflictCheckAsync();
+                }
+
+                var targetKind = await ResolveTargetKindAsync(sc.TargetId, ct);
+
+                db.PreLoginAttributionDecisions.Add(new PreLoginAttributionDecision
+                {
+                    ScopeCaseId = sc.ScopeCaseId,
+                    PreLoginReportJobId = scope.ExternalId,
+                    CaseRowId = sc.Alias,
+                    TargetId = sc.TargetId ?? 0,
+                    TargetKind = targetKind,
+                    PartyName = Truncate(sc.AttributionParty ?? string.Empty, 500)!,
+                    ReasonKind = sc.AttributionRule ?? "suggestion-rejected",
+                    Action = PreLoginAttributionAction.Rejected,
+                    DecidedBy = decidedBy,
+                    DecidedUtc = DateTime.UtcNow
+                });
+
+                if (autoSave)
+                {
+                    await db.SaveChangesAsync(ct);
+
+                    var rowsAffected = await db.PreLoginReportJobs
+                        .Where(j => j.PreLoginReportJobId == job.PreLoginReportJobId && j.DataVersion == currentVersion)
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(x => x.DataVersion, currentVersion + 1), ct);
+
+                    if (rowsAffected == 0)
+                    {
+                        if (tx != null) await tx.RollbackAsync(ct);
+                        db.ChangeTracker.Clear();
+                        logger?.LogWarning("Concurrency conflict syncing rejected suggestion for job {JobId}. Attempt {Attempt} of {MaxRetries}.", job.PreLoginReportJobId, attempt + 1, maxRetries);
+                        await Task.Delay(50 * (attempt + 1), ct);
+                        continue;
+                    }
+
+                    if (tx != null) await tx.CommitAsync(ct);
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                logger?.LogError(ex, "Transaction failed saving rejected suggestion {ScopeCaseId} for job {JobId}", scopeCaseId, job.PreLoginReportJobId);
+                if (tx != null) await tx.RollbackAsync(ct);
+                db.ChangeTracker.Clear();
+                throw;
+            }
         }
 
-        var scope = await db.Set<ModuleScope>().FirstOrDefaultAsync(s => s.ScopeId == sc.ScopeId, ct);
-        if (scope is null) return false;
-
-        // CRITICAL: Do NOT alter sc.IsExcluded, sc.IncludedInReport, or sc.ExclusionReason.
-        // Analyst manual decisions always win; rejecting the attribution suggestion merely records
-        // the analyst's decision that the case is not excluded due to this suggestion.
-
-        var targetKind = await ResolveTargetKindAsync(sc.TargetId, ct);
-
-        db.PreLoginAttributionDecisions.Add(new PreLoginAttributionDecision
-        {
-            ScopeCaseId = sc.ScopeCaseId,
-            PreLoginReportJobId = scope.ExternalId,
-            CaseRowId = sc.Alias,
-            TargetId = sc.TargetId ?? 0,
-            TargetKind = targetKind,
-            PartyName = Truncate(sc.AttributionParty ?? string.Empty, 500)!,
-            ReasonKind = sc.AttributionRule ?? "suggestion-rejected",
-            Action = PreLoginAttributionAction.Rejected,
-            DecidedBy = decidedBy,
-            DecidedUtc = DateTime.UtcNow
-        });
-
-        if (autoSave)
-        {
-            await db.SaveChangesAsync(ct);
-        }
-        return true;
+        logger?.LogError("Exceeded max retries rejecting suggestion {ScopeCaseId} due to concurrency conflicts.", scopeCaseId);
+        return false;
     }
 
     public Task<bool> UndoExclusionAsync(long scopeCaseId, string decidedBy = "Analyst", CancellationToken ct = default)
@@ -1106,6 +1232,11 @@ public sealed class PreLoginAttributionService(
                     return false;
                 }
 
+                if (OnAfterConflictCheckAsync != null)
+                {
+                    await OnAfterConflictCheckAsync();
+                }
+
                 sc.IsExcluded = true;
                 if (string.IsNullOrWhiteSpace(sc.ExclusionReason))
                 {
@@ -1254,6 +1385,11 @@ public sealed class PreLoginAttributionService(
                     if (tx != null) await tx.RollbackAsync(ct);
                     db.ChangeTracker.Clear();
                     return false;
+                }
+
+                if (OnAfterConflictCheckAsync != null)
+                {
+                    await OnAfterConflictCheckAsync();
                 }
 
                 sc.IsExcluded = false;
