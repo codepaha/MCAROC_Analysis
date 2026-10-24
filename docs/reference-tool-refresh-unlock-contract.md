@@ -331,7 +331,7 @@ requestProbeData(userName, bid, requestType) {
 ---
 
 #### Case A: First Probe (`requestProbeData`) — Live Verified 2026-10-16
-Verified on **NATURE EARTH KHARKHODA LLP** (`bid: 9c4b43bb7e5bc7b46269dceded829a95f9d5332aa093645760c1a1a63cb82bf2`):
+Verified on **NATURE EARTH KHARKHODA LLP** (`bid: <64_HEX_BID>`):
 
 - **Method:** `GET`
 - **URL:** `server/common/urs/service.php?qp=<JWT>&v=3.1.6&cv=8.1.28`
@@ -339,7 +339,7 @@ Verified on **NATURE EARTH KHARKHODA LLP** (`bid: 9c4b43bb7e5bc7b46269dceded829a
   ```json
   {
     "action": "requestProbeData",
-    "bid": "9c4b43bb7e5bc7b46269dceded829a95f9d5332aa093645760c1a1a63cb82bf2",
+    "bid": "<64_HEX_BID>",
     "userName": "<REDACTED_USER_NAME>",
     "platform": "b2c"
   }
@@ -348,12 +348,12 @@ Verified on **NATURE EARTH KHARKHODA LLP** (`bid: 9c4b43bb7e5bc7b46269dceded829a
 - **Response (HTTP 200 OK):**
   ```json
   {
-    "id": "6472182",
-    "status_id": "6472182",
+    "id": "<NUMERIC_REQUEST_ID>",
+    "status_id": "<NUMERIC_REQUEST_ID>",
     "req_id": null,
     "user_id": "<REDACTED_USER_ID>",
     "user_name": "<REDACTED_USER_NAME>",
-    "bid": "9c4b43bb7e5bc7b46269dceded829a95f9d5332aa093645760c1a1a63cb82bf2",
+    "bid": "<64_HEX_BID>",
     "comp_legal_name": null,
     "requested_on_time": "2026-10-16T19:22:55+05:30",
     "status": "PENDING",
@@ -413,19 +413,19 @@ The periodic status polling endpoint used by automation to monitor probe lifecyc
 Captured immediately following the `requestProbeData` trigger for NATURE EARTH KHARKHODA LLP:
 ```json
 {
-  "id": "6472182",
-  "status_id": "6472182",
-  "req_id": "6ad22c3746ac3c1535da5b1f",
+  "id": "<NUMERIC_REQUEST_ID>",
+  "status_id": "<NUMERIC_REQUEST_ID>",
+  "req_id": "<24_HEX_TRACKING_ID>",
   "user_id": "<REDACTED_USER_ID>",
   "user_name": "<REDACTED_USER_NAME>",
-  "bid": "9c4b43bb7e5bc7b46269dceded829a95f9d5332aa093645760c1a1a63cb82bf2",
+  "bid": "<64_HEX_BID>",
   "comp_legal_name": "NATURE EARTH KHARKHODA LLP",
   "requested_on_time": "2026-10-16T19:22:55+05:30",
   "status": "REQUESTED",
   "platform": "b2c"
 }
 ```
-*Note:* As soon as the queue worker accepts the request, `req_id` is populated with a 24-character hexadecimal tracking ID (e.g. `6ad22c3746ac3c1535da5b1f`), and `comp_legal_name` is populated.
+*Note:* As soon as the queue worker accepts the request, `req_id` is populated with a 24-character hexadecimal tracking ID (e.g. `<24_HEX_TRACKING_ID>`), and `comp_legal_name` is populated.
 
 #### Live Response when Complete / Idle (`status: "NO PENDING REQUEST"`):
 ```json
@@ -445,11 +445,11 @@ When a request is in flight (`req_id != null`), the frontend queries the stage t
   ```json
   {
     "action": "getStatus",
-    "id": "<HEX_REQUEST_ID>"
+    "id": "<24_HEX_TRACKING_ID>"
   }
   ```
 
-#### Live Response (Captured for `req_id: 6ad22c3746ac3c1535da5b1f`):
+#### Live Response (Captured for `req_id: <24_HEX_TRACKING_ID>`):
 ```json
 {
   "DataEntryRequest": {
@@ -526,6 +526,7 @@ Verified on an asset unlocked >12 months ago:
 
 ```csharp
 // 1. Check if unlocked
+var isLlp = identifier.Contains('-');
 var assetTeams = await GetAssetTeamsAsync(bid, ct);
 var isUnlocked = assetTeams.Teams.Any(t => t.AddedAt != null);
 
@@ -565,7 +566,7 @@ if (isStale)
     if (status.Status != "REQUESTED")
     {
         // Check entity-specific maintenance/alert status
-        var upgradeStatus = preview.IsLlp 
+        var upgradeStatus = isLlp 
             ? await GetUpgradeStatusForLLPsAsync(ct)
             : await GetUpgradeStatusForCompaniesAsync(ct);
         if (upgradeStatus.McaStatus == "ALERT")
