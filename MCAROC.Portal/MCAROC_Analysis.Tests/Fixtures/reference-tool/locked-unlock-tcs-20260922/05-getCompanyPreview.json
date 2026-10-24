@@ -1,0 +1,42 @@
+{
+  "service": "reference-tool",
+  "capturedUtc": null,
+  "source": "Shape recorded live 2026-09-22 (contract doc 2.3; the trace kept no copy): the free preview on the locked company, address redacted.",
+  "method": "GET",
+  "url": "https://reference.test/server/common/api/service.php",
+  "action": "getCompanyPreview",
+  "payload": {
+    "action": "getCompanyPreview",
+    "bid": "906e9874d21b364eefdf2df0c6fc0ef149d82fa9e7e84529cfb68711cce3f6c7"
+  },
+  "requestBody": null,
+  "query": {
+    "v": "3.1.6",
+    "cv": "8.1.28"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "contentLength": null,
+  "body": {
+    "about_company": {
+      "summary": {
+        "cin": "L22210MH1995PLC084781",
+        "bid": "906e9874d21b364eefdf2df0c6fc0ef149d82fa9e7e84529cfb68711cce3f6c7",
+        "type": "COMPANY",
+        "legal_name": "TATA CONSULTANCY SERVICES LIMITED",
+        "incorporation_date": "1995-01-19",
+        "paid_up_capital": 3618087518,
+        "sum_of_charges": 3309300000,
+        "authorized_capital": 5650770000,
+        "company_llp_status": "Active",
+        "active_compliance": "Active Compliant",
+        "registered_address": {
+          "full_address": "<redacted>",
+          "city": "<redacted>",
+          "state": "Maharashtra",
+          "pincode": "<redacted>"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,589 @@
+{
+  "service": "reference-tool",
+  "capturedUtc": null,
+  "method": "GET",
+  "url": "https://reference.test/server/common/api/service.php",
+  "action": "getDataStatus",
+  "payload": {
+    "action": "getDataStatus",
+    "bid": "820da3a600731f57a818e0ee4f6a38fc31d0390e63db59fffe45fed026022f32"
+  },
+  "requestBody": null,
+  "query": {
+    "v": "3.1.6",
+    "cv": "8.1.26"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "contentLength": null,
+  "body": {
+    "master_updated": "2026-09-04T15:35:49+05:30",
+    "director_updated": "2026-09-04T15:35:49+05:30",
+    "charge_updated": "2026-09-04T15:35:49+05:30",
+    "coordinate": {
+      "verified": true,
+      "date": "2026-07-27T15:54:44+05:30",
+      "status": "ENTERED"
+    },
+    "description": {
+      "verified": true,
+      "date": "2025-11-04T10:14:17+05:30",
+      "status": "ENTERED"
+    },
+    "bifr": {
+      "verified": true,
+      "date": "2025-07-28T12:12:02+05:30",
+      "status": "NOT-AVAILABLE"
+    },
+    "defaulter": {
+      "verified": true,
+      "date": "2026-08-20T20:27:21+05:30",
+      "status": "ENTERED"
+    },
+    "cdr": {
+      "verified": false,
+      "date": null,
+      "status": "NOT-ENTERED"
+    },
+    "credit_rating": {
+      "verified": true,
+      "date": "2026-08-20T20:28:39+05:30",
+      "status": "NOT-AVAILABLE",
+      "latest_rating_date": null
+    },
+    "unaccepted_rating": {
+      "verified": true,
+      "date": "2026-08-20T20:28:39+05:30",
+      "status": "NOT-AVAILABLE",
+      "latest_rating_date": null
+    },
+    "industry_segments": {
+      "verified": true,
+      "date": "2025-11-04T10:14:17+05:30",
+      "status": "ENTERED"
+    },
+    "qa": {
+      "verified": true,
+      "date": "2026-08-21T11:37:51+05:30",
+      "status": "VERIFIED"
+    },
+    "legal": {
+      "verified": true,
+      "date": "2026-09-21T14:31:19+05:30",
+      "status": "ENTERED",
+      "version": 2,
+      "financial": {
+        "status": "NOT_AVAILABLE",
+        "date": "2021-01-01T00:00:00+05:30"
+      }
+    },
+    "financial": {
+      "date": "2026-08-20T20:50:10+05:30",
+      "status": "COMPLETED",
+      "verified": true,
+      "data": {
+        "standalone": {
+          "last_fin_year_end": "2017-03-31",
+          "last_repo_std": "SCH3",
+          "fin_year_end_count": 13,
+          "last_fin_year_end_pnl": "2017-03-31",
+          "message": null
+        },
+        "consolidated": {
+          "last_fin_year_end": "2017-03-31",
+          "last_repo_std": "SCH3",
+          "fin_year_end_count": 3,
+          "last_fin_year_end_pnl": "2017-03-31",
+          "message": null
+        },
+        "pnl_version": 1
+      }
+    },
+    "pnl": {
+      "date": "2026-08-20T21:00:07+05:30",
+      "verified": true,
+      "status": "COMPLETED",
+      "message": null
+    },
+    "bsPnlNotes": {
+      "date": "2026-08-20T21:00:07+05:30",
+      "status": "COMPLETED",
+      "verified": true,
+      "standalone": {
+        "latest_fyed_where_notes_available": "2017-03-31",
+        "fyed_count_where_notes_available": 3
+      },
+      "consolidated": {
+        "latest_fyed_where_notes_available": "2017-03-31",
+        "fyed_count_where_notes_available": 2
+      }
+    },
+    "auditor": {
+      "standaloneStatus": "AVAILABLE",
+      "consolidatedStatus": "AVAILABLE",
+      "verified": true,
+      "date": "2026-08-20T20:53:52+05:30",
+      "version": "2"
+    },
+    "auditorComments": {
+      "standaloneStatus": "AVAILABLE",
+      "consolidatedStatus": "AVAILABLE",
+      "verified": true,
+      "date": "2026-08-20T20:53:52+05:30"
+    },
+    "agm": {
+      "date": "2018-10-04T12:44:29+05:30",
+      "verified": true,
+      "status": "COMPLETED",
+      "last_agm_date": "2017-11-02",
+      "last_fin_year_end_date": "2017-03-31",
+      "agm_dates_count": 3
+    },
+    "annualReturn": {
+      "date": null,
+      "verified": false,
+      "status": "NOT_DOWNLOADED",
+      "last_annual_return_date": null,
+      "last_fin_year_end_date": null,
+      "annual_return_dates_count": 0
+    },
+    "pba": {
+      "2017-11-02": {
+        "status": "COMPLETED",
+        "current_error": null
+      },
+      "2016-12-30": {
+        "status": "COMPLETED",
+        "current_error": null
+      },
+      "2015-12-23": {
+        "status": "COMPLETED",
+        "current_error": null
+      }
+    },
+    "detail_share_holding": {
+      "2017-11-02": {
+        "status": "COMPLETED",
+        "current_error": null
+      },
+      "2016-12-30": {
+        "status": "COMPLETED",
+        "current_error": null
+      },
+      "2015-12-23": {
+        "status": "COMPLETED",
+        "current_error": null
+      }
+    },
+    "director_share_holding": {
+      "2017-11-02": {
+        "status": "COMPLETED",
+        "current_error": null
+      },
+      "2016-12-30": {
+        "status": "COMPLETED",
+        "current_error": null
+      },
+      "2015-12-23": {
+        "status": "COMPLETED",
+        "current_error": null
+      }
+    },
+    "pan": {
+      "date": null,
+      "verified": false,
+      "status": "NOT-ENTERED"
+    },
+    "certifier": {
+      "standaloneStatus": "NOT_AVAILABLE",
+      "consolidatedStatus": "NOT_AVAILABLE",
+      "verified": false,
+      "date": null,
+      "version": null
+    },
+    "contributionDetails": null,
+    "partnerSummary": null,
+    "securityAllotment": {
+      "date": "2026-08-20T20:49:11+05:30",
+      "last_allotment_date": "2026-04-06",
+      "verified": true,
+      "status": "AVAILABLE"
+    },
+    "shareHolding": {
+      "date": "2018-10-04T12:44:29+05:30",
+      "verified": true,
+      "status": "COMPLETED",
+      "latest_fin_year_end_date": "2017-03-31",
+      "agm_date": "2017-11-02",
+      "fin_year_end_date_count": 3
+    },
+    "pba_v1": {
+      "2017-03-31": {
+        "status": "COMPLETED",
+        "current_error": null
+      },
+      "2016-03-31": {
+        "status": "COMPLETED",
+        "current_error": null
+      },
+      "2015-03-31": {
+        "status": "COMPLETED",
+        "current_error": null
+      }
+    },
+    "detail_share_holding_v1": {
+      "2017-03-31": {
+        "status": "COMPLETED",
+        "current_error": null
+      },
+      "2016-03-31": {
+        "status": "COMPLETED",
+        "current_error": null
+      },
+      "2015-03-31": {
+        "status": "COMPLETED",
+        "current_error": null
+      }
+    },
+    "director_share_holding_v1": {
+      "2017-03-31": {
+        "status": "COMPLETED",
+        "current_error": null
+      },
+      "2016-03-31": {
+        "status": "COMPLETED",
+        "current_error": null
+      },
+      "2015-03-31": {
+        "status": "COMPLETED",
+        "current_error": null
+      }
+    },
+    "bsPnlNotesV2": {
+      "date": "2026-08-20T21:00:07+05:30",
+      "status": "COMPLETED",
+      "verified": true,
+      "standalone": {
+        "2017-03-31": {
+          "available": true
+        },
+        "2016-03-31": {
+          "available": true
+        },
+        "2015-03-31": {
+          "available": true
+        },
+        "2014-03-31": {
+          "available": false
+        },
+        "2013-03-31": {
+          "available": false
+        },
+        "2012-03-31": {
+          "available": false
+        },
+        "2011-03-31": {
+          "available": false
+        },
+        "2010-03-31": {
+          "available": false
+        },
+        "2009-03-31": {
+          "available": false
+        },
+        "2008-03-31": {
+          "available": false
+        },
+        "2007-03-31": {
+          "available": false
+        },
+        "2006-03-31": {
+          "available": false
+        }
+      },
+      "consolidated": {
+        "2017-03-31": {
+          "available": true
+        },
+        "2016-03-31": {
+          "available": true
+        }
+      }
+    },
+    "pba_v2": {
+      "2017-03-31": "AVAILABLE",
+      "2016-03-31": "AVAILABLE",
+      "2015-03-31": "AVAILABLE"
+    },
+    "detail_share_holding_v2": {
+      "2017-03-31": "AVAILABLE",
+      "2016-03-31": "AVAILABLE",
+      "2015-03-31": "AVAILABLE"
+    },
+    "director_share_holding_v2": {
+      "2017-03-31": "AVAILABLE",
+      "2016-03-31": "AVAILABLE",
+      "2015-03-31": "AVAILABLE"
+    },
+    "contributionDetails_v2": null,
+    "partnerSummary_v2": null,
+    "csr": {
+      "date": "2026-08-20T21:00:07+05:30",
+      "status": "COMPLETED",
+      "verified": true,
+      "standalone": {
+        "2017-03-31": "NOT_AVAILABLE",
+        "2016-03-31": "NOT_AVAILABLE",
+        "2015-03-31": "NOT_AVAILABLE"
+      },
+      "consolidated": null
+    },
+    "cashFlow": {
+      "date": "2026-08-20T20:50:10+05:30",
+      "status": "COMPLETED",
+      "verified": true,
+      "standalone": {
+        "2017-03-31": "AVAILABLE",
+        "2016-03-31": "AVAILABLE",
+        "2015-03-31": "AVAILABLE"
+      },
+      "consolidated": {
+        "2017-03-31": "AVAILABLE",
+        "2016-03-31": "AVAILABLE",
+        "2015-03-31": "AVAILABLE"
+      }
+    },
+    "pnlSubClass": {
+      "date": "2026-08-20T21:00:07+05:30",
+      "status": "COMPLETED",
+      "verified": true,
+      "standalone": {
+        "2017-03-31": "AVAILABLE",
+        "2016-03-31": "AVAILABLE",
+        "2015-03-31": "AVAILABLE",
+        "2014-03-31": "AVAILABLE",
+        "2013-03-31": "AVAILABLE",
+        "2012-03-31": "AVAILABLE",
+        "2011-03-31": "AVAILABLE"
+      },
+      "consolidated": {
+        "2017-03-31": "AVAILABLE",
+        "2016-03-31": "AVAILABLE",
+        "2015-03-31": "AVAILABLE"
+      }
+    },
+    "spd": {
+      "has_payment_delay": false,
+      "delays": []
+    },
+    "spd_v2": {
+      "has_payment_delay": false,
+      "delays": []
+    },
+    "epfo": {
+      "status": "AVAILABLE",
+      "paidAfterDueDate": {
+        "status": true,
+        "noOfMonths": 12,
+        "employeeInfo": {
+          "maxNumOfEmployees": 46,
+          "wageMonth": "AUG-17",
+          "estId": "NEAGT0008206000",
+          "trrn": "3411709000762",
+          "dueDays": 3
+        },
+        "dueDaysInfo": {
+          "maxNumOfDays": 673,
+          "wageMonth": "AUG-22",
+          "estId": "WBCAL0054105000",
+          "trrn": "4702407022165",
+          "numOfEmployees": 8
+        }
+      },
+      "updatedAt": {
+        "$date": {
+          "$numberLong": "1787297987493"
+        }
+      }
+    },
+    "oldName": {
+      "verified": true,
+      "status": "AVAILABLE",
+      "noOfOldName": 2,
+      "updatedAt": {
+        "$date": {
+          "$numberLong": "1787237757000"
+        }
+      }
+    },
+    "probeScore": {
+      "financial": {
+        "date": "2026-09-21",
+        "reason": "Latest FY is before 2 years",
+        "status": "NOT_AVAILABLE"
+      },
+      "weightedAttribute": {
+        "date": "2026-09-21",
+        "reason": "Latest FY is before 2 years",
+        "status": "NOT_AVAILABLE"
+      },
+      "pegasus": {
+        "date": "2026-09-16",
+        "reason": null,
+        "status": "AVAILABLE"
+      },
+      "nonFinancial": {
+        "date": "2026-09-13",
+        "reason": "Eligible for score",
+        "status": "AVAILABLE"
+      }
+    },
+    "cersai": null,
+    "holding_subsidiary": {
+      "date": "2023-08-19T17:05:04+05:30",
+      "version": 3,
+      "status": "AVAILABLE"
+    },
+    "relatedParties": {
+      "2017-03-31": "AVAILABLE",
+      "2016-03-31": "AVAILABLE",
+      "2015-03-31": "AVAILABLE"
+    },
+    "relatedParties_v2": {
+      "2017-03-31": "AVAILABLE",
+      "2016-03-31": "AVAILABLE",
+      "2015-03-31": "AVAILABLE"
+    },
+    "charge_history": {
+      "verified": true,
+      "status": "ENTERED"
+    },
+    "downloaded": "2026-08-20T20:22:16+05:30",
+    "download_status": {
+      "updatedAt": "2026-08-20T20:22:16+05:30",
+      "status": "AVAILABLE"
+    },
+    "gst": {
+      "status": "AVAILABLE",
+      "date": "2026-08-21T06:21:03+05:30",
+      "delayedFiling": {
+        "GSTR1": {
+          "2026-2027": true,
+          "2025-2026": true,
+          "2024-2025": true,
+          "2023-2024": true,
+          "2022-2023": true,
+          "2021-2022": true
+        },
+        "GSTR3B": {
+          "2026-2027": true,
+          "2025-2026": true,
+          "2024-2025": true,
+          "2023-2024": true,
+          "2022-2023": true,
+          "2021-2022": true
+        }
+      },
+      "delayedFilingInLast12Months": {
+        "GSTR1": true,
+        "GSTR3B": true
+      },
+      "delayedFilingInLast24Months": {
+        "GSTR1": true,
+        "GSTR3B": true
+      }
+    },
+    "regulatory_list": {
+      "status": "NOT_LISTED",
+      "date": null
+    },
+    "regulatory_listV2": {
+      "regulators": {
+        "rbi": {
+          "name": "Reserve Bank Of India",
+          "data": {
+            "nbfc": {
+              "status": "NOT_LISTED",
+              "date": null
+            },
+            "bank": {
+              "status": "NOT_LISTED",
+              "date": null
+            },
+            "ppi": {
+              "status": "NOT_LISTED",
+              "date": null
+            },
+            "pso": {
+              "status": "NOT_LISTED",
+              "date": null
+            },
+            "ffmc": {
+              "status": "NOT_LISTED",
+              "date": null
+            }
+          }
+        },
+        "sebi": {
+          "name": "Securities and Exchange Board of India",
+          "data": null
+        }
+      }
+    },
+    "sh_mt_five_percent": {
+      "2017-03-31": "AVAILABLE",
+      "2016-03-31": "AVAILABLE",
+      "2015-03-31": "AVAILABLE"
+    },
+    "relatedPartyTransactions": {
+      "2017-03-31": "NOT_AVAILABLE",
+      "2016-03-31": "NOT_AVAILABLE",
+      "2015-03-31": "NOT_AVAILABLE"
+    },
+    "shareHolders": {
+      "2017-03-31": "AVAILABLE",
+      "2016-03-31": "AVAILABLE",
+      "2015-03-31": "AVAILABLE"
+    },
+    "benchmark": {
+      "Other Construction Services": {
+        "refFyed": "2017",
+        "status": [
+          {
+            "fyed": "2017",
+            "peerCount": 9698,
+            "revenue": 12841980000,
+            "benchmarkable": true
+          },
+          {
+            "fyed": "2016",
+            "peerCount": 9063,
+            "revenue": 10417360000,
+            "benchmarkable": true
+          },
+          {
+            "fyed": "2015",
+            "peerCount": 8572,
+            "revenue": 13491122804.29,
+            "benchmarkable": true
+          },
+          {
+            "fyed": "2014",
+            "peerCount": 7780,
+            "revenue": 14475348780,
+            "benchmarkable": true
+          }
+        ],
+        "ratioStandard": "PROBE_CNI",
+        "bizIndustry": "Infrastructure",
+        "actualIndSegs": [
+          {
+            "industry": "Infrastructure",
+            "segment": "Other Construction Services"
+          }
+        ]
+      }
+    }
+  },
+  "source": "Live trace 2026-09-22: COASTAL PROJECTS LIMITED, unlocked, data over 24 hours old"
+}

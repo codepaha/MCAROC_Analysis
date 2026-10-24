@@ -1,0 +1,34 @@
+{
+  "service": "reference-tool",
+  "capturedUtc": null,
+  "method": "GET",
+  "url": "https://reference.test/server/common/urs/service.php",
+  "action": "requestProbeDataUpdate",
+  "payload": {
+    "action": "requestProbeDataUpdate",
+    "bid": "820da3a600731f57a818e0ee4f6a38fc31d0390e63db59fffe45fed026022f32",
+    "userName": "<redacted>",
+    "platform": "b2c"
+  },
+  "requestBody": null,
+  "query": {
+    "v": "3.1.6",
+    "cv": "8.1.26"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "contentLength": null,
+  "body": {
+    "id": "6384807",
+    "status_id": "6384807",
+    "req_id": null,
+    "user_id": "<redacted>",
+    "user_name": "<redacted>",
+    "bid": "820da3a600731f57a818e0ee4f6a38fc31d0390e63db59fffe45fed026022f32",
+    "comp_legal_name": null,
+    "requested_on_time": "2026-09-22T09:36:56+05:30",
+    "status": "PENDING",
+    "platform": "b2c"
+  },
+  "source": "Live trace 2026-09-22: COASTAL PROJECTS LIMITED, refresh started from the tool's UI"
+}

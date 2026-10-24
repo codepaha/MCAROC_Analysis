@@ -129,12 +129,20 @@ public sealed class FakeReferenceTool(string bid) : HttpMessageHandler
         return Json(new { id = "123", status = "PENDING" });
     }
 
-    public ReferenceToolClient NewClient(IIntegrationHealthService? health = null) =>
-        new(new HttpClient(this), Options(), new ReferenceToolSession(), health ?? new NoOpIntegrationHealthService(), NullLogger<ReferenceToolClient>.Instance);
+    public ReferenceToolClient NewClient(IIntegrationHealthService? health = null) => NewClient(this, health);
+
+    /// <summary>A client of the reference tool whose replies come from <paramref name="handler"/> (this fake, or a <see cref="FixtureReferenceTool"/>).</summary>
+    public static ReferenceToolClient NewClient(HttpMessageHandler handler, IIntegrationHealthService? health = null) =>
+        new(new HttpClient(handler), Options(), new ReferenceToolSession(), health ?? new NoOpIntegrationHealthService(), NullLogger<ReferenceToolClient>.Instance);
 
     /// <summary>The gate's real services (refresh, unlock, admission ledger, coordinator) against the test
     /// database, talking to this fake — what the worker and the approve action resolve in production.</summary>
-    public ServiceProvider BuildServices(TimeProvider time, AutoFetchQueue queue, PipelineOptions? pipeline = null, Action<IServiceCollection>? extra = null)
+    public ServiceProvider BuildServices(TimeProvider time, AutoFetchQueue queue, PipelineOptions? pipeline = null, Action<IServiceCollection>? extra = null) =>
+        BuildServices(this, time, queue, pipeline, extra);
+
+    /// <summary><see cref="BuildServices(TimeProvider, AutoFetchQueue, PipelineOptions?, Action{IServiceCollection}?)"/> for any reference-tool handler.</summary>
+    public static ServiceProvider BuildServices(HttpMessageHandler handler, TimeProvider time, AutoFetchQueue queue, PipelineOptions? pipeline = null,
+        Action<IServiceCollection>? extra = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -144,7 +152,7 @@ public sealed class FakeReferenceTool(string bid) : HttpMessageHandler
         services.AddSingleton<IOptionsMonitor<PipelineOptions>>(new StaticPipelineOptions(pipeline ?? new PipelineOptions()));
         services.AddSingleton(Options());
         services.AddScoped<IIntegrationHealthService, NoOpIntegrationHealthService>();
-        services.AddScoped(_ => NewClient());
+        services.AddScoped(_ => NewClient(handler));
         services.AddScoped<IPaidCallAdmission, PaidCallAdmissionService>();
         services.AddScoped<CompanyRefreshService>();
         services.AddScoped<CompanyUnlockService>();

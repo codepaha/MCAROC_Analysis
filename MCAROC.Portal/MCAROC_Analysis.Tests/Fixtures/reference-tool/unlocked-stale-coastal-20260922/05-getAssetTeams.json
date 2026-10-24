@@ -1,0 +1,31 @@
+{
+  "service": "reference-tool",
+  "capturedUtc": null,
+  "method": "GET",
+  "url": "https://reference.test/server/user/service.php",
+  "action": "getAssetTeams",
+  "payload": {
+    "action": "getAssetTeams",
+    "bid": "820da3a600731f57a818e0ee4f6a38fc31d0390e63db59fffe45fed026022f32"
+  },
+  "requestBody": null,
+  "query": {
+    "v": "3.1.6",
+    "cv": "8.1.26"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "contentLength": null,
+  "body": {
+    "teams": [
+      {
+        "teamId": 0,
+        "addedAt": "2026-08-20T15:58:16+05:30",
+        "creditUsed": true,
+        "created_by": 0,
+        "srcTeamId": 0
+      }
+    ]
+  },
+  "source": "Live trace 2026-09-22: COASTAL PROJECTS LIMITED, unlocked, data over 24 hours old"
+}

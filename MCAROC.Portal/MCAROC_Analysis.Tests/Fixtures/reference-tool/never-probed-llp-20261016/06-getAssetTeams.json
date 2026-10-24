@@ -1,0 +1,30 @@
+{
+  "service": "reference-tool",
+  "capturedUtc": null,
+  "source": "Not recorded: written to the recorded 2026-09-22 getAssetTeams shape, with the LLP's real unlock time (2026-10-16 19:08 IST).",
+  "method": "GET",
+  "url": "https://reference.test/server/user/service.php",
+  "action": "getAssetTeams",
+  "payload": {
+    "action": "getAssetTeams",
+    "bid": "9c4b43bb7e5bc7b46269dceded829a95f9d5332aa093645760c1a1a63cb82bf2"
+  },
+  "requestBody": null,
+  "query": {
+    "v": "3.1.6",
+    "cv": "8.1.28"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "contentLength": null,
+  "body": {
+    "teams": [
+      {
+        "teamId": 0,
+        "addedAt": "2026-10-16T19:08:00+05:30",
+        "creditUsed": true,
+        "created_by": 0
+      }
+    ]
+  }
+}

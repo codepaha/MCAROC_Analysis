@@ -1,0 +1,22 @@
+{
+  "service": "reference-tool",
+  "capturedUtc": null,
+  "method": "GET",
+  "url": "https://reference.test/server/common/mcastatus/service.php",
+  "action": "getUpgradeStatusForCompanies",
+  "payload": {
+    "action": "getUpgradeStatusForCompanies"
+  },
+  "requestBody": null,
+  "query": {
+    "v": "3.1.6",
+    "cv": "8.1.26"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "contentLength": null,
+  "body": {
+    "mca_status": "NORMAL"
+  },
+  "source": "Live trace 2026-09-22: COASTAL PROJECTS LIMITED, refresh started from the tool's UI"
+}

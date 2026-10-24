@@ -1,0 +1,22 @@
+{
+  "service": "reference-tool",
+  "capturedUtc": null,
+  "method": "GET",
+  "url": "https://reference.test/server/common/mcastatus/service.php",
+  "action": "getUpgradeStatusForUnlockingAsset",
+  "payload": {
+    "action": "getUpgradeStatusForUnlockingAsset"
+  },
+  "requestBody": null,
+  "query": {
+    "v": "3.1.6",
+    "cv": "8.1.26"
+  },
+  "status": 200,
+  "contentType": "text/html",
+  "contentLength": null,
+  "body": {
+    "mca_status": "NORMAL"
+  },
+  "source": "Live trace 2026-09-22: TATA CONSULTANCY SERVICES LIMITED, locked, unlocked for 1 credit"
+}

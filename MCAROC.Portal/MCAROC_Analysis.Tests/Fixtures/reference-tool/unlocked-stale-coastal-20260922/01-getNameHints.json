@@ -1,0 +1,26 @@
+{
+  "service": "reference-tool",
+  "capturedUtc": null,
+  "method": "GET",
+  "url": "https://reference.test/server/common/search/service.php",
+  "action": "getNameHints",
+  "payload": {
+    "action": "getNameHints",
+    "q": "U45203OR1995PLC003982",
+    "filters": "{\"locations\":[],\"entityType\":[\"Company\",\"Llp\"]}",
+    "offset": 0,
+    "limit": 25
+  },
+  "requestBody": null,
+  "query": {
+    "v": "3.1.6",
+    "cv": "8.1.26"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "contentLength": null,
+  "body": {
+    "data": []
+  },
+  "source": "Live trace 2026-09-22: COASTAL PROJECTS LIMITED, unlocked, data over 24 hours old"
+}
