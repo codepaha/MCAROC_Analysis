@@ -1,7 +1,6 @@
 {
   "service": "reference-tool",
   "capturedUtc": null,
-  "source": "Not recorded: a company the tool has never probed has no qa date, nothing downloaded and no download status (contract doc 4.3). Replace with the next live capture.",
   "method": "GET",
   "url": "https://reference.test/server/common/api/service.php",
   "action": "getDataStatus",
@@ -11,18 +10,280 @@
   },
   "requestBody": null,
   "query": {
-    "v": "3.1.6",
-    "cv": "8.1.28"
+    "v": "3.1.7",
+    "cv": "8.1.29"
   },
   "status": 200,
   "contentType": "application/json",
   "contentLength": null,
   "body": {
-    "master_updated": null,
+    "master_updated": "2026-08-28T14:14:32+05:30",
+    "director_updated": "2026-08-28T14:14:32+05:30",
+    "charge_updated": "2026-08-28T14:14:32+05:30",
+    "coordinate": {
+      "verified": false,
+      "date": null,
+      "status": "NOT-ENTERED"
+    },
+    "description": {
+      "verified": false,
+      "date": null,
+      "status": "NOT-ENTERED"
+    },
+    "bifr": {
+      "verified": false,
+      "date": null,
+      "status": "NOT-ENTERED"
+    },
+    "defaulter": {
+      "verified": false,
+      "date": null,
+      "status": "NOT-ENTERED"
+    },
+    "cdr": {
+      "verified": false,
+      "date": null,
+      "status": "NOT-ENTERED"
+    },
+    "credit_rating": {
+      "verified": false,
+      "date": null,
+      "status": "NOT-ENTERED",
+      "latest_rating_date": null
+    },
+    "unaccepted_rating": {
+      "verified": false,
+      "date": null,
+      "status": "NOT-ENTERED",
+      "latest_rating_date": null
+    },
+    "industry_segments": {
+      "verified": false,
+      "date": null,
+      "status": "NOT-ENTERED"
+    },
     "qa": {
       "verified": false,
       "date": null,
       "status": "NOT-VERIFIED"
-    }
-  }
+    },
+    "legal": {
+      "verified": false,
+      "date": null,
+      "status": "NOT-ENTERED",
+      "version": 2
+    },
+    "financial": {
+      "date": null,
+      "status": "NOT_DOWNLOADED",
+      "verified": false,
+      "data": {
+        "standalone": {
+          "last_fin_year_end": null,
+          "last_repo_std": null,
+          "fin_year_end_count": 0,
+          "last_fin_year_end_pnl": null,
+          "message": null
+        },
+        "consolidated": {
+          "last_fin_year_end": null,
+          "last_repo_std": null,
+          "fin_year_end_count": 0,
+          "last_fin_year_end_pnl": null,
+          "message": null
+        },
+        "pnl_version": 1
+      }
+    },
+    "pnl": {
+      "date": null,
+      "verified": false,
+      "status": "NOT_DOWNLOADED",
+      "message": null
+    },
+    "bsPnlNotes": {
+      "date": null,
+      "status": "NOT_DOWNLOADED",
+      "verified": false,
+      "standalone": {
+        "latest_fyed_where_notes_available": null,
+        "fyed_count_where_notes_available": 0
+      },
+      "consolidated": {
+        "latest_fyed_where_notes_available": null,
+        "fyed_count_where_notes_available": 0
+      }
+    },
+    "auditor": {
+      "standaloneStatus": "NOT_AVAILABLE",
+      "consolidatedStatus": "NOT_AVAILABLE",
+      "verified": false,
+      "date": null,
+      "version": null
+    },
+    "auditorComments": {
+      "standaloneStatus": "NOT_AVAILABLE",
+      "consolidatedStatus": "NOT_AVAILABLE",
+      "verified": false,
+      "date": null
+    },
+    "agm": {
+      "date": null,
+      "verified": false,
+      "status": "NOT_DOWNLOADED",
+      "last_agm_date": null,
+      "last_fin_year_end_date": null,
+      "agm_dates_count": 0
+    },
+    "annualReturn": {
+      "date": null,
+      "verified": false,
+      "status": "NOT_DOWNLOADED",
+      "last_annual_return_date": null,
+      "last_fin_year_end_date": null,
+      "annual_return_dates_count": 0
+    },
+    "pba": null,
+    "detail_share_holding": null,
+    "director_share_holding": null,
+    "pan": {
+      "date": null,
+      "verified": false,
+      "status": "NOT-ENTERED"
+    },
+    "certifier": {
+      "standaloneStatus": "NOT_AVAILABLE",
+      "consolidatedStatus": "NOT_AVAILABLE",
+      "verified": false,
+      "date": null,
+      "version": null
+    },
+    "contributionDetails": null,
+    "partnerSummary": null,
+    "securityAllotment": {
+      "date": null,
+      "last_allotment_date": null,
+      "verified": false,
+      "status": "NOT_AVAILABLE"
+    },
+    "shareHolding": {
+      "date": null,
+      "verified": false,
+      "status": "NOT_DOWNLOADED",
+      "latest_fin_year_end_date": null,
+      "agm_date": null,
+      "fin_year_end_date_count": 0
+    },
+    "pba_v1": null,
+    "detail_share_holding_v1": null,
+    "director_share_holding_v1": null,
+    "bsPnlNotesV2": {
+      "date": null,
+      "status": "NOT_DOWNLOADED",
+      "verified": false,
+      "standalone": null,
+      "consolidated": null
+    },
+    "pba_v2": null,
+    "detail_share_holding_v2": null,
+    "director_share_holding_v2": null,
+    "contributionDetails_v2": null,
+    "partnerSummary_v2": null,
+    "csr": {
+      "date": null,
+      "status": "NOT_DOWNLOADED",
+      "verified": false,
+      "standalone": null,
+      "consolidated": null
+    },
+    "cashFlow": {
+      "date": null,
+      "status": "NOT_DOWNLOADED",
+      "verified": false,
+      "standalone": null,
+      "consolidated": null
+    },
+    "pnlSubClass": {
+      "date": null,
+      "status": "NOT_DOWNLOADED",
+      "verified": false,
+      "standalone": null,
+      "consolidated": null
+    },
+    "spd": null,
+    "spd_v2": null,
+    "epfo": null,
+    "oldName": null,
+    "probeScore": {
+      "pegasus": {
+        "date": "2026-08-28",
+        "reason": null,
+        "status": "AVAILABLE"
+      }
+    },
+    "cersai": null,
+    "charge": {
+      "verified": false
+    },
+    "holding_subsidiary": {
+      "date": null,
+      "version": null,
+      "status": "NOT_DOWNLOADED"
+    },
+    "relatedParties": null,
+    "relatedParties_v2": null,
+    "charge_history": {
+      "date": null,
+      "verified": false,
+      "status": "NOT-ENTERED"
+    },
+    "downloaded": null,
+    "download_status": null,
+    "gst": {
+      "status": "NOT-PROCESSED",
+      "date": null
+    },
+    "regulatory_list": {
+      "status": "NOT_LISTED",
+      "date": null
+    },
+    "regulatory_listV2": {
+      "regulators": {
+        "rbi": {
+          "name": "Reserve Bank Of India",
+          "data": {
+            "nbfc": {
+              "status": "NOT_LISTED",
+              "date": null
+            },
+            "bank": {
+              "status": "NOT_LISTED",
+              "date": null
+            },
+            "ppi": {
+              "status": "NOT_LISTED",
+              "date": null
+            },
+            "pso": {
+              "status": "NOT_LISTED",
+              "date": null
+            },
+            "ffmc": {
+              "status": "NOT_LISTED",
+              "date": null
+            }
+          }
+        },
+        "sebi": {
+          "name": "Securities and Exchange Board of India",
+          "data": null
+        }
+      }
+    },
+    "sh_mt_five_percent": null,
+    "relatedPartyTransactions": null,
+    "shareHolders": null,
+    "benchmark": null
+  },
+  "source": "Live trace 2026-10-16: NATURE EARTH KHARKHODA LLP, never probed, during an MCA ALERT"
 }

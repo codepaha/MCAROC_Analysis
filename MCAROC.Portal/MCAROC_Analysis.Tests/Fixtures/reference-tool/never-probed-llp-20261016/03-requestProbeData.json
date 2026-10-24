@@ -1,7 +1,6 @@
 {
   "service": "reference-tool",
-  "capturedUtc": "2026-10-16T13:52:55Z",
-  "source": "Transcribed from the 2026-10-16 live capture (NATURE EARTH KHARKHODA LLP), docs/reference-tool-refresh-unlock-contract.md 4.2-4.4.",
+  "capturedUtc": null,
   "method": "GET",
   "url": "https://reference.test/server/common/urs/service.php",
   "action": "requestProbeData",
@@ -30,5 +29,6 @@
     "requested_on_time": "2026-10-16T19:22:55+05:30",
     "status": "PENDING",
     "platform": "b2c"
-  }
+  },
+  "source": "Live trace 2026-10-16: NATURE EARTH KHARKHODA LLP, never probed, during an MCA ALERT"
 }
