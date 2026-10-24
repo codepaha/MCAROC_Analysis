@@ -61,6 +61,9 @@ public sealed record ReferenceSessionInfo(bool IsValid, string? UserId, string? 
 /// present either way — it's what a paid unlock would be charged to.</summary>
 public sealed record ReferenceAssetStatus(long? TeamId, DateTimeOffset? AddedAt);
 
+/// <summary>The tool's MCA status as it reports it: NORMAL, ALERT (with the notice its UI shows) or a maintenance value.</summary>
+public sealed record ReferenceMcaStatus(string Status, string? AlertText);
+
 /// <summary><c>getCompanyPreview</c> — free, and works on a locked company: the identity check made immediately
 /// before spending a credit.</summary>
 public sealed record ReferenceCompanyPreview(string? Cin, string? LegalName, string? Status, string? State);
