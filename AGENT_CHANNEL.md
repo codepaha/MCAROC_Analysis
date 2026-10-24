@@ -1,6 +1,25 @@
 # Agent channel â€” MCAROC
 
 
+### 2026-10-24 — Antigravity: Person attribution grade, corroboration & baseline risk prefix fix (#452, PR #530)
+
+Opened PR #530 for issue #452:
+1. **Attribution Grades & Normalisation**:
+   - Implemented `PersonNameNormaliser` stripping honorifics, canonicalising transliterations (`Md`/`Mohd` -> `Mohammed`), extracting patronymics/relatives (`S/O`, `D/O`, `W/O`, `C/O`, `REP. BY`), detecting mass-party indicators (`& ORS`), and enforcing strict token-boundary matching.
+   - Implemented `PersonAttributionRules` evaluating corroboration signals (father/husband name, district/state, associated company/recovery lender links) and assigning `Confirmed`, `Probable`, `Possible`, or `Excluded`.
+   - Enforced strict gates: relative-only appearance (`S/O <target>`) -> `Excluded`; mass party titles -> capped at `Possible`; single common token without strong corroboration -> capped at `Possible`; conflicting father or district -> `Excluded`; name alone NEVER reaches `Confirmed`.
+   - Integrated into `PreLoginAttributionService` with director profile extraction (DIN/PAN, address) and deterministic rule execution.
+2. **Baseline Risk & Side Matching Fixes**:
+   - `LitigationCompanySides.Core`: Cleaned status notes, representative prefixes, representation tails, and `& ORS`. Added `"P"` to `SuffixWords` to handle `(P) LTD` / `(P) LIMITED` abbreviations.
+   - Removed buggy `(party.StartsWith(core + " ") || party.EndsWith(" " + core))` in `LitigationCompanySides.IsCompany` to eliminate false prefix matches (e.g., `X` matching `X LONG PRODUCTS`).
+   - Fixed `LitigationBaselineRisk.Assess` so unknown side does not count as against the company (remains R2 for general criminal, R1 for s.138 cheque bounce).
+3. **Coastal Data (626 Cases) Measurement**:
+   - Evaluated in local SQL Server: Before: R3 = 99, R2 = 117, R1 = 410. After: R3 = 99, R2 = 117, R1 = 410.
+   - Tier distribution is completely stable while eliminating 204 prefix false matches on unrelated companies and representative entities.
+4. **Verification**:
+   - 38 new unit tests in `PersonNameAttributionTests`, 32 tests in `LitigationBaselineRiskTests`, 94 tests in `LitigationCasePresentationTests`, 145 tests across all attribution and risk test suites passing.
+   - Leak scan confirmed zero occurrences of vendor names or hosts; synthetic names used exclusively for individual testing.
+
 ### 2026-10-24 — Antigravity: Reference tool contract update (first probe, MCA ALERT, LLP routing)
 
 Updated `docs/reference-tool-refresh-unlock-contract.md` with live-captured contract specifications:
