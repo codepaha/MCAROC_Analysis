@@ -804,14 +804,8 @@ public class FilingBatchProcessor(
     /// from multiple near-simultaneous completions, unlike a shared count that would need synchronization.</summary>
     private async Task MaybeCompleteBatchAsync(long batchId, CancellationToken ct)
     {
-        var nonTerminalDocs = await db.McaFilingDocuments.CountAsync(d =>
-            d.BatchId == batchId && d.DuplicateOfDocumentId == null &&
-            (d.ProcessingStatus == FilingDocumentProcessingStatus.Discovered
-                || d.ProcessingStatus == FilingDocumentProcessingStatus.Classified
-                || d.ProcessingStatus == FilingDocumentProcessingStatus.TextExtracting
-                || d.ProcessingStatus == FilingDocumentProcessingStatus.AiQueued
-                || d.ProcessingStatus == FilingDocumentProcessingStatus.AiProcessing), ct);
-        if (nonTerminalDocs > 0) return;
+        // The same "unfinished" as the extraction barrier: this list once lacked TextExtracted, so a batch could complete under one.
+        if (await db.McaFilingDocuments.Where(d => d.BatchId == batchId).Where(StillProcessing).AnyAsync(ct)) return;
 
         var pendingAiFilings = await db.McaFilingDocuments.CountAsync(d =>
             d.BatchId == batchId &&

@@ -194,6 +194,27 @@ public class FilingStrandingTests : IAsyncLifetime
         }
     }
 
+    /// <summary>Review of #516: settling a late Pending document re-checks batch completion, which must not count a document still
+    /// TextExtracted (unfinished to the extraction barrier) as done.</summary>
+    [Fact]
+    public async Task A_batch_does_not_complete_while_a_document_is_still_text_extracted()
+    {
+        await using var db = CreateContext();
+        var (batch, filing) = await SeedFilingAsync(db);
+        var late = Doc(batch, filing, "mgt8.pdf", FilingDocumentProcessingStatus.Completed, AiExtractionStatus.Pending);
+        var midway = Doc(batch, filing, "attachment.pdf", FilingDocumentProcessingStatus.TextExtracted, AiExtractionStatus.NotApplicable);
+        db.McaFilingDocuments.AddRange(late, midway);
+        db.McaFilingExtractions.Add(new McaFilingExtraction { FilingId = filing.FilingId, SchemaName = "charge", Status = ExtractionStatus.Success });
+        await db.SaveChangesAsync();
+
+        await Processor(db, new FilingProcessingQueue()).ExtractFilingAsync(filing.FilingId, default);
+
+        await using var verify = CreateContext();
+        Assert.Equal(AiExtractionStatus.Success,
+            (await verify.McaFilingDocuments.AsNoTracking().SingleAsync(d => d.FilingDocumentId == late.FilingDocumentId)).AiExtractionStatus);
+        Assert.Equal(FilingBatchStatus.Processing, (await verify.McaFilingBatches.AsNoTracking().SingleAsync(b => b.BatchId == batch.BatchId)).Status);
+    }
+
     [Fact]
     public async Task A_document_left_pending_after_its_filing_was_extracted_is_settled_and_the_batch_can_complete()
     {
