@@ -123,6 +123,6 @@ public partial class Program
     [
         "login", "getUserDetails", "getNameHints", "getCompanyPreview", "getAssetTeams", "getUpgradeStatusForCompanies", "getUpgradeStatusForLLPs",
         "getUpgradeStatusForUnlockingAsset", "addAsset", "requestProbeData", "requestProbeDataUpdate", "getDataEntryRequestStatus", "getStatus",
-        "getDataStatus", "referenceDocs", "downloadPdf", "publishProbedData",
+        "getDataStatus", "referenceDocs", "getRefDocs", "getIncorporationDocs", "getScannedDocs", "downloadPdf", "publishProbedData",
     ];
 }

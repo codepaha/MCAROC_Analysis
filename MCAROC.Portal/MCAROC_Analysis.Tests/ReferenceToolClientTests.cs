@@ -410,22 +410,27 @@ public class ReferenceToolClientTests : IDisposable
         handler.OnPath("server/common/docService/service.php", req =>
         {
             var payload = DecodePayload(System.Web.HttpUtility.ParseQueryString(req.RequestUri!.Query)["qp"]!);
-            var offset = payload.TryGetProperty("offset", out var o) ? o.GetInt32() : 0;
-            return offset == 0
-                ? Json(RegistryJson(Sec("charge", 3, Doc("c1", "Form CHG-1"), Doc("c2", "Form CHG-4"))))
-                : Json(RegistryJson(Sec("charge", 3, Doc("c2", "Form CHG-4"), Doc("c3", "Form CHG-9")))); // overlaps + one new, then repeats
+            var action = payload.GetProperty("action").GetString();
+            if (action == "referenceDocs")
+                return Json(RegistryJson(Sec("charge", 3, Doc("c1", "Form CHG-1"), Doc("c2", "Form CHG-4"))));
+            if (action == "getRefDocs")
+                return Json(SectionJson(Doc("c2", "Form CHG-4"), Doc("c3", "Form CHG-9"))); // overlaps + one new, completes 3
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
         });
         var registry = await NewClient(handler).GetReferenceDocumentsAsync("bid", CancellationToken.None);
 
         var charge = registry.Sections.Single(s => s.Key == "charge");
         Assert.Equal(3, charge.TotalCount);
         Assert.Equal(new[] { "c1", "c2", "c3" }, charge.Documents.Select(d => d.DocId).OrderBy(x => x));
-        // first page, page at offset 2 (adds c3 → complete), no further request needed
+        // first page (referenceDocs), then getRefDocs at offset 2 (adds c3 -> complete)
         var registryCalls = handler.Requests.Where(r => r.RequestUri!.AbsolutePath.EndsWith("docService/service.php")).ToList();
         Assert.Equal(2, registryCalls.Count);
         var second = DecodePayload(System.Web.HttpUtility.ParseQueryString(registryCalls[1].RequestUri!.Query)["qp"]!);
+        Assert.Equal("getRefDocs", second.GetProperty("action").GetString());
+        Assert.Equal("ChargeDocuments", second.GetProperty("section").GetString());
         Assert.Equal(2, second.GetProperty("offset").GetInt32());
-        Assert.Equal(2, second.GetProperty("limit").GetInt32());
+        Assert.Equal(100, second.GetProperty("count").GetInt32());
+        Assert.Equal("b2c", second.GetProperty("platform").GetString());
     }
 
     [Fact]
@@ -433,15 +438,22 @@ public class ReferenceToolClientTests : IDisposable
     {
         var handler = new StubHandler();
         handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
-        handler.OnPath("server/common/docService/service.php", _ => Json(RegistryJson(Sec("scanned", 500, Doc("s1", "Old deed")))));
+        handler.OnPath("server/common/docService/service.php", req =>
+        {
+            var payload = DecodePayload(System.Web.HttpUtility.ParseQueryString(req.RequestUri!.Query)["qp"]!);
+            var action = payload.GetProperty("action").GetString();
+            return action == "referenceDocs"
+                ? Json(RegistryJson(Sec("scanned", 500, Doc("s1", "Old deed"))))
+                : Json(SectionJson(Doc("s1", "Old deed"))); // repeats existing doc (0 new items added)
+        });
         var registry = await NewClient(handler).GetReferenceDocumentsAsync("bid", CancellationToken.None);
 
         Assert.Equal(500, registry.TotalCount);
         Assert.Equal(1, registry.ListedCount);
-        Assert.Equal(2, handler.Requests.Count(r => r.RequestUri!.AbsolutePath.EndsWith("docService/service.php"))); // one retry, then gave up
+        Assert.Equal(2, handler.Requests.Count(r => r.RequestUri!.AbsolutePath.EndsWith("docService/service.php"))); // initial + 1 page, then gave up
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────────────────────────────────────
+        // ── Helpers ─────────────────────────────────────────────────────────────────────────────────────
 
     [Fact]
     public async Task A_login_refused_as_an_outdated_app_version_adopts_the_version_the_tool_names_and_succeeds()
@@ -563,6 +575,8 @@ public class ReferenceToolClientTests : IDisposable
     private static (string Key, int Total, string[] Docs) Sec(string key, int total, params string[] docs) => (key, total, docs);
 
     /// <summary>Mirrors the tool's shape: each section value is a JSON *string* holding {data, totalCount}.</summary>
+    private static string SectionJson(params string[] docs) => $"{{\"data\":[{string.Join(",", docs)}]}}";
+
     private static string RegistryJson(params (string Key, int Total, string[] Docs)[] sections)
     {
         var parts = sections.Select(s =>

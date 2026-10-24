@@ -401,31 +401,41 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
     // ── Reference documents ─────────────────────────────────────────────────────────────────────────
 
     /// <summary>Fetches the registry of every filing PDF the tool holds for the company across its four
-    /// sections. The first call returns each section's first page (100 rows observed) plus its total; when
-    /// a total exceeds what was listed, further pages are requested with <c>offset</c>/<c>limit</c> on the
-    /// same action until a page adds nothing new — that paging contract is inferred, not confirmed, so the
-    /// caller must compare <see cref="ReferenceDocumentRegistry.ListedCount"/> with <see cref="ReferenceDocumentRegistry.TotalCount"/>
-    /// and warn when they still differ.</summary>
+    /// sections. The first call (action "referenceDocs") returns each section's initial page (up to 100
+    /// rows) plus its totalCount; when a total exceeds what was listed, further pages are requested
+    /// per-section using getRefDocs, getIncorporationDocs, or getScannedDocs with offset and count (#515)
+    /// until all documents are retrieved or a page adds nothing new.</summary>
     public async Task<ReferenceDocumentRegistry> GetReferenceDocumentsAsync(string bid, CancellationToken ct)
     {
         EnsureConfigured();
         var sections = RegistrySections.ToDictionary(s => s.Key, s => new SectionAccumulator(s.FolderName));
 
-        var pageSize = Math.Max(1, await FetchAndMergeRegistryPageAsync(bid, offset: null, limit: null, sections, ct));
+        await FetchAndMergeInitialRegistryAsync(bid, sections, ct);
 
-        const int maxPages = 200; // 20,000 rows — far above any real company; guards an endpoint that ignores offset
-        for (var page = 1; page < maxPages; page++)
+        const int pageSize = 100;
+        const int maxPagesPerSection = 200; // 20,000 rows per section — far above any real company
+
+        foreach (var (key, acc) in sections)
         {
-            if (!sections.Values.Any(s => s.Docs.Count < s.Total)) break;
-            var offset = page * pageSize;
-            int added;
-            try { added = await FetchAndMergeRegistryPageAsync(bid, offset, pageSize, sections, ct); }
-            catch (ReferenceToolException ex)
+            var page = 1;
+            while (acc.Docs.Count < acc.Total && page < maxPagesPerSection)
             {
-                logger.LogWarning(ex, "Reference-documents paging stopped at offset {Offset}", offset);
-                break;
+                var offset = acc.Docs.Count;
+                int added;
+                try
+                {
+                    added = await FetchAndMergeSectionPageAsync(bid, key, offset, pageSize, acc, ct);
+                }
+                catch (ReferenceToolException ex)
+                {
+                    logger.LogWarning(ex, "Reference-documents paging stopped for section {Section} at offset {Offset}", key, offset);
+                    break;
+                }
+
+                if (added == 0) break; // endpoint ignored offset or no new items
+                page++;
             }
-            if (added == 0) break; // the endpoint ignored the offset, or we're past the end
+            acc.Total = Math.Max(acc.Total, acc.Docs.Count);
         }
 
         return new ReferenceDocumentRegistry(RegistrySections
@@ -452,24 +462,60 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         public Dictionary<string, ReferenceDocument> Docs { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
-    /// <summary>Fetches one registry page and merges it into <paramref name="sections"/> as a single
-    /// recoverable unit (see <see cref="WithSessionRecoveryAsync{T}"/>) — the fetch and the "was this
-    /// actually JSON, not a session-expired page" check must retry together, since the latter is what
-    /// classifies <see cref="ReferenceToolFailureKind.SessionExpired"/> here, not the HTTP call itself.
-    /// Safe to retry as a unit: <see cref="MergeRegistryPage"/> only mutates <paramref name="sections"/>
-    /// after it has already validated the body is well-formed JSON.</summary>
-    private Task<int> FetchAndMergeRegistryPageAsync(string bid, int? offset, int? limit, Dictionary<string, SectionAccumulator> sections, CancellationToken ct) =>
+    /// <summary>Fetches the unpaged registry snapshot covering the first page of all four sections.</summary>
+    private Task<int> FetchAndMergeInitialRegistryAsync(string bid, Dictionary<string, SectionAccumulator> sections, CancellationToken ct) =>
         WithSessionRecoveryAsync(async () =>
         {
-            object payload = offset is null
-                ? new { action = "referenceDocs", bid }
-                : new { action = "referenceDocs", bid, offset = offset.Value, limit = limit!.Value };
-            using var response = await SendSignedAsync("server/common/docService/service.php", payload, ct);
+            using var response = await SendSignedAsync("server/common/docService/service.php", new { action = "referenceDocs", bid }, ct);
             var body = await response.Content.ReadAsStringAsync(ct);
             if (!response.IsSuccessStatusCode)
                 throw new ReferenceToolException($"The reference tool's document registry returned HTTP {(int)response.StatusCode}.", ClassifyHttpFailure(response.StatusCode));
             return MergeRegistryPage(body, sections);
         }, ct);
+
+    /// <summary>Fetches subsequent pages per-section using the section's dedicated action (#515).</summary>
+    private Task<int> FetchAndMergeSectionPageAsync(string bid, string sectionKey, int offset, int count, SectionAccumulator acc, CancellationToken ct) =>
+        WithSessionRecoveryAsync(async () =>
+        {
+            object payload = sectionKey switch
+            {
+                "annual" => new { action = "getRefDocs", bid, section = "AnnualReturnsEform", offset, count, platform = "b2c" },
+                "charge" => new { action = "getRefDocs", bid, section = "ChargeDocuments", offset, count, platform = "b2c" },
+                "incorporation" => new { action = "getIncorporationDocs", bid, offset, count, platform = "b2c" },
+                "scanned" => new { action = "getScannedDocs", bid, offset, count, platform = "b2c" },
+                _ => throw new ArgumentException($"Unknown section key '{sectionKey}'", nameof(sectionKey))
+            };
+
+            using var response = await SendSignedAsync("server/common/docService/service.php", payload, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+                throw new ReferenceToolException($"The reference tool's document section returned HTTP {(int)response.StatusCode}.", ClassifyHttpFailure(response.StatusCode));
+            return MergeSectionPage(body, acc, sectionKey);
+        }, ct);
+
+    /// <summary>Merges one subsequent section page into the accumulator; returns how many documents were new.</summary>
+    private static int MergeSectionPage(string body, SectionAccumulator acc, string sectionKey)
+    {
+        using var doc = ParseJsonOrThrow(body, "document registry section");
+        if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            throw new ReferenceToolException("The reference tool's section page was not a JSON object.", ReferenceToolFailureKind.SessionExpired);
+
+        if (doc.RootElement.TryGetProperty("totalCount", out var tc) && tc.TryGetInt32(out var total))
+            acc.Total = Math.Max(acc.Total, total);
+
+        var added = 0;
+        if (doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in data.EnumerateArray())
+            {
+                var parsed = ParseDocument(item, sectionKey);
+                if (parsed is null || acc.Docs.ContainsKey(parsed.DocId)) continue;
+                acc.Docs[parsed.DocId] = parsed;
+                added++;
+            }
+        }
+        return added;
+    }
 
     /// <summary>Merges one registry response into the per-section accumulators; returns how many
     /// documents were new (0 ⇒ stop paging).</summary>

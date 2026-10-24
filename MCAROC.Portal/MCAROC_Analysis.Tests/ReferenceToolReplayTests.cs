@@ -110,6 +110,7 @@ public sealed class ReferenceToolReplayTests : IAsyncLifetime
     [InlineData("unlocked-stale-coastal-20260922", "U45203OR1995PLC003982")]
     [InlineData("locked-unlock-tcs-20260922", TcsCin)]
     [InlineData("never-probed-llp-20261016", NatureEarthLlpin)]
+    [InlineData("registry-paging-godrej-20261024", "L74120MH1985PLC035308")]
     public void Each_recording_was_made_for_the_company_its_identifier_hashes_to(string scenario, string identifier) =>
         Assert.Equal(ReferenceToolClient.ComputeBid(identifier), new FixtureReferenceTool(scenario).RecordedBid);
 
@@ -213,6 +214,29 @@ public sealed class ReferenceToolReplayTests : IAsyncLifetime
         Assert.Equal(2, tool.Count("getCompanyPreview")); // once before parking, once right before the spend
         // Confirmed from the tool's asset status after the spend (the recorded unlock time), not from addAsset's reply.
         Assert.Contains(Ist.Format(new DateTimeOffset(2026, 9, 22, 9, 41, 59, TimeSpan.FromHours(5.5))), result.Message);
+        AssertAskedOnlyForRecordedCalls(tool);
+    }
+
+    /// <summary>Profile 10 (#515): a large company with 1,354 documents across 4 sections.
+    /// Replays the live capture of GODREJ PROPERTIES LIMITED; pages every section and retrieves all 1,354 documents.</summary>
+    [Fact]
+    public async Task Profile_10_large_company_registry_pages_all_documents()
+    {
+        var tool = new FixtureReferenceTool("registry-paging-godrej-20261024");
+        var client = FakeReferenceTool.NewClient(tool);
+
+        var registry = await client.GetReferenceDocumentsAsync(tool.RecordedBid!, CancellationToken.None);
+
+        Assert.Equal(1354, registry.TotalCount);
+        Assert.Equal(1354, registry.ListedCount);
+        Assert.Equal(291, registry.Sections.Single(s => s.Key == "annual").Documents.Count);
+        Assert.Equal(78, registry.Sections.Single(s => s.Key == "charge").Documents.Count);
+        Assert.Equal(181, registry.Sections.Single(s => s.Key == "incorporation").Documents.Count);
+        Assert.Equal(804, registry.Sections.Single(s => s.Key == "scanned").Documents.Count);
+        Assert.Equal(1, tool.Count("referenceDocs"));
+        Assert.Equal(2, tool.Count("getRefDocs"));
+        Assert.Equal(1, tool.Count("getIncorporationDocs"));
+        Assert.Equal(8, tool.Count("getScannedDocs"));
         AssertAskedOnlyForRecordedCalls(tool);
     }
 
