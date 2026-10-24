@@ -159,6 +159,62 @@ public sealed class RunRecordServiceTests : IAsyncLifetime
         Assert.Contains("- Not downloaded.", md);
     }
 
+    /// <summary>Review of #522: details trimmed to a length can still serialize past the cap (an escaped character counts six), so the payload is shortened
+    /// until it fits as serialized; a whole run of failing checks with notice text full of non-ASCII characters is kept, not replaced by the marker.</summary>
+    [Fact]
+    public void A_failing_preflight_run_full_of_escaped_characters_still_fits_the_audit_payload_cap()
+    {
+        var keys = new[] { "reference-session", "mca-company", "mca-llp", "litigation-api", "order-host", "portal-login", "database", "ai", "court-agents", "keywords", "disk" };
+        var notice = string.Concat(Enumerable.Repeat("MCA peak filing — “continue?” ", 20));
+        var report = new PreflightReport(DateTime.UtcNow, keys.Select(k => new PreflightCheck(k, k, PreflightOutcome.Warn, notice, "fix", 1)).ToList());
+
+        var payload = PreflightRunPayload.From(report);
+        var json = AuditLogEntryFactory.SerializeAndCapPayload(payload)!;
+
+        Assert.True(AuditLogEntryFactory.FitsPayloadCap(payload));
+        Assert.DoesNotContain("truncated", json, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(11, JsonSerializer.Deserialize<PreflightRunPayload>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))!.Checks.Count);
+    }
+
+    /// <summary>Review of #522: a pre-flight entry the log did keep only as its "truncated" marker (or could not read) still counts as a pre-flight run:
+    /// its overall result comes from the audit row's status, the record says the details were not kept, and the page and Markdown render.</summary>
+    [Fact]
+    public async Task A_truncated_preflight_entry_is_shown_as_a_run_without_details()
+    {
+        var created = DateTime.UtcNow.AddMinutes(-15);
+        long requestId;
+        await using (var db = CreateContext())
+        {
+            var request = new McaRequest
+            {
+                Client = new Client { ClientCode = "RR" + Guid.NewGuid().ToString("N")[..8], ClientName = "Record Test Bank", CreatedDate = created },
+                EntityType = EntityType.Company, CompanyName = "Truncated Preflight Co", Cin = _cin, RequestNumber = $"RR-{Guid.NewGuid():N}",
+                RequestStatus = RequestStatus.Created, CreatedDate = created
+            };
+            db.Requests.Add(request);
+            await db.SaveChangesAsync();
+            requestId = request.RequestId;
+            _requests.Add(requestId);
+            db.AuditLogs.Add(new AuditLog
+            {
+                TimestampUtc = created.AddSeconds(-1), CorrelationId = "rr-" + Guid.NewGuid().ToString("N"), ActorType = ActorType.AuthenticatedReviewer,
+                ActorId = "tester", Action = AuditActionType.PreflightRun, EventKind = AuditEventKind.DomainLifecycle, Status = AuditStatus.Failure,
+                EventPayloadJson = JsonSerializer.Serialize(new TruncatedPayloadEnvelope(true, nameof(PreflightRunPayload)), new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await using var read = CreateContext();
+        var record = (await new RunRecordService(read).GetAsync(requestId, CancellationToken.None))!;
+        var md = RunRecordService.ToMarkdown(record);
+
+        Assert.Equal("Fail", record.PreflightBefore!.Overall);
+        Assert.Empty(record.PreflightBefore.Checks);
+        Assert.False(record.PreflightChecksKept);
+        Assert.Contains("Pre-flight before it: **Fail**", md);
+        Assert.Contains("the check details were not kept", md);
+    }
+
     /// <summary>The audit log keeps at most 2,000 characters of payload, and replaces a longer one with a "truncated" marker: a full pre-flight
     /// run with every check failing at length must still fit.</summary>
     [Fact]

@@ -21,10 +21,11 @@ public sealed record RunRecordLitigation(string Status, bool? ExactMatch, IReadO
 
 public sealed record RunRecordDownload(DateTime AtUtc, string By, string? Variant, long? Bytes, int? Pages);
 
-/// <param name="PreflightBefore">The last pre-flight check run before the request was created; null when none was.</param>
+/// <param name="PreflightBefore">The last pre-flight check run before the request was created; null when none was. Its checks are empty when the log kept
+/// only the outcome (<paramref name="PreflightChecksKept"/> false).</param>
 public sealed record RunRecord(
     long RequestId, string RequestNumber, string CompanyName, string? Identifier, string EntityType, string? ClientName, DateTime CreatedUtc,
-    PreflightRunPayload? PreflightBefore, DateTime? PreflightAtUtc,
+    PreflightRunPayload? PreflightBefore, DateTime? PreflightAtUtc, bool PreflightChecksKept,
     string? PipelineOutcome, DateTime? PipelineCreatedUtc, DateTime? CoreReadyUtc, DateTime? PipelineCompletedUtc, IReadOnlyList<RunRecordStage> Stages,
     RunRecordFetch? Fetch, RunRecordLifecycle? Lifecycle, RunRecordLitigation? Litigation, IReadOnlyList<RunRecordDownload> DossierDownloads)
 {
@@ -47,7 +48,13 @@ public sealed class RunRecordService(AppDbContext db)
 
         var preflight = await db.AuditLogs.AsNoTracking()
             .Where(a => a.Action == AuditActionType.PreflightRun && a.TimestampUtc <= request.CreatedDate)
-            .OrderByDescending(a => a.TimestampUtc).Select(a => new { a.TimestampUtc, a.EventPayloadJson }).FirstOrDefaultAsync(ct);
+            .OrderByDescending(a => a.TimestampUtc).Select(a => new { a.TimestampUtc, a.EventPayloadJson, a.Status }).FirstOrDefaultAsync(ct);
+        // A run the log could not keep whole (a "truncated" marker, or unreadable) still happened: its overall result is the audit row's status.
+        var preflightRun = preflight is null ? null : Read<PreflightRunPayload>(preflight.EventPayloadJson);
+        var checksKept = preflightRun?.Checks is not null && preflightRun.Overall is not null;
+        if (preflight is not null && !checksKept)
+            preflightRun = new PreflightRunPayload(
+                preflight.Status switch { AuditStatus.Failure => "Fail", AuditStatus.Warning => "Warn", _ => "Pass" }, preflight.TimestampUtc, []);
 
         var run = await db.PipelineRuns.AsNoTracking().Where(r => r.RequestId == requestId).OrderByDescending(r => r.PipelineRunId).FirstOrDefaultAsync(ct);
         // Ordered in memory: the stage is stored as text, so the database would sort it alphabetically, not in pipeline order.
@@ -72,7 +79,7 @@ public sealed class RunRecordService(AppDbContext db)
         return new RunRecord(
             request.RequestId, request.RequestNumber, request.CompanyName, identifier, request.EntityType.ToString(), request.Client?.ClientName,
             request.CreatedDate,
-            Read<PreflightRunPayload>(preflight?.EventPayloadJson), preflight?.TimestampUtc,
+            preflightRun, preflight?.TimestampUtc, checksKept,
             run?.Outcome.ToString(), run?.CreatedUtc, run?.CoreReadyUtc, run?.CompletedUtc,
             stages.Select(s => new RunRecordStage(s.Stage.ToString(), s.State.ToString(), s.SkipKind?.ToString(), s.ReasonCode, s.ReasonDetail, s.Attempts, s.UpdatedUtc)).ToList(),
             job is null ? null : new RunRecordFetch(job.Status.ToString(), job.StatusMessage, job.FailureReason, Read<List<string>>(job.WarningsJson) ?? [],
@@ -104,7 +111,8 @@ public sealed class RunRecordService(AppDbContext db)
         md.AppendLine($"- Identifier: {r.Identifier ?? "(none)"} ({r.EntityType}); client: {r.ClientName ?? "-"}");
         md.AppendLine($"- Request created: {Ist.Format(r.CreatedUtc)}");
         md.AppendLine(r.PreflightBefore is { } p
-            ? $"- Pre-flight before it: **{p.Overall}** at {Ist.Format(r.PreflightAtUtc)}" + (p.Checks.Any(c => c.Outcome != "Pass")
+            ? $"- Pre-flight before it: **{p.Overall}** at {Ist.Format(r.PreflightAtUtc)}" + (!r.PreflightChecksKept ? " (the check details were not kept)" : "")
+                + (p.Checks.Any(c => c.Outcome != "Pass")
                 ? "; " + string.Join("; ", p.Checks.Where(c => c.Outcome != "Pass").Select(c => $"{c.Key} {c.Outcome}: {c.Detail}")) : "")
             : "- Pre-flight before it: **none run**");
         md.AppendLine();

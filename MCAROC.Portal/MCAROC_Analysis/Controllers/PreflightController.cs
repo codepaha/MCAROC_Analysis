@@ -32,13 +32,24 @@ public class PreflightController(PreflightService preflight, IAuditLogService au
     }
 }
 
-/// <summary>A pre-flight run as kept in the audit log: every check's outcome, and the detail of those that did not pass (trimmed so the whole run
-/// fits the log's payload cap).</summary>
+/// <summary>A pre-flight run as kept in the audit log: every check's outcome, and the detail of those that did not pass, shortened until the whole
+/// run fits the log's payload cap as serialized (an escaped notice character counts six), so the log never replaces it with a "truncated" marker.</summary>
 public sealed record PreflightRunPayload(string Overall, DateTime CheckedUtc, IReadOnlyList<PreflightRunPayload.Item> Checks)
 {
     public sealed record Item(string Key, string Outcome, string? Detail);
 
-    public static PreflightRunPayload From(PreflightReport report) => new(report.Overall.ToString(), report.CheckedUtc,
-        report.Checks.Select(c => new Item(c.Key, c.Outcome.ToString(),
-            c.Outcome == PreflightOutcome.Pass ? null : c.Detail.Length > 80 ? c.Detail[..80] + "…" : c.Detail)).ToList());
+    private static readonly int[] DetailLengths = [80, 40, 0];
+
+    public static PreflightRunPayload From(PreflightReport report)
+    {
+        PreflightRunPayload Build(int max) => new(report.Overall.ToString(), report.CheckedUtc,
+            report.Checks.Select(c => new Item(c.Key, c.Outcome.ToString(),
+                c.Outcome == PreflightOutcome.Pass || max == 0 ? null : c.Detail.Length > max ? c.Detail[..max] + "…" : c.Detail)).ToList());
+        foreach (var max in DetailLengths)
+        {
+            var payload = Build(max);
+            if (AuditLogEntryFactory.FitsPayloadCap(payload)) return payload;
+        }
+        return Build(0); // outcomes only: a key and an outcome per check always fit
+    }
 }

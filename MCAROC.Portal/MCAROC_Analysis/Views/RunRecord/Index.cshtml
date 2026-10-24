@@ -28,6 +28,10 @@
             {
                 <span class="badge @(p.Overall == "Pass" ? "text-bg-success" : p.Overall == "Warn" ? "text-bg-warning" : "text-bg-danger")">Pre-flight @p.Overall</span>
                 <span class="small text-muted">at @Ist.Format(Model.PreflightAtUtc)</span>
+                @if (!Model.PreflightChecksKept)
+                {
+                    <div class="small text-muted">The check details were not kept; open the pre-flight page for a fresh run.</div>
+                }
                 @foreach (var c in p.Checks.Where(c => c.Outcome != "Pass"))
                 {
                     <div class="small">@c.Key: @c.Outcome. @c.Detail</div>
