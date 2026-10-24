@@ -811,7 +811,7 @@ public sealed class AutoFetchJobService(
         {
             try
             {
-                await client.DownloadPdfAsync(bid, userId, awsPath, did, localPath, ct);
+                await client.DownloadDocumentAsync(bid, userId, awsPath, did, localPath, ct);
                 return true;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

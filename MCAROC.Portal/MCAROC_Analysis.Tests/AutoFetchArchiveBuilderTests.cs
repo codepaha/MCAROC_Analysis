@@ -85,6 +85,40 @@ public class AutoFetchArchiveBuilderTests : IDisposable
     public void Entry_names_keep_the_classifier_keywords_but_drop_path_characters(string raw, string expected) =>
         Assert.Equal(expected, AutoFetchArchiveBuilder.SanitizeEntryName(raw));
 
+    /// <summary>#515: an XBRL or spreadsheet attachment is staged under a planned .pdf name; packaged as .pdf the filings pipeline
+    /// would read it as a corrupt PDF. It is named after what it is (and so kept as an attachment, not processed as a PDF).</summary>
+    [Fact]
+    public void A_non_pdf_attachment_is_packaged_under_its_own_extension()
+    {
+        string Staged(string relative, byte[] bytes)
+        {
+            var path = Path.Combine(_tempDir, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllBytes(path, bytes);
+            return path;
+        }
+        var filings = new[]
+        {
+            new ArchiveFiling("Financial Documents", "aoc4v1",
+            [
+                ("Form AOC-4 XBRL.pdf", Pdf("x/main.pdf")),
+                ("XBRL financial statements.xml.pdf", Staged("x/att1.pdf", "<?xml version=\"1.0\"?><xbrl/>"u8.ToArray())),
+                ("XBRL document.pdf", Staged("x/att2.pdf", "<?xml version=\"1.0\"?><xbrl/>"u8.ToArray())),
+                ("XBRL document.pdf", Staged("x/att3.pdf", "<?xml version=\"1.0\"?><xbrl/>"u8.ToArray())),
+                ("Shareholding.pdf", Staged("x/att4.pdf", [0x50, 0x4B, 0x03, 0x04, 0x14, 0x00])),
+            ]),
+        };
+        var outer = Path.Combine(_tempDir, "out", "nonpdf.zip");
+
+        AutoFetchArchiveBuilder.Build(outer, "Godrej Properties Limited", Cin, filings);
+
+        using var archive = ZipFile.OpenRead(outer);
+        using var nested = new ZipArchive(archive.Entries.Single().Open());
+        Assert.Equal(
+            ["Form AOC-4 XBRL.pdf", "Shareholding.xlsx", "XBRL document (2).xml", "XBRL document.xml", "XBRL financial statements.xml"],
+            nested.Entries.Select(e => e.FullName).Where(n => n != "manifest.json").OrderBy(x => x, StringComparer.Ordinal).ToList());
+    }
+
     [Fact]
     public void Entry_name_length_is_capped_with_pdf_extension_kept()
     {

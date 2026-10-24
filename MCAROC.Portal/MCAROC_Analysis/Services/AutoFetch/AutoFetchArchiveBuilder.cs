@@ -57,7 +57,10 @@ public static partial class AutoFetchArchiveBuilder
 
             foreach (var file in present)
             {
-                var name = UniqueEntryName(SanitizeEntryName(file.EntryName), usedNames);
+                // Named after what the file is, not what it was planned as: an XBRL .xml or .xlsx attachment kept as .pdf would be
+                // read as a corrupt PDF by the filings pipeline (which takes only .pdf entries) instead of kept as an attachment.
+                var extension = DownloadedFileType.ExtensionOfFile(file.LocalPath) ?? ".pdf";
+                var name = UniqueEntryName(SanitizeEntryName(file.EntryName, extension), usedNames);
                 nested.CreateEntryFromFile(file.LocalPath, name, CompressionLevel.Fastest);
                 if (!string.IsNullOrEmpty(file.AwsPath) || !string.IsNullOrEmpty(file.Did))
                 {
@@ -93,24 +96,28 @@ public static partial class AutoFetchArchiveBuilder
     }
 
     /// <summary>Keeps the original name (the classifier keys on words like "CHG-1" in it) but strips
-    /// path separators and control characters, guarantees a .pdf extension, and caps the length.</summary>
-    public static string SanitizeEntryName(string name)
+    /// path separators and control characters, guarantees the <paramref name="extension"/> (.pdf unless the file is something else;
+    /// a .pdf the name was given in planning is replaced), and caps the length.</summary>
+    public static string SanitizeEntryName(string name, string extension = ".pdf")
     {
         var cleaned = InvalidEntryChars().Replace(name, " ").Trim(' ', '.', '	');
+        if (!extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase) && cleaned.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            cleaned = cleaned[..^4].TrimEnd(' ', '.');
         if (cleaned.Length == 0) cleaned = "document";
-        if (!cleaned.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) cleaned += ".pdf";
+        if (!cleaned.EndsWith(extension, StringComparison.OrdinalIgnoreCase)) cleaned += extension;
         if (cleaned.Length > 150)
-            cleaned = cleaned[..(150 - 4)].TrimEnd() + ".pdf";
+            cleaned = cleaned[..(150 - extension.Length)].TrimEnd() + extension;
         return cleaned;
     }
 
     private static string UniqueEntryName(string name, HashSet<string> used)
     {
         if (used.Add(name)) return name;
-        var stem = name[..^4];
+        var extension = Path.GetExtension(name);
+        var stem = name[..^extension.Length];
         for (var i = 2; ; i++)
         {
-            var candidate = $"{stem} ({i}).pdf";
+            var candidate = $"{stem} ({i}){extension}";
             if (used.Add(candidate)) return candidate;
         }
     }
