@@ -565,11 +565,21 @@ if (isStale)
     var status = await GetDataEntryRequestStatusAsync(bid, ct);
     if (status.Status != "REQUESTED")
     {
-        // Check entity-specific maintenance/alert status
+        // Check entity-specific maintenance/alert status (matching ReferenceToolClient.McaAllows: NORMAL and ALERT proceed; maintenance defers)
         var upgradeStatus = isLlp 
             ? await GetUpgradeStatusForLLPsAsync(ct)
             : await GetUpgradeStatusForCompaniesAsync(ct);
-        if (upgradeStatus.McaStatus == "ALERT")
+
+        var isNormal = string.Equals(upgradeStatus.McaStatus, "NORMAL", StringComparison.OrdinalIgnoreCase);
+        var isAlert = string.Equals(upgradeStatus.McaStatus, "ALERT", StringComparison.OrdinalIgnoreCase);
+
+        if (!isNormal && !isAlert)
+        {
+            logger.LogInformation("The MCA portal is under maintenance ({Status}); probe deferred.", upgradeStatus.McaStatus);
+            return; // Hold off: only NORMAL and ALERT permit proceeding; maintenance holds off
+        }
+
+        if (isAlert)
         {
             logger.LogWarning("MCA Alert during probe trigger: {AlertText}", upgradeStatus.AlertText);
         }
