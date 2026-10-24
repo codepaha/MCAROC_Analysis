@@ -76,7 +76,8 @@ public static partial class CaptureRedactor
         copy["requestBody"] = RedactJson(copy["requestBody"]?.DeepClone(), everything: account);
         copy["body"] = copy["body"] switch
         {
-            JsonValue v when v.TryGetValue<string>(out var text) => JsonValue.Create(account ? Redacted : RedactText(text)),
+            // A reply kept as text may itself be JSON: RedactBody parses it and redacts field by field (patterns alone miss a numeric id).
+            JsonValue v when v.TryGetValue<string>(out var text) => JsonValue.Create(RedactBody(text, account)),
             var body => RedactJson(body?.DeepClone(), everything: account),
         };
         return copy;
