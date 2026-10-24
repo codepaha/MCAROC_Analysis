@@ -111,7 +111,7 @@ public sealed class McaDocumentRestoreService(
         try
         {
             var did = document.SourceDocId ?? document.FilingDocumentId.ToString();
-            await client.DownloadPdfAsync(bid, userId, document.SourceAwsPath, did, destinationPath, ct);
+            await client.DownloadDocumentAsync(bid, userId, document.SourceAwsPath, did, destinationPath, ct);
 
             if (!File.Exists(destinationPath))
             {

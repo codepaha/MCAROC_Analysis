@@ -247,7 +247,7 @@ public class ReferenceToolClientTests : IDisposable
         var client = NewClient(handler);
 
         var dest = Path.Combine(_tempDir, "doc", "main.pdf");
-        await client.DownloadPdfAsync("bid", "265271", "214/x/good.pdf", "goodv1", dest, CancellationToken.None);
+        await client.DownloadDocumentAsync("bid", "265271", "214/x/good.pdf", "goodv1", dest, CancellationToken.None);
         Assert.True(File.Exists(dest));
         var query = System.Web.HttpUtility.ParseQueryString(handler.Requests.Last().RequestUri!.Query);
         Assert.Equal("downloadPdf", query["action"]);
@@ -257,8 +257,57 @@ public class ReferenceToolClientTests : IDisposable
         Assert.Equal("b2c", query["platform"]);
 
         await Assert.ThrowsAsync<ReferenceToolException>(() =>
-            client.DownloadPdfAsync("bid", "265271", "214/x/bad.pdf", "badv1", Path.Combine(_tempDir, "doc", "bad.pdf"), CancellationToken.None));
+            client.DownloadDocumentAsync("bid", "265271", "214/x/bad.pdf", "badv1", Path.Combine(_tempDir, "doc", "bad.pdf"), CancellationToken.None));
         Assert.False(File.Exists(Path.Combine(_tempDir, "doc", "bad.pdf")));
+    }
+
+    /// <summary>#515, live 2026-10-16: XBRL .xml and .xlsx attachments were read as "logged out", each one re-logged in and the
+    /// tool's login limit (6 an hour) blocked every request. A valid file of another type is a download, not a logout.</summary>
+    [Theory]
+    [InlineData("xbrl", ".xml")]
+    [InlineData("xbrl-bom", ".xml")]
+    [InlineData("xlsx", ".xlsx")]
+    [InlineData("xls", ".xls")]
+    public async Task An_xml_or_spreadsheet_attachment_downloads_without_a_relogin(string body, string expectedExtension)
+    {
+        var bytes = body switch
+        {
+            "xbrl" => "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xbrli:xbrl xmlns:xbrli=\"http://www.xbrl.org/2003/instance\"></xbrli:xbrl>"u8.ToArray(),
+            "xbrl-bom" => [0xEF, 0xBB, 0xBF, .. "\r\n<?xml version=\"1.0\"?><xbrl/>"u8.ToArray()],
+            "xlsx" => [0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x06, 0x00, 0x08, 0x00],
+            _ => [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0x00, 0x00],
+        };
+        var handler = new StubHandler();
+        handler.OnPath("server/common/docService/service.php", _ => Bytes(bytes, "application/octet-stream"));
+        handler.OnPath("server/user/login.php", _ => Json("{\"id\":265271}"));
+        var client = NewClient(handler, username: "dharmendra@test.com", password: "SecretPassword123");
+
+        var dest = Path.Combine(_tempDir, "doc", "att1.pdf");
+        Assert.Equal(expectedExtension, await client.DownloadDocumentAsync("bid", "265271", "214/x/fs.xml", "fsv1", dest, CancellationToken.None));
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(dest));
+        Assert.DoesNotContain(handler.Requests, r => r.RequestUri!.AbsolutePath.EndsWith("login.php"));
+    }
+
+    [Fact]
+    public async Task An_unrecognised_file_fails_without_a_relogin_but_a_login_page_still_means_logged_out()
+    {
+        var handler = new StubHandler();
+        handler.OnPath("server/common/docService/service.php", req => req.RequestUri!.Query.Contains("page")
+            ? Html("<!doctype html><html>login</html>")
+            : Bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], "image/png"));
+        handler.OnPath("server/common/jwt/service.php", _ => Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+        handler.OnPath("server/user/login.php", _ => Json("{\"id\":265271}"));
+        var client = NewClient(handler, username: "dharmendra@test.com", password: "SecretPassword123");
+
+        var unknown = await Assert.ThrowsAsync<ReferenceToolException>(() =>
+            client.DownloadDocumentAsync("bid", "265271", "214/x/img.png", "imgv1", Path.Combine(_tempDir, "doc", "img.pdf"), CancellationToken.None));
+        Assert.Equal(ReferenceToolFailureKind.Other, unknown.Kind);
+        Assert.DoesNotContain(handler.Requests, r => r.RequestUri!.AbsolutePath.EndsWith("login.php"));
+
+        var loggedOut = await Assert.ThrowsAnyAsync<ReferenceToolException>(() =>
+            client.DownloadDocumentAsync("bid", "265271", "214/x/page.pdf", "pagev1", Path.Combine(_tempDir, "doc", "page.pdf"), CancellationToken.None));
+        Assert.True(handler.Requests.Any(r => r.RequestUri!.AbsolutePath.EndsWith("login.php")), $"{loggedOut.Kind}: {loggedOut.Message}");
+        Assert.False(File.Exists(Path.Combine(_tempDir, "doc", "page.pdf")));
     }
 
     /// <summary>A response that declares (via Content-Length) more than the configured cap is refused
@@ -274,7 +323,7 @@ public class ReferenceToolClientTests : IDisposable
 
         var dest = Path.Combine(_tempDir, "doc", "oversized.pdf");
         var ex = await Assert.ThrowsAsync<ReferenceToolException>(() =>
-            client.DownloadPdfAsync("bid", "265271", "214/x/big.pdf", "bigv1", dest, CancellationToken.None));
+            client.DownloadDocumentAsync("bid", "265271", "214/x/big.pdf", "bigv1", dest, CancellationToken.None));
 
         Assert.Contains("2,000", ex.Message);
         Assert.Contains("1,000", ex.Message);
@@ -297,7 +346,7 @@ public class ReferenceToolClientTests : IDisposable
 
         var dest = Path.Combine(_tempDir, "doc", "oversized-streamed.pdf");
         var ex = await Assert.ThrowsAsync<ReferenceToolException>(() =>
-            client.DownloadPdfAsync("bid", "265271", "214/x/big.pdf", "bigv1", dest, CancellationToken.None));
+            client.DownloadDocumentAsync("bid", "265271", "214/x/big.pdf", "bigv1", dest, CancellationToken.None));
 
         Assert.Contains("exceeded", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.False(File.Exists(dest));

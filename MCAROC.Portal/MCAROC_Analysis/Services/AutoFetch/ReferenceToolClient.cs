@@ -542,15 +542,16 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
 
     // ── PDF streaming ───────────────────────────────────────────────────────────────────────────────
 
-    /// <summary>Downloads one PDF (a main e-form or an attachment) straight to disk. Verifies the
-    /// <c>%PDF</c> signature — the endpoint answers a bad key or an expired session with HTTP 200 + JSON.</summary>
-    public Task DownloadPdfAsync(string bid, string userId, string awsPath, string did, string destinationPath, CancellationToken ct)
+    /// <summary>Downloads one filing document (a main e-form or an attachment: a PDF, or an XBRL .xml / .xlsx / .xls attachment)
+    /// straight to disk and returns its extension, read from the content. The endpoint answers a bad key or an expired session
+    /// with HTTP 200 + JSON (or a page), and only that body means logged out; any other unrecognised body fails without a re-login.</summary>
+    public Task<string> DownloadDocumentAsync(string bid, string userId, string awsPath, string did, string destinationPath, CancellationToken ct)
     {
         EnsureConfigured();
-        return WithSessionRecoveryAsync(() => DownloadPdfCoreAsync(bid, userId, awsPath, did, destinationPath, ct), ct);
+        return WithSessionRecoveryAsync(() => DownloadDocumentCoreAsync(bid, userId, awsPath, did, destinationPath, ct), ct);
     }
 
-    private async Task DownloadPdfCoreAsync(string bid, string userId, string awsPath, string did, string destinationPath, CancellationToken ct)
+    private async Task<string> DownloadDocumentCoreAsync(string bid, string userId, string awsPath, string did, string destinationPath, CancellationToken ct)
     {
         var url = BuildUrl("server/common/docService/service.php", new Dictionary<string, string>
         {
@@ -566,14 +567,19 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
 
         var tempPath = destinationPath + ".download";
         var (header, contentType) = await StreamToFileAsync(url, tempPath, ct);
-        if (!header.AsSpan().StartsWith(PdfSignature))
+        var head = header.AsSpan().StartsWith(PdfSignature) ? header : DownloadedFileType.ReadHead(tempPath);
+        var extension = DownloadedFileType.ExtensionOf(head);
+        if (extension is null)
         {
             var snippet = await ReadSnippetAsync(tempPath);
             TryDelete(tempPath);
-            throw new ReferenceToolException($"Not a PDF (content-type '{contentType ?? "?"}'): {snippet}", ReferenceToolFailureKind.SessionExpired);
+            if (DownloadedFileType.LooksLikeSessionReply(head))
+                throw new ReferenceToolException($"Not a document (content-type '{contentType ?? "?"}'): {snippet}", ReferenceToolFailureKind.SessionExpired);
+            throw new ReferenceToolException($"Unrecognised file type (content-type '{contentType ?? "?"}'): {snippet}", ReferenceToolFailureKind.Other);
         }
         TryDelete(destinationPath);
         File.Move(tempPath, destinationPath);
+        return extension;
     }
 
     // ── Unlock / refresh lifecycle (docs/reference-tool-refresh-unlock-contract.md) ─────────────────
