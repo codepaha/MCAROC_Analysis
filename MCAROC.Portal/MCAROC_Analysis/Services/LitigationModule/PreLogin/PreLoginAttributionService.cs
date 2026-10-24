@@ -593,8 +593,8 @@ public sealed class PreLoginAttributionService(
             var sc = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == scopeCaseId, ct);
             if (sc is null) return false;
 
-            // Must be an open suggestion: cannot be already excluded, and cannot be attributed to company
-            if (sc.IsExcluded || sc.AttributionOutcome == LitigationAttributionOutcome.Attributed)
+            // Must be an open suggestion: outcome must be NotTheCompany and not already excluded
+            if (sc.IsExcluded || sc.AttributionOutcome != LitigationAttributionOutcome.NotTheCompany)
             {
                 logger?.LogWarning("Cannot accept suggestion for ScopeCaseId {ScopeCaseId}: Not an open suggestion (IsExcluded={IsExcluded}, Outcome={Outcome}).",
                     scopeCaseId, sc.IsExcluded, sc.AttributionOutcome);
@@ -1164,8 +1164,8 @@ public sealed class PreLoginAttributionService(
             var sc = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == scopeCaseId, ct);
             if (sc is null) return false;
 
-            // Must be an open suggestion: cannot be already excluded, and cannot be attributed to company
-            if (sc.IsExcluded || sc.AttributionOutcome == LitigationAttributionOutcome.Attributed)
+            // Must be an open suggestion: outcome must be NotTheCompany and not already excluded
+            if (sc.IsExcluded || sc.AttributionOutcome != LitigationAttributionOutcome.NotTheCompany)
             {
                 logger?.LogWarning("Cannot accept suggestion for ScopeCaseId {ScopeCaseId}: Not an open suggestion (IsExcluded={IsExcluded}, Outcome={Outcome}).",
                     scopeCaseId, sc.IsExcluded, sc.AttributionOutcome);

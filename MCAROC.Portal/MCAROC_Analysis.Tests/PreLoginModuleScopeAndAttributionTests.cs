@@ -526,6 +526,7 @@ public class PreLoginModuleScopeAndAttributionTests : IAsyncLifetime
         sc1.AttributionParty = "Some Corp";
         sc1.AttributionReason = "Different party";
         sc1.AttributionRule = "rule-1";
+        sc1.AttributionOutcome = LitigationAttributionOutcome.NotTheCompany;
         await db.SaveChangesAsync();
 
         await attributionService.AcceptSuggestionAsync(sc1.ScopeCaseId, "Analyst1");
