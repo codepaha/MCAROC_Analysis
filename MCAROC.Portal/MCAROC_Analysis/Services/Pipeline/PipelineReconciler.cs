@@ -156,8 +156,8 @@ public sealed class PipelineReconciler(AppDbContext db, PipelineSnapshotReader r
                 && opts is not null && PipelineFailureClassifier.IsAutoRetryable(verdict.ReasonCode))
             {
                 var retryRow = existingRow;
-                // The fetch worker has no internal retry loop of its own (one claim = one AttemptCount++,
-                // terminal either way) — but it IS claimed again by a manual UI retry
+                // The fetch worker has no internal retry loop of its own (each run that ends Failed is one AttemptCount++;
+                // parks, restarts and transient outages are not counted) — but it IS claimed again by a manual UI retry
                 // (AutoFetchController.RetryJob) without ever going through this coordinator, so
                 // AutoFetchJob.AttemptCount can run ahead of PipelineStageState.Attempts. Plan §6.2: internal
                 // attempts count toward the same cap, so the worst case stays bounded regardless of who

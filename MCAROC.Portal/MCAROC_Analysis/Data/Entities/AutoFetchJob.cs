@@ -69,6 +69,8 @@ public sealed class AutoFetchJob
     public long? FilingsDocumentId { get; set; }
     public long? FilingBatchId { get; set; }
 
+    /// <summary>Runs of this job that ended Failed. Not a count of claims: parking for a refresh or an unlock approval, a restart, or a
+    /// transient reference-tool outage is not a failed attempt. The pipeline caps automatic Fetch retries with it.</summary>
     public int AttemptCount { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime? StartedUtc { get; set; }

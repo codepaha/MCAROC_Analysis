@@ -183,8 +183,7 @@ public sealed class AutoFetchJobService(
             .ExecuteUpdateAsync(s => s
                 .SetProperty(j => j.Status, AutoFetchJobStatus.CheckingSession)
                 .SetProperty(j => j.StartedUtc, DateTime.UtcNow)
-                .SetProperty(j => j.HeartbeatUtc, DateTime.UtcNow)
-                .SetProperty(j => j.AttemptCount, j => j.AttemptCount + 1), ct);
+                .SetProperty(j => j.HeartbeatUtc, DateTime.UtcNow), ct);
         if (claimed == 0) return;
 
         var job = await db.AutoFetchJobs.AsNoTracking().FirstAsync(j => j.AutoFetchJobId == jobId, ct);
@@ -457,6 +456,10 @@ public sealed class AutoFetchJobService(
                     .SetProperty(j => j.Status, AutoFetchJobStatus.Failed)
                     .SetProperty(j => j.FailureReason, failedReason)
                     .SetProperty(j => j.StatusMessage, "Failed.")
+                    // Counted here, not when the job is claimed: a run that parks for a refresh or an unlock approval, is stopped by a restart,
+                    // or meets a transient outage was not a failed attempt, and counting those let a parked job reach RETRIES_EXHAUSTED after
+                    // two real failures (#514, 2026-10-16).
+                    .SetProperty(j => j.AttemptCount, j => j.AttemptCount + 1)
                     .SetProperty(j => j.CompletedUtc, failedNow)
                     .SetProperty(j => j.HeartbeatUtc, failedNow)
                     .SetProperty(j => j.WarningsJson, warningsJson), CancellationToken.None);
