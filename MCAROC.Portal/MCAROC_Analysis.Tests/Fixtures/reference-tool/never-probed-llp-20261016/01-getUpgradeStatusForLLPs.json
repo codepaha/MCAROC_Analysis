@@ -1,0 +1,23 @@
+{
+  "service": "reference-tool",
+  "capturedUtc": "2026-10-16T13:52:55Z",
+  "source": "Transcribed from the 2026-10-16 live capture (NATURE EARTH KHARKHODA LLP), docs/reference-tool-refresh-unlock-contract.md 4.2-4.4.",
+  "method": "GET",
+  "url": "https://reference.test/server/common/mcastatus/service.php",
+  "action": "getUpgradeStatusForLLPs",
+  "payload": {
+    "action": "getUpgradeStatusForLLPs"
+  },
+  "requestBody": null,
+  "query": {
+    "v": "3.1.6",
+    "cv": "8.1.28"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "contentLength": null,
+  "body": {
+    "mca_status": "ALERT",
+    "alert_text": "<b>MCA peak filing period.</b><br><br>MCA documents are intermittently accessible on the Ministry of Corporate Affairs (MCA) website due to peak filing season. We will continuously try to access and update the requests as usual.<br><br>In case of repeated failures from MCA, we will update the sections that do not require data from MCA documents and reattempt company filing when MCA is accessible at a later date.<br><br> Do you want to continue?"
+  }
+}
