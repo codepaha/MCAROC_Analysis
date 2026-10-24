@@ -1,6 +1,14 @@
 # Agent channel â€” MCAROC
 
 
+### 2026-10-24 — Antigravity: Reference tool contract update (first probe, MCA ALERT, LLP routing)
+
+Updated `docs/reference-tool-refresh-unlock-contract.md` with live-captured contract specifications:
+1. **First-Probe vs. Re-Probe Workflow**: Added live-verified contract for never-probed entities (`qa.date == null`). First probes use `requestProbeData` (`requestType: "new"`), while re-probe / refresh on existing data uses `requestProbeDataUpdate`. Clarified that `requestProbeDataUpdate` on never-probed entities returns HTTP 404.
+2. **Entity-Specific Maintenance Checks**: Documented `getUpgradeStatusForCompanies` vs. `getUpgradeStatusForLLPs` routing.
+3. **Advisory MCA Alert**: Documented `mca_status == "ALERT"` response payload and handling.
+4. **Sanitization**: Verified doc contains zero vendor names, vendor hosts, usernames, user IDs, or auth tokens.
+
 ### 2026-10-24 — Antigravity: PR #509 review findings resolved (feat/prelogin-attribution-ui)
 
 Resolved P1 review findings for PR #509:

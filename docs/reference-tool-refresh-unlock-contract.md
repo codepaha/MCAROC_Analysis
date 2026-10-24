@@ -13,8 +13,8 @@
 | **Free Identity Preview** | `server/common/api/service.php` | `GET` | `getCompanyPreview` | `bid` | `about_company.summary.cin == cin` (verifies pre-unlock identity) | 0 credits |
 | **Pre-Unlock Check** | `server/common/mcastatus/service.php` | `GET` | `getUpgradeStatusForUnlockingAsset` | None | `mca_status == "NORMAL"` | 0 credits |
 | **Billed Unlock** | `server/user/service.php` | `POST` | `addAsset` | `teamId`, `bid`, `legalName` | `statusCode == true` (immediately sets `addedAt`) | **1 credit** |
-| **Pre-Refresh Check** | `server/common/mcastatus/service.php` | `GET` | `getUpgradeStatusForCompanies` | None | `mca_status == "NORMAL"` | 0 credits |
-| **Trigger Refresh** | `server/common/urs/service.php` | `GET` | `requestProbeDataUpdate` | `bid`, `userName`, `platform="b2c"` | `status == "PENDING"` or `status == "REQUESTED"` | 0 credits |
+| **Pre-Refresh / Pre-Probe Check** | `server/common/mcastatus/service.php` | `GET` | `getUpgradeStatusForCompanies` (Companies)<br>`getUpgradeStatusForLLPs` (LLPs) | None | `mca_status == "NORMAL"` or `"ALERT"` (advisory alert) | 0 credits |
+| **Trigger Probe / Refresh** | `server/common/urs/service.php` | `GET` | `requestProbeData` (First probe, `qa.date == null`)<br>`requestProbeDataUpdate` (Re-probe, `qa.date != null`) | `bid`, `userName`, `platform="b2c"` | `status == "PENDING"` or `status == "REQUESTED"`<br>*(Calling `requestProbeDataUpdate` on never-probed returns HTTP 404)* | 0 credits |
 | **Poll Refresh** | `server/common/urs/service.php` | `GET` | `getDataEntryRequestStatus` | `bid`, `platform="b2c"` | `status == "REQUESTED"` ⇒ in progress<br>`status == "NO PENDING REQUEST"` ⇒ complete | 0 credits |
 | **Stage Tracker** | `server/common/api/probeRequestService.php` | `GET` | `getStatus` | `id` (`req_id`) | Returns 6 pipeline execution stages | 0 credits |
 | **Freshness Check** | `server/common/api/service.php` | `GET` | `getDataStatus` | `bid` | `download_status.status == "AVAILABLE"`, `qa.date` | 0 credits |
@@ -215,36 +215,160 @@ The mutation that deducts 1 credit to unlock a corporate.
 
 ---
 
-## 4. Refresh Trigger & Polling Workflow — Live Verified
+## 4. Probe & Refresh Trigger & Polling Workflow — Live Verified
 
-Verified live on an unlocked company with data >24 hours stale.
+Verified live across two distinct corporate lifecycle scenarios:
+1. **Re-Probe / Refresh (`requestProbeDataUpdate`):** Verified live on an unlocked company with data >24 hours stale.
+2. **First Probe (`requestProbeData`):** Verified live on an unlocked corporate never previously probed (**NATURE EARTH KHARKHODA LLP**, LLPIN `ACE-3794`, 2026-10-16).
+
+---
 
 ### 4.1 Cost & Billing Rule
-- **Refresh Cost:** **0 credits (Completely Free)**.
-- Triggering a refresh never deducts credits.
+- **Probe / Refresh Cost:** **0 credits (Completely Free)**.
+- Triggering a first probe or a re-probe refresh never deducts credits.
 
-### 4.2 Pre-Refresh Upgrade Check: `getUpgradeStatusForCompanies`
+---
+
+### 4.2 Pre-Trigger Upgrade & Maintenance Check: `getUpgradeStatus`
+Prior to dispatching any probe or refresh mutation, the client performs an entity-specific maintenance check:
 - **Method:** `GET`
-- **URL:** `server/common/mcastatus/service.php?qp=<JWT>&v=3.1.6&cv=8.1.26`
-- **Action:** `getUpgradeStatusForCompanies`
-- **Request Payload:**
-  ```json
-  {
-    "action": "getUpgradeStatusForCompanies"
+- **URL:** `server/common/mcastatus/service.php?qp=<JWT>&v=3.1.6&cv=8.1.28`
+- **Entity Routing Logic:**
+  ```javascript
+  getMcaUpgradeStatus(entityType) {
+    let action = entityType === "llp" ? "getUpgradeStatusForLLPs" : "getUpgradeStatusForCompanies";
+    return this.http.getWithEncrypt(this.mca_status_url, { action });
   }
   ```
-- **Response (HTTP 200):**
+  - For Companies: `action = "getUpgradeStatusForCompanies"`
+  - For LLPs: `action = "getUpgradeStatusForLLPs"`
+
+#### Nominal Response (HTTP 200):
+```json
+{
+  "mca_status": "NORMAL"
+}
+```
+
+#### Advisory Alert Response (HTTP 200, Live Captured 2026-10-16):
+During MCA peak filing season or system load, the endpoint returns an advisory alert:
+```json
+{
+  "mca_status": "ALERT",
+  "alert_text": "<b>MCA peak filing period.</b><br><br>MCA documents are intermittently accessible on the Ministry of Corporate Affairs (MCA) website due to peak filing season. We will continuously try to access and update the requests as usual.<br><br>In case of repeated failures from MCA, we will update the sections that do not require data from MCA documents and reattempt company filing when MCA is accessible at a later date.<br><br> Do you want to continue?"
+}
+```
+*Client Behavior:* The UI displays a modal dialog asking "Do you want to continue? Cancel / OK". Automation pipelines should log this advisory warning and safely proceed.
+
+---
+
+### 4.3 Trigger Action: First Probe (`requestProbeData`) vs. Re-Probe (`requestProbeDataUpdate`)
+
+#### How the "Never Probed" State is Determined
+The vendor client uses `getDataStatus` (`server/common/api/service.php?action=getDataStatus&bid=<bid>`) to inspect corporate data status.
+
+The client extracts `probed.status` and `probed.date` directly from `qa`:
+```javascript
+setProbedStatus(company) {
+  company.probed.status = company.about_company.datastats.qa.verified;
+  company.probed.date = company.about_company.datastats.qa.date;
+}
+```
+
+When a corporate has **never been probed**:
+- `about_company.datastats.qa.verified` is `false`.
+- `about_company.datastats.qa.date` is `null`.
+- `about_company.datastats.downloaded` is `null`.
+- `about_company.datastats.download_status` is `null`.
+
+#### UI Button Label Decision
+The UI decides whether to display "Request a Probe" or "Refresh" via:
+```javascript
+refreshDataService.getProbeRequestStatusMessage() != null
+  ? "Updating"
+  : baseCompanyModelService.company.probed.status
+    ? "Refresh"
+    : "Request a Probe"
+```
+And:
+```javascript
+getRequestButtonMessage() {
+  let label = "Request a Probe";
+  if (this.userAction.probeRequest) {
+    label = "Requesting, please wait ..";
+  } else if (this.baseCompanyModelService.company.probed.status) {
+    label = "Request an updated Probe";
+  }
+  return label;
+}
+```
+
+#### Request Action Selection & The HTTP 404 Pitfall
+When the user clicks the action button:
+```javascript
+requestProbeData() {
+  let requestType = this.company.probed.date == null ? "new" : "update";
+  return this.userRequestNetworkService.requestProbeData(
+    this.coreBaseuserModelService.getUser()?.user_name,
+    this.company.about_company.summary.bid,
+    requestType
+  );
+}
+```
+Which maps to the specific action payload:
+```javascript
+requestProbeData(userName, bid, requestType) {
+  return requestType == "new"
+    ? this.getData("service.php", { action: "requestProbeData", bid, userName, platform: "b2c" })
+    : this.getData("service.php", { action: "requestProbeDataUpdate", bid, userName, platform: "b2c" });
+}
+```
+
+> [!CAUTION]
+> **HTTP 404 Contract Failure:**  
+> Calling `requestProbeDataUpdate` on a corporate whose `qa.date == null` (never probed) returns **HTTP 404 Not Found** because the vendor backend attempts to look up an existing probe record to update. Automation **must** check `qa.date` and route to `requestProbeData` when `qa.date == null`.
+
+---
+
+#### Case A: First Probe (`requestProbeData`) — Live Verified 2026-10-16
+Verified on **NATURE EARTH KHARKHODA LLP** (`bid: 9c4b43bb7e5bc7b46269dceded829a95f9d5332aa093645760c1a1a63cb82bf2`):
+
+- **Method:** `GET`
+- **URL:** `server/common/urs/service.php?qp=<JWT>&v=3.1.6&cv=8.1.28`
+- **Decoded JWT Payload:**
   ```json
   {
-    "mca_status": "NORMAL"
+    "action": "requestProbeData",
+    "bid": "9c4b43bb7e5bc7b46269dceded829a95f9d5332aa093645760c1a1a63cb82bf2",
+    "userName": "<REDACTED_USER_NAME>",
+    "platform": "b2c"
+  }
+  ```
+  *(Payload contains strictly these 4 keys; no additional fields are present).*
+- **Response (HTTP 200 OK):**
+  ```json
+  {
+    "id": "6472182",
+    "status_id": "6472182",
+    "req_id": null,
+    "user_id": "<REDACTED_USER_ID>",
+    "user_name": "<REDACTED_USER_NAME>",
+    "bid": "9c4b43bb7e5bc7b46269dceded829a95f9d5332aa093645760c1a1a63cb82bf2",
+    "comp_legal_name": null,
+    "requested_on_time": "2026-10-16T19:22:55+05:30",
+    "status": "PENDING",
+    "platform": "b2c"
   }
   ```
 
-### 4.3 Refresh Trigger: `requestProbeDataUpdate`
+---
+
+#### Case B: Re-Probe / Refresh (`requestProbeDataUpdate`) — Live Verified 2026-09-22
+Verified on **COASTAL PROJECTS LIMITED** (`bid: <64_HEX_BID>`, >24h stale data):
+
 - **Method:** `GET`
 - **URL:** `server/common/urs/service.php?qp=<JWT>&v=3.1.6&cv=8.1.26`
-- **Action:** `requestProbeDataUpdate` (or `requestProbeData` if first probe)
-- **Request Payload:**
+- **Decoded JWT Payload:**
   ```json
   {
     "action": "requestProbeDataUpdate",
@@ -253,7 +377,7 @@ Verified live on an unlocked company with data >24 hours stale.
     "platform": "b2c"
   }
   ```
-- **Response (HTTP 200):**
+- **Response (HTTP 200 OK):**
   ```json
   {
     "id": "<NUMERIC_REQUEST_ID>",
@@ -269,10 +393,12 @@ Verified live on an unlocked company with data >24 hours stale.
   }
   ```
 
+---
+
 ### 4.4 Lightweight Status Poll: `getDataEntryRequestStatus`
-The periodic check used by automation to track probe completion.
+The periodic status polling endpoint used by automation to monitor probe lifecycle:
 - **Method:** `GET`
-- **URL:** `server/common/urs/service.php?qp=<JWT>&v=3.1.6&cv=8.1.26`
+- **URL:** `server/common/urs/service.php?qp=<JWT>&v=3.1.6&cv=8.1.28`
 - **Action:** `getDataEntryRequestStatus`
 - **Request Payload:**
   ```json
@@ -282,32 +408,38 @@ The periodic check used by automation to track probe completion.
     "platform": "b2c"
   }
   ```
-- **Live Response while IN-PROGRESS:**
-  ```json
-  {
-    "id": "<NUMERIC_REQUEST_ID>",
-    "status_id": "<NUMERIC_REQUEST_ID>",
-    "req_id": "<HEX_REQUEST_ID>",
-    "user_id": "<REDACTED_USER_ID>",
-    "user_name": "<REDACTED_USER_NAME>",
-    "bid": "<64_HEX_BID>",
-    "comp_legal_name": "<LEGAL_NAME>",
-    "requested_on_time": "2026-09-22T09:36:56+05:30",
-    "status": "REQUESTED",
-    "platform": "b2c"
-  }
-  ```
-- **Live Response when COMPLETED / IDLE:**
-  ```json
-  {
-    "status": "NO PENDING REQUEST"
-  }
-  ```
+
+#### Live Response while In-Progress (`status: "REQUESTED"`):
+Captured immediately following the `requestProbeData` trigger for NATURE EARTH KHARKHODA LLP:
+```json
+{
+  "id": "6472182",
+  "status_id": "6472182",
+  "req_id": "6ad22c3746ac3c1535da5b1f",
+  "user_id": "<REDACTED_USER_ID>",
+  "user_name": "<REDACTED_USER_NAME>",
+  "bid": "9c4b43bb7e5bc7b46269dceded829a95f9d5332aa093645760c1a1a63cb82bf2",
+  "comp_legal_name": "NATURE EARTH KHARKHODA LLP",
+  "requested_on_time": "2026-10-16T19:22:55+05:30",
+  "status": "REQUESTED",
+  "platform": "b2c"
+}
+```
+*Note:* As soon as the queue worker accepts the request, `req_id` is populated with a 24-character hexadecimal tracking ID (e.g. `6ad22c3746ac3c1535da5b1f`), and `comp_legal_name` is populated.
+
+#### Live Response when Complete / Idle (`status: "NO PENDING REQUEST"`):
+```json
+{
+  "status": "NO PENDING REQUEST"
+}
+```
+
+---
 
 ### 4.5 6-Stage Progress Tracker: `probeRequestService`
-When a request is in flight (`req_id != null`), the frontend queries the tracker:
+When a request is in flight (`req_id != null`), the frontend queries the stage tracker:
 - **Method:** `GET`
-- **URL:** `server/common/api/probeRequestService.php?qp=<JWT>&v=3.1.6&cv=8.1.26`
+- **URL:** `server/common/api/probeRequestService.php?qp=<JWT>&v=3.1.6&cv=8.1.28`
 - **Action:** `getStatus`
 - **Request Payload:**
   ```json
@@ -316,51 +448,55 @@ When a request is in flight (`req_id != null`), the frontend queries the tracker
     "id": "<HEX_REQUEST_ID>"
   }
   ```
-- **Live Response:**
-  ```json
-  {
-    "DataEntryRequest": {
-      "createdTime": "1790050016",
-      "completedTime": "1790050016",
-      "status": "Done"
-    },
-    "DocCollected": {
-      "createdTime": null,
-      "completedTime": null,
-      "status": "Yet_to_start"
-    },
-    "FESGroup": {
-      "createdTime": null,
-      "completedTime": null,
-      "status": "Yet_to_start"
-    },
-    "CESGroup": {
-      "createdTime": null,
-      "completedTime": null,
-      "status": "Yet_to_start"
-    },
-    "DataCurationGroup": {
-      "createdTime": null,
-      "completedTime": null,
-      "status": "Yet_to_start"
-    },
-    "DataDistributionGroup": {
-      "createdTime": null,
-      "completedTime": null,
-      "status": "Yet_to_start"
-    }
+
+#### Live Response (Captured for `req_id: 6ad22c3746ac3c1535da5b1f`):
+```json
+{
+  "DataEntryRequest": {
+    "createdTime": "1792158775",
+    "completedTime": "1792158775",
+    "status": "Done"
+  },
+  "DocCollected": {
+    "createdTime": null,
+    "completedTime": null,
+    "status": "Yet_to_start"
+  },
+  "FESGroup": {
+    "createdTime": null,
+    "completedTime": null,
+    "status": "Yet_to_start"
+  },
+  "CESGroup": {
+    "createdTime": null,
+    "completedTime": null,
+    "status": "Yet_to_start"
+  },
+  "DataCurationGroup": {
+    "createdTime": null,
+    "completedTime": null,
+    "status": "Yet_to_start"
+  },
+  "DataDistributionGroup": {
+    "createdTime": null,
+    "completedTime": null,
+    "status": "Yet_to_start"
   }
-  ```
+}
+```
+
+---
 
 ### 4.6 Completion & Freshness Indicator: `getDataStatus`
 Once `getDataEntryRequestStatus` returns `"NO PENDING REQUEST"`, query `getDataStatus`:
 - **Method:** `GET`
-- **URL:** `server/common/api/service.php?qp=<JWT>&v=3.1.6&cv=8.1.26`
+- **URL:** `server/common/api/service.php?qp=<JWT>&v=3.1.6&cv=8.1.28`
 - **Action:** `getDataStatus`
 - **Key Completion Indicators:**
   - `download_status`: `{"status": "AVAILABLE", "updatedAt": "..."}`
   - `downloaded`: ISO timestamp of the latest document crawl.
   - `qa.date`: Date string (`YYYY-MM-DD`) indicating verified completion.
+  - `qa.verified`: Transitions to `true`.
 
 ---
 
@@ -417,17 +553,36 @@ if (!isUnlocked)
     }
 }
 
-// 5. Freshness check (< 24h rule)
+// 5. Freshness check & probe status determination
 var dataStatus = await GetDataStatusAsync(bid, ct);
-var isStale = dataStatus.Downloaded == null || (DateTimeOffset.UtcNow - dataStatus.Downloaded.Value).TotalHours > 24;
+var neverProbed = dataStatus.QaDate == null;
+var isStale = neverProbed || dataStatus.Downloaded == null || (DateTimeOffset.UtcNow - dataStatus.Downloaded.Value).TotalHours > 24;
 
 if (isStale)
 {
-    // 6. Check if refresh is already pending
+    // 6. Check if request is already pending
     var status = await GetDataEntryRequestStatusAsync(bid, ct);
     if (status.Status != "REQUESTED")
     {
-        await RequestProbeDataUpdateAsync(bid, userName, ct);
+        // Check entity-specific maintenance/alert status
+        var upgradeStatus = preview.IsLlp 
+            ? await GetUpgradeStatusForLLPsAsync(ct)
+            : await GetUpgradeStatusForCompaniesAsync(ct);
+        if (upgradeStatus.McaStatus == "ALERT")
+        {
+            logger.LogWarning("MCA Alert during probe trigger: {AlertText}", upgradeStatus.AlertText);
+        }
+
+        if (neverProbed)
+        {
+            // First probe MUST call requestProbeData (requestProbeDataUpdate returns HTTP 404!)
+            await RequestProbeDataAsync(bid, userName, ct);
+        }
+        else
+        {
+            // Re-probe on existing data calls requestProbeDataUpdate
+            await RequestProbeDataUpdateAsync(bid, userName, ct);
+        }
     }
 
     // 7. Poll until completion (free, 0 credits)
@@ -464,4 +619,5 @@ All raw JSON traces and screenshots are maintained outside the repository at `E:
 | `05-coastal-tracker-modal.png` | PNG | Dialog showing 6-stage tracker. |
 | `06-tcs-unlock-calls.json` | JSON | Live network calls for 1-credit unlock. |
 | `06-tcs-unlocked-page.png` | PNG | Unlocked view post-spend showing "Unlocked on 22 Sep, 2026". |
+| `07-never-probed-llp-calls.json` | JSON | Live network calls for first probe (`requestProbeData`) on LLP never probed before (NATURE EARTH KHARKHODA LLP). |
 | `credits_info.json` | JSON | Credit balance and tier structures. |
