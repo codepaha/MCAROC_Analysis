@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
+    <!-- NPOI 2.8.x OSMF EULA (OSMFEULA.txt in the package): a maintenance fee applies only to users with annual gross revenue of US$10,000
+         or more. Accepted by the owner on 2026-10-24 on the basis that Cubictree's revenue is below that. Revisit if revenue passes it, or if
+         a client installs and runs the portal itself (the client is then the user the fee applies to). -->
+    <AcceptNPOIOSMFLicense>true</AcceptNPOIOSMFLicense>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -22,11 +26,17 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.11" />
-    <PackageReference Include="NPOI" Version="2.7.2" />
+    <!-- 2.8.x: no ImageSharp dependency (its advisories are fixed only in licence-key builds). Its binaries are under the OSMF EULA; see AcceptNPOIOSMFLicense below. -->
+    <PackageReference Include="NPOI" Version="2.8.1" />
     <PackageReference Include="PdfPig" Version="0.1.16" />
     <PackageReference Include="PDFtoImage" Version="5.4.0" />
     <PackageReference Include="QuestPDF" Version="2025.7.0" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.7" />
+    <!-- Reads uploaded screenshots' size (ImageDimensions); also what PDFtoImage renders with. -->
+    <PackageReference Include="SkiaSharp" Version="4.150.1" />
+    <!-- Pinned above the versions Microsoft.Data.SqlClient and NPOI bring in (Pkcs 9.0.11, Xml 8.0.2), which have known high-severity advisories.
+         The web app already gets Xml from the ASP.NET Core framework; the pin reaches the test project and the tools, which do not. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.13" NoWarn="NU1510" />
   </ItemGroup>
 
   <ItemGroup>
