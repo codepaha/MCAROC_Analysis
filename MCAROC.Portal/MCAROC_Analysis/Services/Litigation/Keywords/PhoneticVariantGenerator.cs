@@ -8,7 +8,7 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// <list type="bullet">
 /// <item>Only <b>distinctive</b> words are varied, one change per variant, never the legal form or a generic word (Projects, Industries, India...).</item>
 /// <item>A name that is only generic words gets no variants: "India Infra Projects" spelled differently identifies nobody.</item>
-/// <item>No acronym is ever invented (the planner's rule stands).</item>
+/// <item>No acronym is ever invented (the planner's rule stands), and one in the name is never respelled: HDFC is initials, not a word to write as "HDPHC".</item>
 /// <item>At most <see cref="MaxVariants"/> per company, in a fixed order, so a search stays bounded and repeatable.</item>
 /// </list>
 /// The variants are search terms. A case found only through one is not the company's until it is attributed (#489, decision a).
@@ -44,6 +44,7 @@ public static partial class PhoneticVariantGenerator
         var words = core.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (DistinctiveLetters(words) < MinDistinctiveLetters) return [];
 
+        var allCapitals = !core.Any(char.IsLower);
         var results = new List<PhoneticVariant>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { core };
         void Add(string candidate, string reason)
@@ -73,7 +74,7 @@ public static partial class PhoneticVariantGenerator
                     Add(Replace(words, i, MatchCase(alt, word)), $"\"{word}\" written as \"{MatchCase(alt, word)}\"");
                 continue;
             }
-            if (!IsDistinctive(word)) continue;
+            if (!IsDistinctive(word) || NameFormVariants.IsAcronymWord(word, allCapitals)) continue;
             foreach (var alt in WordAlternations(word))
                 Add(Replace(words, i, alt), $"\"{word}\" written as \"{alt}\"");
         }
