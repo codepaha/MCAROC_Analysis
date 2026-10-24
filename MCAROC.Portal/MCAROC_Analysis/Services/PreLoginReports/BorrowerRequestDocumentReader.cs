@@ -69,8 +69,7 @@ public sealed class BorrowerRequestDocumentReader(PdfTextExtractor pdfExtractor,
                 case ".eml": text = await ReadEmailWithAttachmentsAsync(await File.ReadAllTextAsync(path, ct), folder, ct); break;
                 case ".txt": text = await File.ReadAllTextAsync(path, ct); break;
                 default:
-                    var image = await SixLabors.ImageSharp.Image.IdentifyAsync(path, ct);
-                    if (image is null || (long)image.Width * image.Height > 25_000_000)
+                    if (ImageDimensions.IsMissingOrLargerThan(path, 25_000_000))
                         throw new PreLoginReportException("Use a screenshot up to 25 megapixels.");
                     text = await OcrImageAsync(path, ct);
                     break;

@@ -18,8 +18,7 @@ public sealed class BorrowerAssignmentIntake(BorrowerRequestDocumentReader reade
         {
             if (Path.GetExtension(source.SourceStoragePath).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg")
             {
-                var image = await SixLabors.ImageSharp.Image.IdentifyAsync(source.SourceStoragePath, ct);
-                if (image is null || (long)image.Width * image.Height > 25_000_000 || new FileInfo(source.SourceStoragePath).Length > BorrowerRequestDocumentReader.MaxBytes)
+                if (ImageDimensions.IsMissingOrLargerThan(source.SourceStoragePath, 25_000_000) || new FileInfo(source.SourceStoragePath).Length > BorrowerRequestDocumentReader.MaxBytes)
                     throw new PreLoginReportException("Use a screenshot up to 10 MB and 25 megapixels.");
                 imagePath = source.SourceStoragePath;
             }
