@@ -1,7 +1,6 @@
 {
   "service": "reference-tool",
-  "capturedUtc": null,
-  "source": "Shape recorded live 2026-09-22 (contract doc 2.3; the trace kept no copy): the free preview on the locked company, address redacted.",
+  "capturedUtc": "2026-10-24T12:56:22.1248723Z",
   "method": "GET",
   "url": "https://reference.test/server/common/api/service.php",
   "action": "getCompanyPreview",
@@ -11,8 +10,8 @@
   },
   "requestBody": null,
   "query": {
-    "v": "3.1.6",
-    "cv": "8.1.28"
+    "v": "3.1.7",
+    "cv": "8.1.29"
   },
   "status": 200,
   "contentType": "application/json",
@@ -26,17 +25,160 @@
         "legal_name": "TATA CONSULTANCY SERVICES LIMITED",
         "incorporation_date": "1995-01-19",
         "paid_up_capital": 3618087518,
-        "sum_of_charges": 3309300000,
-        "authorized_capital": 5650770000,
+        "sum_of_charges": 3309270725,
+        "authorized_capital": 5650750000,
         "company_llp_status": "Active",
-        "active_compliance": "Active Compliant",
+        "active_compliance": "ACTIVE compliant",
+        "email": "<redacted>",
         "registered_address": {
           "full_address": "<redacted>",
+          "address_line1": "<redacted>",
+          "address_line2": null,
           "city": "<redacted>",
+          "district": null,
           "state": "Maharashtra",
           "pincode": "<redacted>"
+        },
+        "total_obligation_of_contribution": null,
+        "no_of_partners": null,
+        "no_of_designated_partners": null,
+        "last_financial_reporting_date": null,
+        "last_annual_returns_filed_date": null,
+        "last_agm_date": "2026-06-09",
+        "last_bs_date": "2026-03-31",
+        "class_of_company": "Public",
+        "category": "Company limited by shares",
+        "sub_category": "Non-government company",
+        "small_company": false,
+        "previous_company": null,
+        "cer": null,
+        "total_contribution_received": null
+      },
+      "overview": {
+        "qa": {
+          "verified": true,
+          "date": "2026-10-23T14:45:02+05:30",
+          "status": "VERIFIED"
+        },
+        "desc_thousand_char": "Tata Consultancy Services Limited (TCSL), as per credit ratings, is engaged in providing IT (Information Technology) services. Its services include IT solutions and services, infrastructure services, global consulting, engineering and industrial services, and IT-enabled services (Business Process Management or BPM solutions). Its portfolio of software products includes Financial Solutions (BaNCS), health and life science industry solutions, and asset leverage solutions. Based on industry verticals, the company is focused on the BFSI segment, with retail, communication and media, manufacturing and technology, and services being the other major segments. TCSL has a wide geographical presence across the US (United States), Continental Europe, UK (United Kingdom), India, Asia Pacific, and Middle East. The company was incorporated in 1995 and has its registered office located in Mumbai, Maharashtra."
+      },
+      "directors": [
+        {
+          "name": "HANNE BIRGITTE BREINBJERG SORENSEN"
+        },
+        {
+          "name": "KEKI MINOO MISTRY"
+        },
+        {
+          "name": "OM PRAKASH BHATT"
+        },
+        {
+          "name": "GANAPATHY SUBRAMANIAM NATARAJAN"
+        },
+        {
+          "name": "PADMANABHAN SANKARANARAYANAN"
+        },
+        {
+          "name": "VIJAY LAXMAN KELKAR"
+        },
+        {
+          "name": "RAMADORAI SUBRAMANIAN"
+        },
+        {
+          "name": "MAHALINGAM SETURAMAN"
+        },
+        {
+          "name": "AMAN MEHTA"
+        },
+        {
+          "name": "PHIROZ ADI VANDREVALA"
+        },
+        {
+          "name": "ISHAAT HUSSAIN"
+        },
+        {
+          "name": "NARESH CHANDRA"
+        },
+        {
+          "name": "RAJESH GOPINATHAN"
+        },
+        {
+          "name": "RATAN NAVAL TATA"
+        },
+        {
+          "name": "CYRUS PALLONJI MISTRY"
+        },
+        {
+          "name": "THYAGARAJAN VENKATRAMAN"
+        },
+        {
+          "name": "RON SOMMER"
+        },
+        {
+          "name": "LAURA MAY LUNG CHA"
+        },
+        {
+          "name": "CLAYTON MAGLEBY CHRISTENSEN"
+        },
+        {
+          "name": "DANIEL HUGHES CALLAHAN"
+        },
+        {
+          "name": "SUPRAKASH MUKHOPADHYAY"
+        },
+        {
+          "name": "SHAILESH HARISHCHANDRA RAJADHYAKSHA"
+        },
+        {
+          "name": "RAJESH GOPINATHAN"
+        },
+        {
+          "name": "RAMAKRISHNAN VENKATARAMAN"
+        },
+        {
+          "name": "RAJENDRA CHANDRAKANTRAO MOHOLKAR"
+        },
+        {
+          "name": "AL NOOR RAMJI"
+        },
+        {
+          "name": "CHANDRASEKARAN NATARAJAN"
+        },
+        {
+          "name": "KUNCHITHAM KRITHIVASAN"
+        },
+        {
+          "name": "PRADEEP KUMAR KHOSLA"
+        },
+        {
+          "name": ". AARTHI SUBRAMANIAN"
+        },
+        {
+          "name": "SANJAY BHANDARKAR"
+        },
+        {
+          "name": "SAMIR ANAND SEKSARIA"
+        },
+        {
+          "name": "YASHASWIN NARENDRA SHETH"
+        },
+        {
+          "name": "KUNCHITHAM KRITHIVASAN"
         }
-      }
+      ]
+    },
+    "charge": {
+      "total_open_charges": 6,
+      "total_satisfied_charges": 29
+    },
+    "rating": {
+      "total_rating": 0,
+      "has_rating": false
+    },
+    "legal": {
+      "total_legal_cases": 928,
+      "total_legal_courts": 120
     }
-  }
+  },
+  "source": "Live capture 2026-10-24: TATA CONSULTANCY SERVICES LIMITED, preview on locked company"
 }

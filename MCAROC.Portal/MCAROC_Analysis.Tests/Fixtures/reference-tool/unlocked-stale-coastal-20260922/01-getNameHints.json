@@ -1,26 +1,851 @@
 {
   "service": "reference-tool",
-  "capturedUtc": null,
+  "capturedUtc": "2026-10-24T12:56:22.2622087Z",
   "method": "GET",
   "url": "https://reference.test/server/common/search/service.php",
   "action": "getNameHints",
   "payload": {
     "action": "getNameHints",
-    "q": "U45203OR1995PLC003982",
-    "filters": "{\"locations\":[],\"entityType\":[\"Company\",\"Llp\"]}",
+    "q": "Tata",
+    "filters": "{}",
     "offset": 0,
-    "limit": 25
+    "limit": 10
   },
   "requestBody": null,
   "query": {
-    "v": "3.1.6",
-    "cv": "8.1.26"
+    "v": "3.1.7",
+    "cv": "8.1.29"
   },
   "status": 200,
   "contentType": "application/json",
   "contentLength": null,
   "body": {
-    "data": []
+    "data": [
+      {
+        "cin": "U51909MH1957PLC010942",
+        "bid": "9e780df1105488fd6ee380b7b26195c65111484b871c6f804d0e230bb4e1e4ab",
+        "name_hint": "TATA SERVICES LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA SERVICES LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "400001",
+          "state": "maharashtra",
+          "city": "mumbai",
+          "district": "mumbai",
+          "area": "mumbai g.p.o.",
+          "po_names": [
+            "bazargate",
+            "mpt",
+            "mumbai gpo",
+            "stock exchange",
+            "tajmahal",
+            "town hall"
+          ],
+          "city_names": [
+            "bombay",
+            "mumbai"
+          ],
+          "raw_location": "army & navy building, 3rd floor   148, m.g. road, fort mumbai maharashtra 400001 india"
+        },
+        "probed_at": "2026-07-08",
+        "incorporation_date": "1957-09-24"
+      },
+      {
+        "cin": "U44003MH1945PLC004403",
+        "bid": "a9e007e1724134d00db5cafdbb00f65102c0b374297757c6f8f02ff53d51bceb",
+        "name_hint": "TATA INDUSTRIES LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA INDUSTRIES LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "400001",
+          "state": "maharashtra",
+          "city": "mumbai",
+          "district": "mumbai",
+          "area": "mumbai g.p.o.",
+          "po_names": [
+            "bazargate",
+            "mpt",
+            "mumbai gpo",
+            "stock exchange",
+            "tajmahal",
+            "town hall"
+          ],
+          "city_names": [
+            "bombay",
+            "mumbai"
+          ],
+          "raw_location": "tata industries ltd bombay house  24 homi   mody  street mumbai maharashtra 400001 india"
+        },
+        "probed_at": "2026-09-18",
+        "incorporation_date": "1945-04-07"
+      },
+      {
+        "cin": "U45400MH2009PLC195605",
+        "bid": "8759d8750a23ec9992975b1c4a9ba4b7920f6f0d67661c964caf896c856e77dd",
+        "name_hint": "TATA VALUE HOMES LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA VALUE HOMES LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "400033",
+          "state": "maharashtra",
+          "city": "mumbai",
+          "district": "mumbai",
+          "area": "reay road",
+          "po_names": [
+            "cotton exchange",
+            "kalachowki",
+            "l b s n e collage",
+            "reay road",
+            "tank road"
+          ],
+          "city_names": [
+            "bombay",
+            "mumbai"
+          ],
+          "raw_location": "e block, voltas premises, t. b. kadam marg   chinchpokli mumbai maharashtra 400033 india"
+        },
+        "probed_at": "2026-05-09",
+        "incorporation_date": "2009-09-08"
+      },
+      {
+        "cin": "U85191MH2014NPL253500",
+        "bid": "5a217841d8ffa874343d06fca8f377995614de5ef176c61376d1366c10c652dd",
+        "name_hint": "TATA FOUNDATION",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA FOUNDATION",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "400001",
+          "state": "maharashtra",
+          "city": "mumbai",
+          "district": "mumbai",
+          "area": "mumbai g.p.o.",
+          "po_names": [
+            "bazargate",
+            "mpt",
+            "mumbai gpo",
+            "stock exchange",
+            "tajmahal",
+            "town hall"
+          ],
+          "city_names": [
+            "bombay",
+            "mumbai"
+          ],
+          "raw_location": "elphinstione building, 10 veer nariman road,   fort mumbai maharashtra 400001 india"
+        },
+        "probed_at": "2026-08-19",
+        "incorporation_date": "2014-02-21"
+      },
+      {
+        "cin": "U31100KA2020PTC133739",
+        "bid": "929382b9c8e14d8c87c40773e52e85be02453c4b9d9cf4363f8620c8bcd91a27",
+        "name_hint": "TATA ELECTRONICS PRIVATE LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA ELECTRONICS PRIVATE LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "560105",
+          "state": "karnataka",
+          "city": "bengaluru",
+          "district": "bengaluru urban",
+          "area": "jigani",
+          "po_names": [
+            "haragadde",
+            "hennagara",
+            "hulimangala",
+            "jigani",
+            "kallubalu"
+          ],
+          "city_names": [
+            "bangalore",
+            "bengaluru"
+          ],
+          "raw_location": "no. 10, jigani industrial area   jigani bangalore karnataka 560105 india"
+        },
+        "probed_at": "2026-10-22",
+        "incorporation_date": "2020-04-11"
+      },
+      {
+        "cin": "L67200MH1937PLC002622",
+        "bid": "b8f46a8816e821b2e908187c94822ecc7f8ac7145c7380fb496a6c4a6b461acd",
+        "name_hint": "TATA INVESTMENT CORPORATION LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA INVESTMENT CORPORATION LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "400001",
+          "state": "maharashtra",
+          "city": "mumbai",
+          "district": "mumbai",
+          "area": "mumbai g.p.o.",
+          "po_names": [
+            "bazargate",
+            "mpt",
+            "mumbai gpo",
+            "stock exchange",
+            "tajmahal",
+            "town hall"
+          ],
+          "city_names": [
+            "bombay",
+            "mumbai"
+          ],
+          "raw_location": "elphinstone building,   10,veer nariman road, mumbai maharashtra 400001 india"
+        },
+        "probed_at": "2026-09-28",
+        "incorporation_date": "1937-03-05"
+      },
+      {
+        "cin": "U29268TG2010PLC077940",
+        "bid": "b37f979ab7b2008bec49b6e123317341e38bfa0916a9b8c0afa9e125427ec950",
+        "name_hint": "TATA LOCKHEED MARTIN AEROSTRUCTURES LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA LOCKHEED MARTIN AEROSTRUCTURES LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "501218",
+          "state": "telangana",
+          "city": "hyderabad",
+          "district": "ranga reddy",
+          "area": "shamshabad (k.v.rangareddy)",
+          "po_names": [
+            "chinnagolconda",
+            "gollapallikalan",
+            "kothwalguda",
+            "nagaram",
+            "nanajpur",
+            "narkhoda",
+            "shamshabad"
+          ],
+          "city_names": [
+            "hyderabad"
+          ],
+          "raw_location": "hardware park, plot no 21,sy no 1/1, imarat kancha   raviryala village, maheshwaram mandal hyderabad telangana 501218 india"
+        },
+        "probed_at": "2026-10-19",
+        "incorporation_date": "2010-04-05"
+      },
+      {
+        "cin": "U99999MH1917PTC000478",
+        "bid": "9f76078e00d70c5baf73ad273bcb6eae9c1746bf72936aabdb63df472862926a",
+        "name_hint": "TATA SONS PRIVATE LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA SONS PRIVATE LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "400001",
+          "state": "maharashtra",
+          "city": "mumbai",
+          "district": "mumbai",
+          "area": "mumbai g.p.o.",
+          "po_names": [
+            "bazargate",
+            "mpt",
+            "mumbai gpo",
+            "stock exchange",
+            "tajmahal",
+            "town hall"
+          ],
+          "city_names": [
+            "bombay",
+            "mumbai"
+          ],
+          "raw_location": "bombay house   24 homi mody street fort mumbai maharashtra 400001 india"
+        },
+        "probed_at": "2026-10-24",
+        "incorporation_date": "1917-11-08"
+      },
+      {
+        "cin": "L27310WB1990PLC050000",
+        "bid": "c99ca782bd82428d66b1b6de02b0a47c45c8e08a1bada28366ad69f55785b638",
+        "name_hint": "TATA METALIKS LTD.",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA METALIKS LTD.",
+        "trade_name": null,
+        "company_llp_status": "Amalgamated",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "700071",
+          "state": "west bengal",
+          "city": "kolkata",
+          "district": "kolkata",
+          "area": "russel street",
+          "po_names": [
+            "little russel street",
+            "middleton row",
+            "russel street"
+          ],
+          "city_names": [
+            "calcutta",
+            "kolkata"
+          ],
+          "raw_location": "tata centre, 10th floor   43, j. l. nehru road kolkata west bengal 700071 india"
+        },
+        "probed_at": "2025-12-06",
+        "incorporation_date": "1990-10-10"
+      },
+      {
+        "cin": "U15400KA2022PLC158373",
+        "bid": "4ba5f84041ab935ca1e6a0f4ae6de7314d25d29f25728cfe80795b0108cd6e35",
+        "name_hint": "TATA COFFEE LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA COFFEE LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "560024",
+          "state": "karnataka",
+          "city": "bengaluru",
+          "district": "bengaluru urban",
+          "area": "h.a. farm",
+          "po_names": [
+            "anandanagar",
+            "h a farm",
+            "hebbal kempapura"
+          ],
+          "city_names": [
+            "bangalore",
+            "bengaluru"
+          ],
+          "raw_location": "kirloskar business park, block c,   3rd&4th floor, new airport road, hebbal bangalore karnataka 560024 india"
+        },
+        "probed_at": "2026-10-16",
+        "incorporation_date": "2022-02-25"
+      },
+      {
+        "cin": "U74999MH2007PLC173035",
+        "bid": "0229f38ce0ff52a5b20f2b9431708aaa0fcdfe12d20ac4b34dccf5d645e82285",
+        "name_hint": "TATA UNISTORE LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA UNISTORE LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "400083",
+          "state": "maharashtra",
+          "city": "mumbai",
+          "district": "mumbai suburban",
+          "area": "kannamwar nagar",
+          "po_names": [
+            "kannamwar nagar",
+            "tagore nagar"
+          ],
+          "city_names": [
+            "bombay",
+            "mumbai"
+          ],
+          "raw_location": "4th floor, empire plaza 2   chandan nagar, lbs marg, vikhroli west mumbai maharashtra 400083 india"
+        },
+        "probed_at": "2026-09-09",
+        "incorporation_date": "2007-08-13"
+      },
+      {
+        "cin": "U72900TG2006PLC077939",
+        "bid": "441892f677bd9907271179ddbd3cc6da9b6f1542ca942b016b38a7b4ac2f6f7b",
+        "name_hint": "TATA ADVANCED SYSTEMS LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA ADVANCED SYSTEMS LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "501218",
+          "state": "telangana",
+          "city": "hyderabad",
+          "district": "ranga reddy",
+          "area": "shamshabad (k.v.rangareddy)",
+          "po_names": [
+            "chinnagolconda",
+            "gollapallikalan",
+            "kothwalguda",
+            "nagaram",
+            "nanajpur",
+            "narkhoda",
+            "shamshabad"
+          ],
+          "city_names": [
+            "hyderabad"
+          ],
+          "raw_location": "hardware park, plot no 21,sy no 1/1, imarat kancha   raviryala village, maheshwaram mandal hyderabad telangana 501218 india"
+        },
+        "probed_at": "2026-10-13",
+        "incorporation_date": "2006-09-19"
+      },
+      {
+        "cin": "U65100MH2019PLC329365",
+        "bid": "d16ae3f3fa6d71f3c11a77b2f79d04e3884ab423dea412c49b49048eadbd3409",
+        "name_hint": "TATA PAYMENTS LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA PAYMENTS LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "400001",
+          "state": "maharashtra",
+          "city": "mumbai",
+          "district": "mumbai",
+          "area": "mumbai g.p.o.",
+          "po_names": [
+            "bazargate",
+            "mpt",
+            "mumbai gpo",
+            "stock exchange",
+            "tajmahal",
+            "town hall"
+          ],
+          "city_names": [
+            "bombay",
+            "mumbai"
+          ],
+          "raw_location": "army & navy building, floor grd   148 east m g road opp kala ghoda fort mumbai maharashtra 400001 india"
+        },
+        "probed_at": "2026-08-28",
+        "incorporation_date": "2019-08-16"
+      },
+      {
+        "cin": null,
+        "bid": "9f3efc9521154b3ba19ff17668d5aa94171b2d6c5e80d331a184c99454cadd4d",
+        "name_hint": "TATA",
+        "context": "partProp",
+        "source": null,
+        "legal_name": "TATA",
+        "trade_name": "TATA GLOBAL",
+        "company_llp_status": "Active",
+        "entity_type": "PROPRIETORSHIP",
+        "registered_address": {
+          "pinCode": "275301",
+          "state": "uttar pradesh",
+          "city": "amila",
+          "district": "mau",
+          "area": "amila",
+          "po_names": [
+            "amila",
+            "badraon",
+            "bhatmila",
+            "bojhi bazar",
+            "hemai",
+            "katirahi bugurg",
+            "pilsui",
+            "piruth singhpur",
+            "piwatal",
+            "rampur sohand",
+            "taktewarampur",
+            "usari khurd"
+          ],
+          "city_names": [
+            "amila"
+          ],
+          "raw_location": "0, ummarpur, ummarpur, amila road ummarpur, near maa yashwanti paramedical college, ummarpur, bhojhi teghana, mau, uttar pradesh, 275301"
+        },
+        "probed_at": null,
+        "incorporation_date": "2024-06-29"
+      },
+      {
+        "cin": "U74899DL1995PLC066685",
+        "bid": "d17a662cdc7ba7126289927a2f94ae619ae78341f701ee314f500c7fedb9a512",
+        "name_hint": "TATA TELESERVICES LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA TELESERVICES LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "110001",
+          "state": "delhi",
+          "city": "delhi ncr",
+          "district": "new delhi",
+          "area": "sansad marg",
+          "po_names": [
+            "baroda house",
+            "bengali market",
+            "bhagat singh market",
+            "cat extension counter",
+            "connaught place",
+            "election commission",
+            "janpath",
+            "krishi bhawan",
+            "lady harding medical college",
+            "new delhi gpo",
+            "ngt extension counter",
+            "north avenue",
+            "parliament house",
+            "patiala house",
+            "pragati maidan",
+            "rail bhawan",
+            "rml extn counter ndho",
+            "sansad marg",
+            "sansadiya soudh",
+            "secretariat north",
+            "shastri bhawan",
+            "south avenue",
+            "supreme court"
+          ],
+          "city_names": [
+            "delhi ncr"
+          ],
+          "raw_location": "10th floor, tower i, jeevan bharati, 124   connaught circus new delhi delhi 110001 india"
+        },
+        "probed_at": "2026-07-14",
+        "incorporation_date": "1995-03-23"
+      },
+      {
+        "cin": "U99999PN1997PLC110139",
+        "bid": "589f1e7ea54fd06c490e8bdf3b44d5e069b7844d97a93ed5eb2f80b2cb81535d",
+        "name_hint": "TATA TOYO RADIATOR LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA TOYO RADIATOR LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "411004",
+          "state": "maharashtra",
+          "city": "greater pune",
+          "district": "pune",
+          "area": "a.r. shala",
+          "po_names": [
+            "a.r. shala",
+            "deccan gymkhana",
+            "film institute"
+          ],
+          "city_names": [
+            "greater pune"
+          ],
+          "raw_location": "taco house, plot no- 20/b fpn085 v.g. damle path, off law college road, erandwane pune city maharashtra 411004 india deccan gymkhana"
+        },
+        "probed_at": "2026-10-10",
+        "incorporation_date": "1997-08-18"
+      },
+      {
+        "cin": "U74999MH2019PTC322353",
+        "bid": "e7c134b0535da586651856287def3d4b50ef46cb5ae70b59164f4d9fca422e35",
+        "name_hint": "TATA DIGITAL PRIVATE LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA DIGITAL PRIVATE LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "400001",
+          "state": "maharashtra",
+          "city": "mumbai",
+          "district": "mumbai",
+          "area": "mumbai g.p.o.",
+          "po_names": [
+            "bazargate",
+            "mpt",
+            "mumbai gpo",
+            "stock exchange",
+            "tajmahal",
+            "town hall"
+          ],
+          "city_names": [
+            "bombay",
+            "mumbai"
+          ],
+          "raw_location": "army & navy building 148 m g road   opposite kala ghoda fort mumbai maharashtra 400001 india"
+        },
+        "probed_at": "2026-10-18",
+        "incorporation_date": "2019-03-11"
+      },
+      {
+        "cin": "U74999MH2017NPL297009",
+        "bid": "dfe03291f2575e232a61053fa2a096a4e120f41f45cdd95f4fa2388015ac0907",
+        "name_hint": "RATAN TATA FOUNDATION",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "RATAN TATA FOUNDATION",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "400001",
+          "state": "maharashtra",
+          "city": "mumbai",
+          "district": "mumbai",
+          "area": "mumbai g.p.o.",
+          "po_names": [
+            "bazargate",
+            "mpt",
+            "mumbai gpo",
+            "stock exchange",
+            "tajmahal",
+            "town hall"
+          ],
+          "city_names": [
+            "bombay",
+            "mumbai"
+          ],
+          "raw_location": "west, 3rd floor, elphinstone building,   10 veer nariman road, horniman circle, f ort, mumbai maharashtra 400001 india"
+        },
+        "probed_at": "2026-10-13",
+        "incorporation_date": "2017-07-06"
+      },
+      {
+        "cin": "U74120TG2015PLC101585",
+        "bid": "3a42a0fdf6dd3550dd072a8223c3aa9f71025242a72679f4c4379e65ec19642b",
+        "name_hint": "TATA BOEING AEROSPACE LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA BOEING AEROSPACE LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "501218",
+          "state": "telangana",
+          "city": "hyderabad",
+          "district": "ranga reddy",
+          "area": "shamshabad (k.v.rangareddy)",
+          "po_names": [
+            "chinnagolconda",
+            "gollapallikalan",
+            "kothwalguda",
+            "nagaram",
+            "nanajpur",
+            "narkhoda",
+            "shamshabad"
+          ],
+          "city_names": [
+            "hyderabad"
+          ],
+          "raw_location": "hardware park, plot no 21,sy no 1/1, imarat kancha   raviryala village, maheshwaram mandal hyderabad telangana 501218 india"
+        },
+        "probed_at": "2026-09-08",
+        "incorporation_date": "2015-11-06"
+      },
+      {
+        "cin": null,
+        "bid": "2cf5f5c12fd2b6383621e0a16c185bc4441e01f041f35ded4847356b29573fa8",
+        "name_hint": "TATA 1",
+        "context": "partProp",
+        "source": null,
+        "legal_name": "RANJIT KUMAR SINGH",
+        "trade_name": "TATA 1",
+        "company_llp_status": "Active",
+        "entity_type": "PROPRIETORSHIP",
+        "registered_address": {
+          "pinCode": "802314",
+          "state": "bihar",
+          "city": "koilwar",
+          "district": "bhojpur",
+          "area": "kayamnagar",
+          "po_names": [
+            "birampur",
+            "bishunpur dumaria",
+            "gidha",
+            "kayamnagar",
+            "sripalpur"
+          ],
+          "city_names": [
+            "koilwar"
+          ],
+          "raw_location": "00, imadpur - gayanpur road koilwar, middle school gyanpur, middle school gyanpur, imadpur, bhojpur, bihar, 802314"
+        },
+        "probed_at": "2025-06-23",
+        "incorporation_date": "2022-12-07"
+      },
+      {
+        "cin": "U67110MH2021PTC370721",
+        "bid": "0eab83c902abe025f8688f447b7a19d51137fdc572d151e11a52560da8f21731",
+        "name_hint": "TATA FINTECH PRIVATE LIMITED",
+        "context": "legalName",
+        "source": null,
+        "legal_name": "TATA FINTECH PRIVATE LIMITED",
+        "trade_name": null,
+        "company_llp_status": "Active",
+        "entity_type": "COMPANY",
+        "registered_address": {
+          "pinCode": "400001",
+          "state": "maharashtra",
+          "city": "mumbai",
+          "district": "mumbai",
+          "area": "mumbai g.p.o.",
+          "po_names": [
+            "bazargate",
+            "mpt",
+            "mumbai gpo",
+            "stock exchange",
+            "tajmahal",
+            "town hall"
+          ],
+          "city_names": [
+            "bombay",
+            "mumbai"
+          ],
+          "raw_location": "army & navy building, 148, m g road,   opposite kala ghoda, fort mumbai maharashtra 400001 india"
+        },
+        "probed_at": "2026-10-07",
+        "incorporation_date": "2021-11-01"
+      },
+      {
+        "cin": null,
+        "bid": "afbb0e9f540c74670a0c9f142728fa5445c8b87026847eaced256f46287d2204",
+        "name_hint": "TATA ME",
+        "context": "partProp",
+        "source": null,
+        "legal_name": "SAMUEL PRABHU IMMANUEL",
+        "trade_name": "TATA ME",
+        "company_llp_status": "Inactive",
+        "entity_type": "PROPRIETORSHIP",
+        "registered_address": {
+          "pinCode": "560078",
+          "state": "karnataka",
+          "city": "bengaluru",
+          "district": "bengaluru urban",
+          "area": "j p nagar",
+          "po_names": [
+            "j p nagar",
+            "jp nagar iii phase",
+            "yelachenahalli"
+          ],
+          "city_names": [
+            "bangalore",
+            "bengaluru"
+          ],
+          "raw_location": "kanaka tower,second floor 16th cross, no 113, kanaka tower, 8th main,near delmia circle,dollars colony main road, j.p.nagar,4th phase,bengaluru, bengaluru urban, karnataka, 560078"
+        },
+        "probed_at": "2025-11-08",
+        "incorporation_date": "2019-08-31"
+      },
+      {
+        "cin": null,
+        "bid": "28441dd0fe7334b5958fa736a23436a32aa16e6fc8f2e332adbfae18d2e0f7b6",
+        "name_hint": "TATA STAR",
+        "context": "partProp",
+        "source": null,
+        "legal_name": "MANOJ KUMAR SINGH",
+        "trade_name": "TATA STAR",
+        "company_llp_status": "Active",
+        "entity_type": "PROPRIETORSHIP",
+        "registered_address": {
+          "pinCode": "802306",
+          "state": null,
+          "city": null,
+          "district": null,
+          "area": null,
+          "po_names": [],
+          "city_names": [
+            ""
+          ],
+          "raw_location": "0, 0, 0, imadpur, imadpur gyanpur, bhojpur, bihar, 802306"
+        },
+        "probed_at": null,
+        "incorporation_date": "2017-07-01"
+      },
+      {
+        "cin": null,
+        "bid": "3a87d4eae0b292756cc3da69f587460de6e727f626be473a7f1e71500a15632f",
+        "name_hint": "TATA ENT",
+        "context": "partProp",
+        "source": null,
+        "legal_name": "KRISHNA SINGH",
+        "trade_name": "TATA ENT",
+        "company_llp_status": "Inactive",
+        "entity_type": "PROPRIETORSHIP",
+        "registered_address": {
+          "pinCode": "802129",
+          "state": "bihar",
+          "city": "navanagar",
+          "district": "buxar",
+          "area": "nawanagar (buxar)",
+          "po_names": [
+            "atimi",
+            "basaon kalan",
+            "belaon",
+            "bhatauli",
+            "bisikala",
+            "dhanbakhra",
+            "girdharpur",
+            "jigna",
+            "karsar",
+            "nawanagar",
+            "pararia pramanpur",
+            "rupsagar",
+            "sikraul"
+          ],
+          "city_names": [
+            "navanagar"
+          ],
+          "raw_location": "0, nawanagar, nawanagar, buxar, bihar, 802129"
+        },
+        "probed_at": null,
+        "incorporation_date": "2017-07-01"
+      },
+      {
+        "cin": null,
+        "bid": "7c89ff520d5d5db142378e3b7ce52bd1b44e75694bd24d01629bb451166c34e4",
+        "name_hint": "TATA TEX",
+        "context": "partProp",
+        "source": null,
+        "legal_name": "TATA TEX",
+        "trade_name": "TATA TEX",
+        "company_llp_status": "Inactive",
+        "entity_type": "PARTNERSHIP",
+        "registered_address": {
+          "pinCode": "695607",
+          "state": "kerala",
+          "city": "nedumangad",
+          "district": "thiruvananthapuram",
+          "area": "venjaramoodu",
+          "po_names": [
+            "aliyadu",
+            "koliakode",
+            "mukkudil",
+            "palamkonam",
+            "pirappancode",
+            "pullampara",
+            "vellumannady",
+            "venjaramoodu"
+          ],
+          "city_names": [
+            "nedumangad"
+          ],
+          "raw_location": "n.p.9/55c1, baby apartment, m.c.road, venjaramood p.o, thiruvananthapuram, kerala, 695607"
+        },
+        "probed_at": null,
+        "incorporation_date": "2018-04-14"
+      }
+    ]
   },
-  "source": "Live trace 2026-09-22: COASTAL PROJECTS LIMITED, unlocked, data over 24 hours old"
+  "source": "Live capture 2026-10-24: populated search results for name hints"
 }

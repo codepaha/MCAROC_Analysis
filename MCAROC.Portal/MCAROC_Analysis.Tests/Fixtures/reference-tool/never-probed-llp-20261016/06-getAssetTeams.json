@@ -1,7 +1,6 @@
 {
   "service": "reference-tool",
   "capturedUtc": null,
-  "source": "Not recorded: written to the recorded 2026-09-22 getAssetTeams shape, with the LLP's real unlock time (2026-10-16 19:08 IST).",
   "method": "GET",
   "url": "https://reference.test/server/user/service.php",
   "action": "getAssetTeams",
@@ -11,8 +10,8 @@
   },
   "requestBody": null,
   "query": {
-    "v": "3.1.6",
-    "cv": "8.1.28"
+    "v": "3.1.7",
+    "cv": "8.1.29"
   },
   "status": 200,
   "contentType": "application/json",
@@ -21,10 +20,23 @@
     "teams": [
       {
         "teamId": 0,
-        "addedAt": "2026-10-16T19:08:00+05:30",
+        "addedAt": "2026-10-16T19:08:18+05:30",
         "creditUsed": true,
+        "created_by": 0
+      },
+      {
+        "teamId": 0,
+        "addedAt": null,
+        "creditUsed": false,
+        "created_by": 0
+      },
+      {
+        "teamId": 0,
+        "addedAt": null,
+        "creditUsed": false,
         "created_by": 0
       }
     ]
-  }
+  },
+  "source": "Live trace 2026-10-16: NATURE EARTH KHARKHODA LLP, never probed, during an MCA ALERT"
 }

@@ -33,10 +33,9 @@ scenario's own.
   traces carried `created_by` and `srcTeamId`, which are now on the redactor's list.
 
 ## Scenarios
-- `unlocked-stale-coastal-20260922`: COASTAL PROJECTS LIMITED, unlocked, data a month old. Real `getAssetTeams`, `getDataStatus` (with `downloaded`
-  and `download_status`), status poll, companies MCA check, and the `requestProbeDataUpdate` reply.
+- `unlocked-stale-coastal-20260922`: COASTAL PROJECTS LIMITED, unlocked, data a month old. Populated `getNameHints` search results, real `getAssetTeams`,
+  `getDataStatus` (with `downloaded` and `download_status`), status poll, companies MCA check, and the `requestProbeDataUpdate` reply.
 - `locked-unlock-tcs-20260922`: TATA CONSULTANCY SERVICES LIMITED, locked, unlocked for one credit. Real asset status before and after (`after: addAsset`),
-  the pre-unlock MCA check and the `addAsset` reply. The preview's shape comes from the contract doc, because the trace kept no copy.
+  the pre-unlock MCA check, the `addAsset` reply, and real free `getCompanyPreview` recorded live.
 - `never-probed-llp-20261016`: NATURE EARTH KHARKHODA LLP, never probed, during an MCA ALERT. Real ALERT notice, the update action's 404, the
-  `requestProbeData` reply and the status poll (REQUESTED → NO PENDING REQUEST). Its asset status and empty data status weren't recorded and are
-  marked so; replace them with the next live capture.
+  `requestProbeData` reply, status poll (REQUESTED -> NO PENDING REQUEST), and real live `getAssetTeams` and `getDataStatus` (empty / never probed).
