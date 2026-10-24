@@ -85,6 +85,9 @@
                     }
                     @if (Model.HasFullAccess)
                     {
+                        <a href="/Requests/@r.RequestId/run-record" class="btn btn-sm btn-outline-secondary" title="Everything this run did, for the E2E record">
+                            <i class="bi bi-journal-text"></i><span>Run record</span>
+                        </a>
                         @if (r.LatestCompletedIngestionRunId is not null &&
                              !string.IsNullOrWhiteSpace(r.Cin ?? r.Llpin) &&
                              (Model.AutoFetchJob is null || Model.AutoFetchJob.IsTerminal) &&

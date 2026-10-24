@@ -243,6 +243,8 @@ builder.Services.Configure<MCAROC_Analysis.Services.AiUsage.AiPricingOptions>(bu
 builder.Services.AddScoped<MCAROC_Analysis.Services.AiUsage.AiCostReportService>();
 // Pre-flight check before an E2E round (#514): free, read-only checks of everything a run depends on.
 builder.Services.AddSingleton<MCAROC_Analysis.Services.Preflight.PreflightService>();
+// A request's E2E run record (#514): read-only, from what the portal already keeps.
+builder.Services.AddScoped<MCAROC_Analysis.Services.E2e.RunRecordService>();
 // Google Search grounding for adverse-news / sentiment lookups, capped at GroundedSearch:SoftCapQueries (4,950) with a hard stop at HardStopQueries (5,050) (5,000 = the free monthly allowance).
 builder.Services.Configure<MCAROC_Analysis.Services.GroundedSearch.GroundedSearchOptions>(builder.Configuration.GetSection(MCAROC_Analysis.Services.GroundedSearch.GroundedSearchOptions.SectionName));
 builder.Services.AddSingleton<MCAROC_Analysis.Services.GroundedSearch.GroundingQuota>();

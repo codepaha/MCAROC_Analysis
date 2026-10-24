@@ -45,14 +45,20 @@ public static class AuditLogEntryFactory
         EventPayloadJson = null
     };
 
+    /// <summary>The longest payload kept as written; a longer one is replaced by a <see cref="TruncatedPayloadEnvelope"/>.</summary>
+    public const int MaxPayloadLength = 2000;
+
     public static string? SerializeAndCapPayload<T>(T? payload) where T : class
     {
         if (payload is null) return null;
         var json = JsonSerializer.Serialize(payload, JsonOptions);
-        return json.Length <= 2000
+        return json.Length <= MaxPayloadLength
             ? json
             : JsonSerializer.Serialize(new TruncatedPayloadEnvelope(true, typeof(T).Name), JsonOptions);
     }
+
+    /// <summary>Whether <paramref name="payload"/> is kept whole, measured as it is serialized (escaped characters count at their escaped length).</summary>
+    public static bool FitsPayloadCap<T>(T payload) where T : class => JsonSerializer.Serialize(payload, JsonOptions).Length <= MaxPayloadLength;
 
     private static string BoundString(string? value, int maxLen)
     {
