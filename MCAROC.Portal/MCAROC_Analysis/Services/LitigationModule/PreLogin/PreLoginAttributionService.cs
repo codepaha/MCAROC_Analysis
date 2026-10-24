@@ -3,11 +3,13 @@ using System.Text;
 using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.AiUsage;
 using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.LitigationData.Attribution;
 using MCAROC_Analysis.Services.LitigationModule.Store;
 using MCAROC_Analysis.Services.PreLoginReports;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -51,9 +53,13 @@ public sealed class PreLoginAttributionService(
     AppDbContext db,
     IOptions<PreLoginAttributionOptions> options,
     IServiceProvider services,
-    ILogger<PreLoginAttributionService>? logger = null)
+    ILogger<PreLoginAttributionService>? logger = null,
+    PreLoginReportService? reports = null,
+    IWebHostEnvironment? environment = null)
 {
     private const int TimeoutSeconds = 120;
+    private readonly PreLoginReportService? _reports = reports ?? services.GetService<PreLoginReportService>();
+    private readonly IWebHostEnvironment? _environment = environment ?? services.GetService<IWebHostEnvironment>();
 
     public async Task<PreLoginAttributionRunResult> CheckAttributionAsync(long jobId, bool forceAll = false, CancellationToken ct = default)
     {
@@ -220,19 +226,31 @@ public sealed class PreLoginAttributionService(
             }
         }
 
+        string? oldReportPath = null;
+        string? newReportPath = null;
+
         if (mode == PreLoginAttributionMode.Apply && autoExcluded > 0)
         {
             var autoExcludedScopeCases = scopeCases.Where(sc => sc.IsExcluded).ToList();
             if (autoExcludedScopeCases.Count > 0)
             {
                 var exclusionMap = autoExcludedScopeCases.ToDictionary(sc => sc.Alias, sc => sc.ExclusionReason);
-                if (!TrySyncCasesToDataJson(job.DataJson, exclusionMap, isExcludedDefault: true, out var updatedJson, out var syncError))
+                if (!TrySyncCasesToDataJson(job.DataJson, exclusionMap, isExcludedDefault: true, out var updatedJson, out var updatedData, out var syncError))
                 {
                     logger?.LogError("Failed to synchronize {Count} automatic exclusions to DataJson for job {JobId}: {Error}", autoExcludedScopeCases.Count, jobId, syncError);
                     db.ChangeTracker.Clear();
                     throw new InvalidOperationException($"Failed to synchronize automatic exclusions to assignment DataJson for job {jobId}: {syncError}");
                 }
                 job.DataJson = updatedJson;
+                oldReportPath = job.ReportStoragePath;
+                if (updatedData != null)
+                {
+                    newReportPath = await TryPublishReportAsync(job, updatedData, job.DataVersion + 1, ct);
+                    if (newReportPath != null)
+                    {
+                        job.ReportStoragePath = newReportPath;
+                    }
+                }
                 job.DataVersion++;
             }
         }
@@ -242,9 +260,18 @@ public sealed class PreLoginAttributionService(
         {
             await db.SaveChangesAsync(ct);
             if (tx != null) await tx.CommitAsync(ct);
+
+            if (newReportPath != null && !string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+            {
+                try { File.Delete(oldReportPath); } catch { }
+            }
         }
         catch (Exception ex)
         {
+            if (newReportPath != null && File.Exists(newReportPath))
+            {
+                try { File.Delete(newReportPath); } catch { }
+            }
             logger?.LogError(ex, "Transaction failed saving attribution results for job {JobId}", jobId);
             if (tx != null) await tx.RollbackAsync(ct);
             db.ChangeTracker.Clear();
@@ -386,6 +413,25 @@ public sealed class PreLoginAttributionService(
 
             if (openSuggestions.Count == 0) return 0;
 
+            // Filter out any cases that have prior decisions: Rejected, Accepted, or AutomaticallyApplied
+            var candidateIds = openSuggestions.Select(sc => sc.ScopeCaseId).ToList();
+            var decidedScopeCaseIds = await db.PreLoginAttributionDecisions.AsNoTracking()
+                .Where(d => candidateIds.Contains(d.ScopeCaseId) &&
+                            (d.Action == PreLoginAttributionAction.Rejected ||
+                             d.Action == PreLoginAttributionAction.Accepted ||
+                             d.Action == PreLoginAttributionAction.AutomaticallyApplied))
+                .Select(d => d.ScopeCaseId)
+                .Distinct()
+                .ToListAsync(ct);
+
+            if (decidedScopeCaseIds.Count > 0)
+            {
+                var decidedSet = decidedScopeCaseIds.ToHashSet();
+                openSuggestions.RemoveAll(sc => decidedSet.Contains(sc.ScopeCaseId));
+            }
+
+            if (openSuggestions.Count == 0) return 0;
+
             var job = await db.PreLoginReportJobs.AsNoTracking().FirstOrDefaultAsync(j => j.PreLoginReportJobId == jobId, ct);
             if (job is null)
             {
@@ -397,11 +443,20 @@ public sealed class PreLoginAttributionService(
                 sc => sc.Alias,
                 sc => (string?)(string.IsNullOrWhiteSpace(sc.ExclusionReason) ? $"[Auto] {sc.AttributionReason}" : sc.ExclusionReason));
 
-            if (!TrySyncCasesToDataJson(job.DataJson, exclusionMap, isExcludedDefault: true, out var updatedJson, out var syncError))
+            if (!TrySyncCasesToDataJson(job.DataJson, exclusionMap, isExcludedDefault: true, out var updatedJson, out var updatedData, out var syncError))
             {
                 logger?.LogError("Failed to synchronize {Count} open suggestions to DataJson for job {JobId}: {Error}", openSuggestions.Count, jobId, syncError);
                 db.ChangeTracker.Clear();
                 throw new InvalidOperationException($"Failed to synchronize open suggestions to assignment DataJson for job {jobId}: {syncError}");
+            }
+
+            var currentVersion = job.DataVersion;
+            var oldReportPath = job.ReportStoragePath;
+            string? newReportPath = null;
+
+            if (updatedData != null)
+            {
+                newReportPath = await TryPublishReportAsync(job, updatedData, currentVersion + 1, ct);
             }
 
             var targetIds = openSuggestions
@@ -447,21 +502,45 @@ public sealed class PreLoginAttributionService(
                 });
             }
 
-            var currentVersion = job.DataVersion;
-
             await using var tx = db.Database.CurrentTransaction != null ? null : await db.Database.BeginTransactionAsync(ct);
             try
             {
+                // Verify no concurrent decisions were made on any of these cases
+                var activeIds = openSuggestions.Select(sc => sc.ScopeCaseId).ToList();
+                var anyConcurrentDecisions = await db.PreLoginAttributionDecisions
+                    .AnyAsync(d => activeIds.Contains(d.ScopeCaseId) &&
+                                   (d.Action == PreLoginAttributionAction.Rejected ||
+                                    d.Action == PreLoginAttributionAction.Accepted ||
+                                    d.Action == PreLoginAttributionAction.AutomaticallyApplied), ct);
+
+                if (anyConcurrentDecisions)
+                {
+                    if (newReportPath != null && File.Exists(newReportPath))
+                    {
+                        try { File.Delete(newReportPath); } catch { }
+                    }
+                    if (tx != null) await tx.RollbackAsync(ct);
+                    db.ChangeTracker.Clear();
+                    logger?.LogWarning("Concurrency conflict: one or more suggestions in job {JobId} were decided concurrently. Attempt {Attempt} of {MaxRetries}.", jobId, attempt + 1, maxRetries);
+                    await Task.Delay(50 * (attempt + 1), ct);
+                    continue;
+                }
+
                 await db.SaveChangesAsync(ct);
 
                 var rowsAffected = await db.PreLoginReportJobs
                     .Where(j => j.PreLoginReportJobId == jobId && j.DataVersion == currentVersion)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(x => x.DataJson, updatedJson)
+                        .SetProperty(x => x.ReportStoragePath, x => newReportPath ?? x.ReportStoragePath)
                         .SetProperty(x => x.DataVersion, currentVersion + 1), ct);
 
                 if (rowsAffected == 0)
                 {
+                    if (newReportPath != null && File.Exists(newReportPath))
+                    {
+                        try { File.Delete(newReportPath); } catch { }
+                    }
                     if (tx != null) await tx.RollbackAsync(ct);
                     db.ChangeTracker.Clear();
                     logger?.LogWarning("Concurrency conflict applying open suggestions for job {JobId}. Attempt {Attempt} of {MaxRetries}.", jobId, attempt + 1, maxRetries);
@@ -470,10 +549,20 @@ public sealed class PreLoginAttributionService(
                 }
 
                 if (tx != null) await tx.CommitAsync(ct);
+
+                if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+                {
+                    try { File.Delete(oldReportPath); } catch { }
+                }
+
                 return openSuggestions.Count;
             }
             catch (Exception ex)
             {
+                if (newReportPath != null && File.Exists(newReportPath))
+                {
+                    try { File.Delete(newReportPath); } catch { }
+                }
                 logger?.LogError(ex, "Transaction failed saving open suggestions for job {JobId}", jobId);
                 if (tx != null) await tx.RollbackAsync(ct);
                 db.ChangeTracker.Clear();
@@ -491,6 +580,28 @@ public sealed class PreLoginAttributionService(
     {
         var sc = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == scopeCaseId, ct);
         if (sc is null) return false;
+
+        // Must be an open suggestion: outcome must be NotTheCompany and not already excluded
+        if (sc.IsExcluded || sc.AttributionOutcome != LitigationAttributionOutcome.NotTheCompany)
+        {
+            logger?.LogWarning("Cannot accept suggestion for ScopeCaseId {ScopeCaseId}: Not an open suggestion (IsExcluded={IsExcluded}, Outcome={Outcome}).",
+                scopeCaseId, sc.IsExcluded, sc.AttributionOutcome);
+            return false;
+        }
+
+        var lastDecision = await db.PreLoginAttributionDecisions.AsNoTracking()
+            .Where(d => d.ScopeCaseId == sc.ScopeCaseId)
+            .OrderByDescending(d => d.DecidedUtc)
+            .FirstOrDefaultAsync(ct);
+
+        if (lastDecision != null &&
+            (lastDecision.Action == PreLoginAttributionAction.Rejected ||
+             lastDecision.Action == PreLoginAttributionAction.Accepted ||
+             lastDecision.Action == PreLoginAttributionAction.AutomaticallyApplied))
+        {
+            logger?.LogWarning("Cannot accept suggestion for ScopeCaseId {ScopeCaseId}: Existing decision {Action} recorded.", scopeCaseId, lastDecision.Action);
+            return false;
+        }
 
         var scope = await db.Set<ModuleScope>().FirstOrDefaultAsync(s => s.ScopeId == sc.ScopeId, ct);
         if (scope is null) return false;
@@ -533,6 +644,19 @@ public sealed class PreLoginAttributionService(
     {
         var sc = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == scopeCaseId, ct);
         if (sc is null) return false;
+
+        var lastDecision = await db.PreLoginAttributionDecisions.AsNoTracking()
+            .Where(d => d.ScopeCaseId == sc.ScopeCaseId)
+            .OrderByDescending(d => d.DecidedUtc)
+            .FirstOrDefaultAsync(ct);
+
+        if (lastDecision != null &&
+            (lastDecision.Action == PreLoginAttributionAction.Rejected ||
+             lastDecision.Action == PreLoginAttributionAction.Accepted))
+        {
+            logger?.LogWarning("Cannot reject suggestion for ScopeCaseId {ScopeCaseId}: Already decided ({Action}).", scopeCaseId, lastDecision.Action);
+            return false;
+        }
 
         var scope = await db.Set<ModuleScope>().FirstOrDefaultAsync(s => s.ScopeId == sc.ScopeId, ct);
         if (scope is null) return false;
@@ -914,6 +1038,28 @@ public sealed class PreLoginAttributionService(
             var sc = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == scopeCaseId, ct);
             if (sc is null) return false;
 
+            // Must be an open suggestion: outcome must be NotTheCompany and not already excluded
+            if (sc.IsExcluded || sc.AttributionOutcome != LitigationAttributionOutcome.NotTheCompany)
+            {
+                logger?.LogWarning("Cannot accept suggestion for ScopeCaseId {ScopeCaseId}: Not an open suggestion (IsExcluded={IsExcluded}, Outcome={Outcome}).",
+                    scopeCaseId, sc.IsExcluded, sc.AttributionOutcome);
+                return false;
+            }
+
+            var lastDecision = await db.PreLoginAttributionDecisions.AsNoTracking()
+                .Where(d => d.ScopeCaseId == sc.ScopeCaseId)
+                .OrderByDescending(d => d.DecidedUtc)
+                .FirstOrDefaultAsync(ct);
+
+            if (lastDecision != null &&
+                (lastDecision.Action == PreLoginAttributionAction.Rejected ||
+                 lastDecision.Action == PreLoginAttributionAction.Accepted ||
+                 lastDecision.Action == PreLoginAttributionAction.AutomaticallyApplied))
+            {
+                logger?.LogWarning("Cannot accept suggestion for ScopeCaseId {ScopeCaseId}: Existing decision {Action} recorded.", scopeCaseId, lastDecision.Action);
+                return false;
+            }
+
             var scope = await db.Set<ModuleScope>().AsNoTracking().FirstOrDefaultAsync(s => s.ScopeId == sc.ScopeId, ct);
             if (scope is null) return false;
 
@@ -923,17 +1069,43 @@ public sealed class PreLoginAttributionService(
             var reason = $"[Accepted suggestion] {sc.AttributionReason}";
             var exclusionMap = new Dictionary<string, string?> { [sc.Alias] = reason };
 
-            if (!TrySyncCasesToDataJson(job.DataJson, exclusionMap, isExcludedDefault: true, out var updatedJson, out var syncError))
+            if (!TrySyncCasesToDataJson(job.DataJson, exclusionMap, isExcludedDefault: true, out var updatedJson, out var updatedData, out var syncError))
             {
                 logger?.LogError("Failed to synchronize accepted suggestion {ScopeCaseId} to DataJson for job {JobId}: {Error}", scopeCaseId, job.PreLoginReportJobId, syncError);
                 return false;
             }
 
             var currentVersion = job.DataVersion;
+            var oldReportPath = job.ReportStoragePath;
+            string? newReportPath = null;
+
+            if (updatedData != null)
+            {
+                newReportPath = await TryPublishReportAsync(job, updatedData, currentVersion + 1, ct);
+            }
 
             await using var tx = db.Database.CurrentTransaction != null ? null : await db.Database.BeginTransactionAsync(ct);
             try
             {
+                // Re-verify in transaction that no conflicting decision was made
+                var hasConflictingDecision = await db.PreLoginAttributionDecisions
+                    .AnyAsync(d => d.ScopeCaseId == sc.ScopeCaseId &&
+                                   (d.Action == PreLoginAttributionAction.Rejected ||
+                                    d.Action == PreLoginAttributionAction.Accepted ||
+                                    d.Action == PreLoginAttributionAction.AutomaticallyApplied), ct);
+
+                if (hasConflictingDecision)
+                {
+                    if (newReportPath != null && File.Exists(newReportPath))
+                    {
+                        try { File.Delete(newReportPath); } catch { }
+                    }
+                    if (tx != null) await tx.RollbackAsync(ct);
+                    db.ChangeTracker.Clear();
+                    logger?.LogWarning("Cannot accept suggestion for ScopeCaseId {ScopeCaseId}: Conflicting decision committed concurrently.", scopeCaseId);
+                    return false;
+                }
+
                 sc.IsExcluded = true;
                 if (string.IsNullOrWhiteSpace(sc.ExclusionReason))
                 {
@@ -964,10 +1136,15 @@ public sealed class PreLoginAttributionService(
                     .Where(j => j.PreLoginReportJobId == job.PreLoginReportJobId && j.DataVersion == currentVersion)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(x => x.DataJson, updatedJson)
+                        .SetProperty(x => x.ReportStoragePath, x => newReportPath ?? x.ReportStoragePath)
                         .SetProperty(x => x.DataVersion, currentVersion + 1), ct);
 
                 if (rowsAffected == 0)
                 {
+                    if (newReportPath != null && File.Exists(newReportPath))
+                    {
+                        try { File.Delete(newReportPath); } catch { }
+                    }
                     if (tx != null) await tx.RollbackAsync(ct);
                     db.ChangeTracker.Clear();
                     logger?.LogWarning("Concurrency conflict syncing accepted suggestion for job {JobId}. Attempt {Attempt} of {MaxRetries}.", job.PreLoginReportJobId, attempt + 1, maxRetries);
@@ -976,10 +1153,20 @@ public sealed class PreLoginAttributionService(
                 }
 
                 if (tx != null) await tx.CommitAsync(ct);
+
+                if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+                {
+                    try { File.Delete(oldReportPath); } catch { }
+                }
+
                 return true;
             }
             catch (Exception ex)
             {
+                if (newReportPath != null && File.Exists(newReportPath))
+                {
+                    try { File.Delete(newReportPath); } catch { }
+                }
                 logger?.LogError(ex, "Transaction failed saving accepted suggestion {ScopeCaseId} for job {JobId}", scopeCaseId, job.PreLoginReportJobId);
                 if (tx != null) await tx.RollbackAsync(ct);
                 db.ChangeTracker.Clear();
@@ -1008,6 +1195,12 @@ public sealed class PreLoginAttributionService(
             var sc = await db.Set<ModuleScopeCase>().FirstOrDefaultAsync(x => x.ScopeCaseId == scopeCaseId, ct);
             if (sc is null) return false;
 
+            if (!sc.IsExcluded)
+            {
+                logger?.LogWarning("Cannot undo exclusion for ScopeCaseId {ScopeCaseId}: Case is not excluded.", scopeCaseId);
+                return false;
+            }
+
             var scope = await db.Set<ModuleScope>().AsNoTracking().FirstOrDefaultAsync(s => s.ScopeId == sc.ScopeId, ct);
             if (scope is null) return false;
 
@@ -1028,17 +1221,41 @@ public sealed class PreLoginAttributionService(
 
             var exclusionMap = new Dictionary<string, string?> { [sc.Alias] = null };
 
-            if (!TrySyncCasesToDataJson(job.DataJson, exclusionMap, isExcludedDefault: false, out var updatedJson, out var syncError))
+            if (!TrySyncCasesToDataJson(job.DataJson, exclusionMap, isExcludedDefault: false, out var updatedJson, out var updatedData, out var syncError))
             {
                 logger?.LogError("Failed to synchronize undone exclusion {ScopeCaseId} to DataJson for job {JobId}: {Error}", scopeCaseId, job.PreLoginReportJobId, syncError);
                 return false;
             }
 
             var currentVersion = job.DataVersion;
+            var oldReportPath = job.ReportStoragePath;
+            string? newReportPath = null;
+
+            if (updatedData != null)
+            {
+                newReportPath = await TryPublishReportAsync(job, updatedData, currentVersion + 1, ct);
+            }
 
             await using var tx = db.Database.CurrentTransaction != null ? null : await db.Database.BeginTransactionAsync(ct);
             try
             {
+                // Re-verify that last decision is still AutomaticallyApplied
+                var currentLastDecision = await db.PreLoginAttributionDecisions
+                    .Where(d => d.ScopeCaseId == sc.ScopeCaseId)
+                    .OrderByDescending(d => d.DecidedUtc)
+                    .FirstOrDefaultAsync(ct);
+
+                if (currentLastDecision is null || currentLastDecision.Action != PreLoginAttributionAction.AutomaticallyApplied)
+                {
+                    if (newReportPath != null && File.Exists(newReportPath))
+                    {
+                        try { File.Delete(newReportPath); } catch { }
+                    }
+                    if (tx != null) await tx.RollbackAsync(ct);
+                    db.ChangeTracker.Clear();
+                    return false;
+                }
+
                 sc.IsExcluded = false;
                 sc.IncludedInReport = true;
                 sc.ExclusionReason = null;
@@ -1066,10 +1283,15 @@ public sealed class PreLoginAttributionService(
                     .Where(j => j.PreLoginReportJobId == job.PreLoginReportJobId && j.DataVersion == currentVersion)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(x => x.DataJson, updatedJson)
+                        .SetProperty(x => x.ReportStoragePath, x => newReportPath ?? x.ReportStoragePath)
                         .SetProperty(x => x.DataVersion, currentVersion + 1), ct);
 
                 if (rowsAffected == 0)
                 {
+                    if (newReportPath != null && File.Exists(newReportPath))
+                    {
+                        try { File.Delete(newReportPath); } catch { }
+                    }
                     if (tx != null) await tx.RollbackAsync(ct);
                     db.ChangeTracker.Clear();
                     logger?.LogWarning("Concurrency conflict syncing undone exclusion for job {JobId}. Attempt {Attempt} of {MaxRetries}.", job.PreLoginReportJobId, attempt + 1, maxRetries);
@@ -1078,10 +1300,20 @@ public sealed class PreLoginAttributionService(
                 }
 
                 if (tx != null) await tx.CommitAsync(ct);
+
+                if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+                {
+                    try { File.Delete(oldReportPath); } catch { }
+                }
+
                 return true;
             }
             catch (Exception ex)
             {
+                if (newReportPath != null && File.Exists(newReportPath))
+                {
+                    try { File.Delete(newReportPath); } catch { }
+                }
                 logger?.LogError(ex, "Transaction failed saving undone exclusion {ScopeCaseId} for job {JobId}", scopeCaseId, job.PreLoginReportJobId);
                 if (tx != null) await tx.RollbackAsync(ct);
                 db.ChangeTracker.Clear();
@@ -1093,16 +1325,58 @@ public sealed class PreLoginAttributionService(
         return false;
     }
 
+    private async Task<string?> TryPublishReportAsync(
+        PreLoginReportJob job,
+        InstaReportData updatedData,
+        int nextVersion,
+        CancellationToken ct)
+    {
+        if (_reports is null || _environment is null)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(job.ReportStoragePath) && job.Status != PreLoginReportJobStatus.Completed)
+        {
+            return null;
+        }
+
+        var format = (Enum.TryParse<PreLoginReportFormat>(job.Format, true, out var f) && !(updatedData.Company?.LitigationOnly == true && f != PreLoginReportFormat.Sbi)) ? f : PreLoginReportFormat.Sbi;
+        var identifier = (updatedData.Company?.LitigationOnly == true)
+            ? (updatedData.Company.RegistrationNumber ?? job.Cin ?? "UNKNOWN")
+            : (job.Cin ?? "UNKNOWN");
+
+        var generated = await _reports.GenerateFromDataAsync(identifier, format, updatedData, ct);
+
+        var directory = Path.Combine(_environment.ContentRootPath, "App_Data", "PreLoginReports");
+        Directory.CreateDirectory(directory);
+        var attemptId = Guid.NewGuid().ToString("N");
+        var versionedFileName = $"{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}";
+        var newReportPath = Path.Combine(directory, versionedFileName);
+        await File.WriteAllBytesAsync(newReportPath, generated.Bytes, ct);
+        return newReportPath;
+    }
+
     private static bool TrySyncCasesToDataJson(
         string? dataJson,
         IReadOnlyDictionary<string, string?> exclusionMap,
         bool isExcludedDefault,
         out string? updatedJson,
         out string? errorMessage)
+        => TrySyncCasesToDataJson(dataJson, exclusionMap, isExcludedDefault, out updatedJson, out _, out errorMessage);
+
+    private static bool TrySyncCasesToDataJson(
+        string? dataJson,
+        IReadOnlyDictionary<string, string?> exclusionMap,
+        bool isExcludedDefault,
+        out string? updatedJson,
+        out InstaReportData? updatedData,
+        out string? errorMessage)
     {
         if (exclusionMap.Count == 0)
         {
             updatedJson = dataJson;
+            updatedData = null;
             errorMessage = null;
             return true;
         }
@@ -1110,6 +1384,7 @@ public sealed class PreLoginAttributionService(
         if (string.IsNullOrWhiteSpace(dataJson))
         {
             updatedJson = null;
+            updatedData = null;
             errorMessage = "Job DataJson is null or whitespace.";
             return false;
         }
@@ -1122,6 +1397,7 @@ public sealed class PreLoginAttributionService(
         catch (Exception ex)
         {
             updatedJson = null;
+            updatedData = null;
             errorMessage = $"Failed to deserialize DataJson: {ex.Message}";
             return false;
         }
@@ -1129,6 +1405,7 @@ public sealed class PreLoginAttributionService(
         if (data?.LegalCases?.Cases is null)
         {
             updatedJson = null;
+            updatedData = null;
             errorMessage = "DataJson does not contain LegalCases.Cases.";
             return false;
         }
@@ -1154,12 +1431,13 @@ public sealed class PreLoginAttributionService(
         {
             var missing = exclusionMap.Keys.Except(matchedAliases, StringComparer.OrdinalIgnoreCase);
             updatedJson = null;
+            updatedData = null;
             errorMessage = $"Missing cases in DataJson: {string.Join(", ", missing)}";
             return false;
         }
 
         var updatedLegalCases = LegalCaseFileParser.ToInstaLegalCases(cases) with { NextCaseRowIdIndex = data.LegalCases.NextCaseRowIdIndex };
-        var updatedData = data with { LegalCases = updatedLegalCases };
+        updatedData = data with { LegalCases = updatedLegalCases };
         updatedJson = JsonSerializer.Serialize(updatedData);
         errorMessage = null;
         return true;

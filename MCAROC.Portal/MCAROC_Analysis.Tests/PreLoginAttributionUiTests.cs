@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MCAROC_Analysis.Controllers;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
@@ -8,8 +9,11 @@ using MCAROC_Analysis.Services.LitigationModule.PreLogin;
 using MCAROC_Analysis.Services.LitigationModule.Reading;
 using MCAROC_Analysis.Services.LitigationModule.Store;
 using MCAROC_Analysis.Services.PreLoginReports;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -17,6 +21,17 @@ namespace MCAROC_Analysis.Tests;
 
 public class PreLoginAttributionUiTests : IAsyncLifetime
 {
+    private sealed class TestEnvironment : IWebHostEnvironment
+    {
+        private static readonly string Root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../MCAROC_Analysis"));
+        public string ApplicationName { get; set; } = "MCAROC_Analysis.Tests";
+        public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
+        public string WebRootPath { get; set; } = Root;
+        public string EnvironmentName { get; set; } = "Test";
+        public string ContentRootPath { get; set; } = Root;
+        public IFileProvider ContentRootFileProvider { get; set; } = new PhysicalFileProvider(Root);
+    }
+
     private static AppDbContext Ctx() => new(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(TestDatabase.ConnectionString).Options);
 
     public async Task InitializeAsync()
@@ -552,6 +567,312 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
         Assert.NotNull(report);
         Assert.Equal(1, report.TotalAccepted);
         Assert.Equal(1.0, report.OverallPrecision);
+    }
+
+    [Fact]
+    public async Task Stale_Accept_Cannot_Override_Prior_Rejection_And_Does_Not_Mutate_State()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            new("district", "Saket Court", "CNR21", "CS/2100/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "RHO TRADING EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-21", Petitioner: "RHO TRADING EMPLOYEES UNION", Respondent: "UNION OF INDIA"),
+            new("district", "Saket Court", "CNR22", "CS/2200/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "SIGMA TRADING EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-22", Petitioner: "SIGMA TRADING EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+        };
+        var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "RHO SIGMA LIMITED", "Robert Paul", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, options, new ServiceCollection().BuildServiceProvider());
+        await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        var suggestions = await attributionService.GetOpenSuggestionsAsync(job.PreLoginReportJobId);
+        Assert.Equal(2, suggestions.Count);
+        var itemC21 = Assert.Single(suggestions, s => s.CaseRowId == "C-21");
+        var itemC22 = Assert.Single(suggestions, s => s.CaseRowId == "C-22");
+
+        // Analyst 1 rejects suggestion C-21
+        var rejectOk = await attributionService.RejectSuggestionWithSyncAsync(itemC21.ScopeCaseId, "Analyst1");
+        Assert.True(rejectOk);
+
+        // Verification after reject: sc is not excluded, job DataJson still includes C-21
+        await using var verifyDb1 = Ctx();
+        var scAfterReject = await verifyDb1.Set<ModuleScopeCase>().FirstAsync(x => x.ScopeCaseId == itemC21.ScopeCaseId);
+        Assert.False(scAfterReject.IsExcluded);
+
+        var jobAfterReject = await verifyDb1.PreLoginReportJobs.FirstAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+        var initialDataJson = jobAfterReject.DataJson;
+        var initialVersion = jobAfterReject.DataVersion;
+
+        // Duplicate reject should return false
+        var dupReject = await attributionService.RejectSuggestionWithSyncAsync(itemC21.ScopeCaseId, "Analyst1");
+        Assert.False(dupReject);
+
+        // Tab A tries stale Accept on C-21: MUST FAIL!
+        var staleAcceptOk = await attributionService.AcceptSuggestionWithSyncAsync(itemC21.ScopeCaseId, "Analyst2");
+        Assert.False(staleAcceptOk);
+
+        // Also test AcceptSuggestionAsync (without sync) fails
+        var staleAcceptNoSyncOk = await attributionService.AcceptSuggestionAsync(itemC21.ScopeCaseId, "Analyst2");
+        Assert.False(staleAcceptNoSyncOk);
+
+        // Verify C-21 state is completely untouched: NOT excluded, DataJson NOT modified, no Accepted decision
+        await using var verifyDb2 = Ctx();
+        var scFinal = await verifyDb2.Set<ModuleScopeCase>().FirstAsync(x => x.ScopeCaseId == itemC21.ScopeCaseId);
+        Assert.False(scFinal.IsExcluded);
+        Assert.True(scFinal.IncludedInReport);
+
+        var jobFinal = await verifyDb2.PreLoginReportJobs.FirstAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+        Assert.Equal(initialDataJson, jobFinal.DataJson);
+        Assert.Equal(initialVersion, jobFinal.DataVersion);
+
+        var decisionsC21 = await verifyDb2.PreLoginAttributionDecisions.Where(d => d.ScopeCaseId == itemC21.ScopeCaseId).ToListAsync();
+        Assert.DoesNotContain(decisionsC21, d => d.Action == PreLoginAttributionAction.Accepted);
+        Assert.Contains(decisionsC21, d => d.Action == PreLoginAttributionAction.Rejected);
+
+        // Meanwhile, C-22 is still a pending suggestion and can be accepted normally
+        var acceptC22Ok = await attributionService.AcceptSuggestionWithSyncAsync(itemC22.ScopeCaseId, "Analyst1");
+        Assert.True(acceptC22Ok);
+
+        // Duplicate accept on C-22 should return false
+        var dupAcceptC22 = await attributionService.AcceptSuggestionWithSyncAsync(itemC22.ScopeCaseId, "Analyst1");
+        Assert.False(dupAcceptC22);
+    }
+
+    [Fact]
+    public async Task ApplyOpenSuggestions_Filters_Out_Prior_Rejections()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            new("district", "Saket Court", "CNR23", "CS/2300/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "TAU TRADING EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-23", Petitioner: "TAU TRADING EMPLOYEES UNION", Respondent: "UNION OF INDIA"),
+            new("district", "Saket Court", "CNR24", "CS/2400/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "UPSILON TRADING EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-24", Petitioner: "UPSILON TRADING EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+        };
+        var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "TAU UPSILON LIMITED", "Tina Turner", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, options, new ServiceCollection().BuildServiceProvider());
+        await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        var suggestions = await attributionService.GetOpenSuggestionsAsync(job.PreLoginReportJobId);
+        Assert.Equal(2, suggestions.Count);
+        var itemC23 = Assert.Single(suggestions, s => s.CaseRowId == "C-23");
+        var itemC24 = Assert.Single(suggestions, s => s.CaseRowId == "C-24");
+
+        // Reject C-23
+        var rejectOk = await attributionService.RejectSuggestionWithSyncAsync(itemC23.ScopeCaseId, "Analyst1");
+        Assert.True(rejectOk);
+
+        // Apply open suggestions in bulk: only C-24 should be applied!
+        var appliedCount = await attributionService.ApplyOpenSuggestionsAsync(job.PreLoginReportJobId, "Analyst1");
+        Assert.Equal(1, appliedCount);
+
+        await using var verifyDb = Ctx();
+        var scC23 = await verifyDb.Set<ModuleScopeCase>().FirstAsync(x => x.ScopeCaseId == itemC23.ScopeCaseId);
+        Assert.False(scC23.IsExcluded);
+
+        var scC24 = await verifyDb.Set<ModuleScopeCase>().FirstAsync(x => x.ScopeCaseId == itemC24.ScopeCaseId);
+        Assert.True(scC24.IsExcluded);
+
+        var updatedJob = await verifyDb.PreLoginReportJobs.FirstAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+        var reportData = JsonSerializer.Deserialize<InstaReportData>(updatedJob.DataJson);
+        var c23Record = Assert.Single(reportData!.LegalCases!.Cases, c => c.CaseRowId == "C-23");
+        Assert.False(c23Record.IsExcludedFromReport);
+        var c24Record = Assert.Single(reportData.LegalCases.Cases, c => c.CaseRowId == "C-24");
+        Assert.True(c24Record.IsExcludedFromReport);
+    }
+
+    [Fact]
+    public async Task AcceptSuggestion_Regenerates_Report_Cleans_Old_File_And_Served_By_Download()
+    {
+        var env = new TestEnvironment();
+        var reportService = new PreLoginReportService(null!, env);
+        var filesToCleanup = new List<string>();
+
+        try
+        {
+            await using var db = Ctx();
+            var cases = new List<LegalCaseRecord>
+            {
+                new("district", "Saket Court", "CNR25", "CS/2500/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "PHI CORP EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-25", Petitioner: "PHI CORP EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+            };
+            var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "PHI CORP LIMITED", "Philip Morris", cases);
+
+            // Create initial dummy report file on disk
+            var reportsDir = Path.Combine(env.ContentRootPath, "App_Data", "PreLoginReports");
+            Directory.CreateDirectory(reportsDir);
+            var initialReportPath = Path.Combine(reportsDir, $"{job.PreLoginReportJobId}-v1-initial.docx");
+            await File.WriteAllBytesAsync(initialReportPath, [1, 2, 3, 4]);
+            filesToCleanup.Add(initialReportPath);
+
+            job.ReportStoragePath = initialReportPath;
+            await db.SaveChangesAsync();
+
+            var backfillService = new PreLoginAssignmentBackfillService(db);
+            await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+            var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+            var attributionService = new PreLoginAttributionService(db, options, new ServiceCollection().BuildServiceProvider(), null, reportService, env);
+            await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+            var suggestions = await attributionService.GetOpenSuggestionsAsync(job.PreLoginReportJobId);
+            var item = Assert.Single(suggestions);
+
+            // Accept suggestion with sync
+            var ok = await attributionService.AcceptSuggestionWithSyncAsync(item.ScopeCaseId, "Analyst");
+            Assert.True(ok);
+
+            await using var verifyDb = Ctx();
+            var updatedJob = await verifyDb.PreLoginReportJobs.FirstAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+            Assert.NotNull(updatedJob.ReportStoragePath);
+            Assert.NotEqual(initialReportPath, updatedJob.ReportStoragePath);
+            filesToCleanup.Add(updatedJob.ReportStoragePath);
+
+            // New report file exists on disk
+            Assert.True(File.Exists(updatedJob.ReportStoragePath));
+            // Old report file was cleaned up on commit!
+            Assert.False(File.Exists(initialReportPath));
+
+            // Verify AssignmentsController.Download serves the newly published file
+            var jobService = new PreLoginReportJobService(verifyDb, new PreLoginReportQueue(), reportService, env);
+            var controller = new AssignmentsController(verifyDb, jobService, attributionService);
+            var downloadResult = await controller.Download(updatedJob.BatchId, updatedJob.PreLoginReportJobId, CancellationToken.None);
+
+            var physicalFile = Assert.IsType<PhysicalFileResult>(downloadResult);
+            Assert.Equal(updatedJob.ReportStoragePath, physicalFile.FileName);
+        }
+        finally
+        {
+            foreach (var f in filesToCleanup)
+            {
+                if (File.Exists(f)) { try { File.Delete(f); } catch { } }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task UndoExclusion_Regenerates_Report_And_Cleans_Old_File()
+    {
+        var env = new TestEnvironment();
+        var reportService = new PreLoginReportService(null!, env);
+        var filesToCleanup = new List<string>();
+
+        try
+        {
+            await using var db = Ctx();
+            var cases = new List<LegalCaseRecord>
+            {
+                new("district", "Saket Court", "CNR26", "CS/2600/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "CHI TRADING EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-26", Petitioner: "CHI TRADING EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+            };
+            var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "CHI TRADING LIMITED", "Charles Xavier", cases);
+
+            var reportsDir = Path.Combine(env.ContentRootPath, "App_Data", "PreLoginReports");
+            Directory.CreateDirectory(reportsDir);
+            var initialReportPath = Path.Combine(reportsDir, $"{job.PreLoginReportJobId}-v1-initial.docx");
+            await File.WriteAllBytesAsync(initialReportPath, [1, 2, 3, 4]);
+            filesToCleanup.Add(initialReportPath);
+
+            job.ReportStoragePath = initialReportPath;
+            await db.SaveChangesAsync();
+
+            var backfillService = new PreLoginAssignmentBackfillService(db);
+            await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+            // Run in Apply mode so case is auto-excluded
+            var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Apply });
+            var attributionService = new PreLoginAttributionService(db, options, new ServiceCollection().BuildServiceProvider(), null, reportService, env);
+            var runResult = await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+            Assert.Equal(1, runResult.AutoExcluded);
+
+            var autoExcludedList = await attributionService.GetAutoExcludedCasesAsync(job.PreLoginReportJobId);
+            var autoItem = Assert.Single(autoExcludedList);
+
+            await using var checkDb = Ctx();
+            var jobAfterApply = await checkDb.PreLoginReportJobs.FirstAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+            var applyReportPath = jobAfterApply.ReportStoragePath;
+            if (applyReportPath != null) filesToCleanup.Add(applyReportPath);
+
+            // Undo exclusion with sync
+            var undoOk = await attributionService.UndoExclusionWithSyncAsync(autoItem.ScopeCaseId, "Analyst");
+            Assert.True(undoOk);
+
+            await using var verifyDb = Ctx();
+            var finalJob = await verifyDb.PreLoginReportJobs.FirstAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+            Assert.NotNull(finalJob.ReportStoragePath);
+            Assert.NotEqual(applyReportPath, finalJob.ReportStoragePath);
+            filesToCleanup.Add(finalJob.ReportStoragePath);
+
+            // New report exists and old is deleted
+            Assert.True(File.Exists(finalJob.ReportStoragePath));
+            if (applyReportPath != null && !string.Equals(applyReportPath, finalJob.ReportStoragePath, StringComparison.OrdinalIgnoreCase))
+            {
+                Assert.False(File.Exists(applyReportPath));
+            }
+        }
+        finally
+        {
+            foreach (var f in filesToCleanup)
+            {
+                if (File.Exists(f)) { try { File.Delete(f); } catch { } }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ApplyOpenSuggestions_Regenerates_Report_And_Cleans_Old_File()
+    {
+        var env = new TestEnvironment();
+        var reportService = new PreLoginReportService(null!, env);
+        var filesToCleanup = new List<string>();
+
+        try
+        {
+            await using var db = Ctx();
+            var cases = new List<LegalCaseRecord>
+            {
+                new("district", "Saket Court", "CNR27", "CS/2700/2023", "CS", "2023", "PENDING", "-", "2023-02-01", "Delhi", "Delhi", "PSI TRADING EMPLOYEES UNION VS UNION OF INDIA", "2023-06-01", "Pending", CaseRowId: "C-27", Petitioner: "PSI TRADING EMPLOYEES UNION", Respondent: "UNION OF INDIA")
+            };
+            var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "PSI TRADING LIMITED", "Pam Beesly", cases);
+
+            var reportsDir = Path.Combine(env.ContentRootPath, "App_Data", "PreLoginReports");
+            Directory.CreateDirectory(reportsDir);
+            var initialReportPath = Path.Combine(reportsDir, $"{job.PreLoginReportJobId}-v1-initial.docx");
+            await File.WriteAllBytesAsync(initialReportPath, [1, 2, 3, 4]);
+            filesToCleanup.Add(initialReportPath);
+
+            job.ReportStoragePath = initialReportPath;
+            await db.SaveChangesAsync();
+
+            var backfillService = new PreLoginAssignmentBackfillService(db);
+            await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+            var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+            var attributionService = new PreLoginAttributionService(db, options, new ServiceCollection().BuildServiceProvider(), null, reportService, env);
+            await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+            var count = await attributionService.ApplyOpenSuggestionsAsync(job.PreLoginReportJobId, "Analyst");
+            Assert.Equal(1, count);
+
+            await using var verifyDb = Ctx();
+            var updatedJob = await verifyDb.PreLoginReportJobs.FirstAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+            Assert.NotNull(updatedJob.ReportStoragePath);
+            Assert.NotEqual(initialReportPath, updatedJob.ReportStoragePath);
+            filesToCleanup.Add(updatedJob.ReportStoragePath);
+
+            Assert.True(File.Exists(updatedJob.ReportStoragePath));
+            Assert.False(File.Exists(initialReportPath));
+        }
+        finally
+        {
+            foreach (var f in filesToCleanup)
+            {
+                if (File.Exists(f)) { try { File.Delete(f); } catch { } }
+            }
+        }
     }
 }
 
