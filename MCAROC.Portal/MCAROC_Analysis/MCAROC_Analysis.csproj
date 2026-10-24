@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
+    <!-- NPOI 2.8.x OSMF EULA (OSMFEULA.txt in the package): a maintenance fee applies only to users with annual gross revenue of US$10,000
+         or more. Accepted by the owner on 2026-10-24 on the basis that Cubictree's revenue is below that. Revisit if revenue passes it, or if
+         a client installs and runs the portal itself (the client is then the user the fee applies to). -->
+    <AcceptNPOIOSMFLicense>true</AcceptNPOIOSMFLicense>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -22,8 +26,8 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.11" />
-    <!-- 2.7.6: the last release under plain Apache-2.0. 2.8.x binaries carry a maintenance-fee EULA (revenue >= US$10k). -->
-    <PackageReference Include="NPOI" Version="2.7.6" />
+    <!-- 2.8.x: no ImageSharp dependency (its advisories are fixed only in licence-key builds). Its binaries are under the OSMF EULA; see AcceptNPOIOSMFLicense below. -->
+    <PackageReference Include="NPOI" Version="2.8.1" />
     <PackageReference Include="PdfPig" Version="0.1.16" />
     <PackageReference Include="PDFtoImage" Version="5.4.0" />
     <PackageReference Include="QuestPDF" Version="2025.7.0" />
