@@ -232,10 +232,15 @@ public sealed class AutoFetchJobService(
                 var gate = await refresh.EvaluateAsync(job.Cin, job.Bid, ct);
                 // Fetch now, update later (owner rule 2026-10-13): a refresh that is running, deferred by MCA maintenance, or that timed out
                 // never holds the export back. The refresh carries on; when it lands the request is re-checked and the report updates.
-                if (_opts.ExportWhileRefreshing && gate.Kind is RefreshGateKind.Waiting or RefreshGateKind.Deferred or RefreshGateKind.TimedOut)
+                // Except a company the tool has never probed (no data date at all): there is nothing to export yet — the
+                // export returns 404 — so a running first probe is waited on like any parked refresh.
+                var asOf = gate.Kind is RefreshGateKind.Waiting or RefreshGateKind.Deferred or RefreshGateKind.TimedOut
+                    ? await db.CompanyReportLifecycles.AsNoTracking().Where(l => l.Identifier == job.Cin.Trim().ToUpper())
+                        .Select(l => l.LastRefreshCompletedUtc).FirstOrDefaultAsync(ct)
+                    : null;
+                if (_opts.ExportWhileRefreshing && (gate.Kind is RefreshGateKind.Waiting or RefreshGateKind.Deferred or RefreshGateKind.TimedOut)
+                    && !(gate.Kind == RefreshGateKind.Waiting && asOf is null))
                 {
-                    var asOf = await db.CompanyReportLifecycles.AsNoTracking().Where(l => l.Identifier == job.Cin.Trim().ToUpper())
-                        .Select(l => l.LastRefreshCompletedUtc).FirstOrDefaultAsync(ct);
                     var note = $"Exported the reference tool's current data{(asOf is { } d ? $" (as of {Ist.Format(d)})" : "")} without waiting for its refresh"
                         + (gate.Kind == RefreshGateKind.Waiting ? "; the refresh is running and this request will be updated when it lands." : $" ({gate.Message}).");
                     if (!warnings.Contains(note)) warnings.Add(note);

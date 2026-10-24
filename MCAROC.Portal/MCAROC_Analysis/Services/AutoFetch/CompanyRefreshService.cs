@@ -91,7 +91,7 @@ public sealed class CompanyRefreshService(
             return new RefreshGateResult(RefreshGateKind.Ready, $"The reference tool's data is current (as of {Ist.Format(lastFresh)}).", lastFresh);
         }
 
-        if (!await client.IsMcaAvailableForRefreshAsync(ct))
+        if (!await client.IsMcaAvailableForRefreshAsync(identifier.Contains('-'), ct))
             return new RefreshGateResult(RefreshGateKind.Deferred, "The MCA portal is under maintenance; the refresh will be requested once it is back.");
 
         var claimId = NewClaimId();
@@ -110,8 +110,17 @@ public sealed class CompanyRefreshService(
         {
             await client.RequestRefreshAsync(bid, ct);
         }
-        catch
+        catch (Exception ex)
         {
+            // The tool can refuse our request (HTTP 404 for a company it has never fully probed, where its own UI
+            // offers "Request a Probe" instead) while a request made there is already pending — then wait on that one.
+            if (ex is ReferenceToolException && await HasPendingRequestAsync(bid, ct))
+            {
+                logger.LogWarning("The reference tool refused a refresh request for {Identifier} ({Error}), but one is already pending there; waiting on it", identifier, ex.Message);
+                return new RefreshGateResult(RefreshGateKind.Waiting,
+                    $"Waiting for the reference tool to finish the refresh already pending there (times out {Ist.Format(now.Add(RefreshTimeout))}).");
+            }
+
             // Nothing reached the tool (or we can't know it did and it's free to repeat) — give the claim back.
             await Rows(identifier).Where(r => r.ActiveRefreshId == claimId).ExecuteUpdateAsync(s => s
                 .SetProperty(r => r.ActiveRefreshId, (long?)null)
@@ -123,6 +132,18 @@ public sealed class CompanyRefreshService(
         logger.LogInformation("Requested a reference-tool refresh for {Identifier} (data as of {DataAsOf})", identifier, lastFresh);
         return new RefreshGateResult(RefreshGateKind.Waiting,
             $"Waiting for the reference tool to refresh this company's data (requested {Ist.Format(now)}; times out {Ist.Format(now.Add(RefreshTimeout))}).");
+    }
+
+    private async Task<bool> HasPendingRequestAsync(string bid, CancellationToken ct)
+    {
+        try
+        {
+            return await client.GetRefreshStatusAsync(bid, ct) == ReferenceRefreshStatus.Requested;
+        }
+        catch (ReferenceToolException)
+        {
+            return false;
+        }
     }
 
     private async Task<RefreshGateResult> PollAsync(string identifier, string bid, long activeId, CompanyReportLifecycle row, DateTime now, CancellationToken ct)
