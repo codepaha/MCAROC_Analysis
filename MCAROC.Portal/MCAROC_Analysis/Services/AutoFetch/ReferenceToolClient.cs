@@ -607,6 +607,20 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         }, ct);
     }
 
+    /// <summary>The raw MCA status for companies or LLPs, for display (the pre-flight check); decisions use <see cref="IsMcaAvailableForRefreshAsync"/>.</summary>
+    public Task<ReferenceMcaStatus> GetMcaStatusAsync(bool isLlp, CancellationToken ct)
+    {
+        EnsureConfigured();
+        return WithSessionRecoveryAsync(async () =>
+        {
+            using var doc = await GetJsonAsync("server/common/mcastatus/service.php",
+                new { action = isLlp ? "getUpgradeStatusForLLPs" : "getUpgradeStatusForCompanies" }, "MCA status", ct);
+            var status = Text(doc.RootElement, "mca_status")
+                ?? throw new ReferenceToolException("The reference tool's MCA-status response had no mca_status.", ReferenceToolFailureKind.ContractChanged);
+            return new ReferenceMcaStatus(status, Text(doc.RootElement, "alert_text"));
+        }, ct);
+    }
+
     /// <summary><c>getUpgradeStatusForCompanies</c>, or <c>getUpgradeStatusForLLPs</c> for an LLP (as the tool's own UI
     /// asks) — false while the government MCA portal is in maintenance, when the tool itself advises against starting a
     /// probe or refresh.</summary>
