@@ -71,7 +71,7 @@ public static class PipelineDecider
         // A search that already exists is still reported; nothing new starts for an unresolved company.
         v[PipelineStage.Litigation] = identityPending && s.LitigationSearch is null
             ? Waiting(AwaitingResolve)
-            : Litigation(s, policy, v[PipelineStage.Ingest], clock);
+            : Litigation(s, policy, v[PipelineStage.Fetch], v[PipelineStage.Ingest], clock);
         v[PipelineStage.LitigationAnalysis] = identityPending && s.LitigationAnalysis is null
             ? Waiting(AwaitingResolve)
             : LitigationAnalysis(s, policy, v[PipelineStage.Litigation], clock);
@@ -280,8 +280,29 @@ public static class PipelineDecider
         return Waiting("AWAITING_FETCH");
     }
 
-    private static StageVerdict Litigation(PipelineSnapshot s, PipelinePolicy policy, StageVerdict ingest, DateTime now)
+    private static StageVerdict Litigation(PipelineSnapshot s, PipelinePolicy policy, StageVerdict fetch, StageVerdict ingest, DateTime now)
     {
+        // The search starts in parallel with the fetch; ingestion only adds the former names. A finished search is
+        // therefore not done until ingestion has settled (so analysis and the court update see every case), and
+        // former names it did not cover get one automatic top-up search.
+        var ingestSettled = ingest.IsDone || ingest.State is PipelineStageStateKind.NeedsAttention or PipelineStageStateKind.Skipped or PipelineStageStateKind.Cancelled;
+        // A fetch that failed (or is blocked by a failed unlock/refresh) brings no ingestion until someone acts on it, so the
+        // hold is released with a warning instead of lasting for good. A fetch still waiting on a refresh, unlock or first
+        // probe keeps it. Former names that arrive with a later retry still get their top-up search (UnsearchedFormerNames).
+        var noIngestionComing = !ingestSettled && s.LatestCompletedIngestionRunId is null
+            && (fetch.State == PipelineStageStateKind.NeedsAttention || fetch.ReasonCode == "BLOCKED_UPSTREAM");
+        if (s.LitigationSearch is { Status: LitigationSearchJobStatus.Completed, SnapshotStatus: LitigationReportSnapshotStatus.Completed } finished)
+        {
+            if (!ingestSettled && !noIngestionComing)
+                return Running(finished.SnapshotId, "AWAITING_FORMER_NAMES");
+            if (noIngestionComing && finished.AttributionOutstanding == 0 && !finished.HasStalledOrderDownload)
+                return Warn("FORMER_NAMES_UNAVAILABLE",
+                    "The search covered the names known so far. The company data fetch failed, so its former names are not known yet; they are searched once a retried fetch supplies them.",
+                    finished.SnapshotId);
+            if (s.UnsearchedFormerNames.Count > 0)
+                return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: ReadyToStart,
+                    ReasonDetail: $"Former name(s) {string.Join(", ", s.UnsearchedFormerNames)} were not searched; a top-up search starts automatically.");
+        }
         if (s.LitigationSearch is { } job)
         {
             return job.Status switch
@@ -311,7 +332,8 @@ public static class PipelineDecider
         }
         if (!policy.LitigationSearch) return Skip(PipelineStageSkipKind.Neutral, "POLICY_OFF");
         if (!s.LitigationConfigured) return Skip(PipelineStageSkipKind.Warning, "INTEGRATION_NOT_CONFIGURED");
-        if (!ingest.IsDone) return Waiting("AWAITING_INGEST");
+        // Only a request still showing its identifier as the name waits for ingestion to supply the real one.
+        if (!ingest.IsDone && !s.LitigationNameKnown) return Waiting("AWAITING_INGEST");
         var trust = IdentityTrust.Evaluate(s.AppliedResolution, s.SpendThreshold);
         if (!trust.Trusted)
             return new StageVerdict(PipelineStageStateKind.NotStarted, ReasonCode: AwaitingTrustedIdentity,

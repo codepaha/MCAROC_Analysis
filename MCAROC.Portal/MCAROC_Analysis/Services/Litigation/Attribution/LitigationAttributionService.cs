@@ -33,6 +33,9 @@ public sealed class LitigationAttributionService(AppDbContext db, IServiceProvid
         var request = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId)
             .Select(r => new { r.CompanyName, r.Cin, r.Llpin, r.LatestCompletedIngestionRunId }).FirstOrDefaultAsync(ct);
         if (request is null || string.IsNullOrWhiteSpace(request.CompanyName)) return new(0, 0, 0, 0, 0, 0, Skipped: true);
+        // The search can finish before ingestion (it runs in parallel with the fetch); the former names judged
+        // against come from ingestion, so hold off while one is still coming.
+        if (request.LatestCompletedIngestionRunId is null && await IngestionExpectedAsync(requestId, ct)) return new(0, 0, 0, 0, 0, 0, Skipped: true);
 
         var cases = await db.LitigationCases.Where(c => c.RequestId == requestId).Where(LitigationAttribution.IsOutstanding).ToListAsync(ct);
         if (cases.Count == 0) return new(0, 0, 0, 0, 0, 0);
@@ -149,6 +152,12 @@ public sealed class LitigationAttributionService(AppDbContext db, IServiceProvid
         }
         return result;
     }
+
+    /// <summary>An ingestion is running, or an auto-fetch that will end in one is still in progress.</summary>
+    private async Task<bool> IngestionExpectedAsync(long requestId, CancellationToken ct) =>
+        await db.IngestionRuns.AsNoTracking().AnyAsync(i => i.RequestId == requestId && i.Status == IngestionRunStatus.Running, ct)
+        || await db.AutoFetchJobs.AsNoTracking().AnyAsync(j => j.RequestId == requestId && j.Status != AutoFetchJobStatus.Completed
+            && j.Status != AutoFetchJobStatus.CompletedWithWarnings && j.Status != AutoFetchJobStatus.Failed, ct);
 
     private async Task<AttributionSubject> SubjectAsync(long requestId, string companyName, string? identifier, long? runId, CancellationToken ct)
     {

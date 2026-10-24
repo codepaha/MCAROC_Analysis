@@ -271,6 +271,107 @@ public sealed class PipelineDeciderTests
     }
 
     [Fact]
+    public void Litigation_search_starts_in_parallel_with_the_fetch_once_the_company_name_is_known()
+    {
+        var waiting = AutoBeforeExport(AutoFetchJobStatus.WaitingForRefresh, new LifecycleFacts(CompanyReportLifecycleState.Refreshing, DateTime.UtcNow, true))
+            with { LitigationConfigured = true };
+        var policy = new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true };
+
+        Assert.Equal("AWAITING_INGEST", PipelineDecider.Decide(waiting, policy).Stages[PipelineStage.Litigation].ReasonCode);
+        Assert.Equal("WOULD_START", PipelineDecider.Decide(waiting with { LitigationNameKnown = true }, policy).Stages[PipelineStage.Litigation].ReasonCode);
+    }
+
+    [Fact]
+    public void A_search_finished_before_ingestion_is_held_until_ingestion_supplies_the_former_names()
+    {
+        var s = AutoBeforeExport(AutoFetchJobStatus.WaitingForRefresh, new LifecycleFacts(CompanyReportLifecycleState.Refreshing, DateTime.UtcNow, true)) with
+        {
+            LitigationConfigured = true, LitigationNameKnown = true,
+            LitigationSearch = new LitigationSearchFacts(40, LitigationSearchJobStatus.Completed, null, 41, LitigationReportSnapshotStatus.Completed, OrdersFullyProcessed: true)
+        };
+        var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
+
+        Assert.Equal(PipelineStageStateKind.Running, State(d, PipelineStage.Litigation));
+        Assert.Equal("AWAITING_FORMER_NAMES", d.Stages[PipelineStage.Litigation].ReasonCode);
+        Assert.Equal(PipelineStageStateKind.Waiting, State(d, PipelineStage.LitigationAnalysis));
+    }
+
+    private static PipelineSnapshot FinishedSearchBeforeExport(AutoFetchJobStatus status, LifecycleFacts lifecycle) =>
+        AutoBeforeExport(status, lifecycle) with
+        {
+            LitigationConfigured = true, LitigationNameKnown = true,
+            LitigationSearch = new LitigationSearchFacts(40, LitigationSearchJobStatus.Completed, null, 41, LitigationReportSnapshotStatus.Completed, OrdersFullyProcessed: true)
+        };
+
+    /// <summary>Review of #513: a fetch that failed brings no ingestion, so the finished search must not wait for former names for good.</summary>
+    [Theory]
+    [InlineData(CompanyReportLifecycleState.Unlocked, "FETCH_FAILED")]        // the fetch itself failed
+    [InlineData(CompanyReportLifecycleState.Locked, "BLOCKED_UPSTREAM")]      // failure surfaced on Unlock
+    [InlineData(CompanyReportLifecycleState.RefreshFailed, "BLOCKED_UPSTREAM")] // failure surfaced on Refresh
+    public void A_failed_fetch_releases_the_former_name_hold_with_a_warning(CompanyReportLifecycleState state, string fetchReason)
+    {
+        var s = FinishedSearchBeforeExport(AutoFetchJobStatus.Failed, new LifecycleFacts(state, DateTime.UtcNow.AddDays(-1), false));
+        var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
+
+        Assert.Equal(fetchReason, d.Stages[PipelineStage.Fetch].ReasonCode);
+        Assert.Equal(PipelineStageStateKind.SucceededWithWarnings, State(d, PipelineStage.Litigation));
+        Assert.Equal("FORMER_NAMES_UNAVAILABLE", d.Stages[PipelineStage.Litigation].ReasonCode);
+        Assert.NotEqual(PipelineStageStateKind.Waiting, State(d, PipelineStage.LitigationAnalysis));
+
+        // Retried: the fetch is under way again, so the hold is back until ingestion supplies the names.
+        var retried = PipelineDecider.Decide(s with { AutoFetch = s.AutoFetch! with { Status = AutoFetchJobStatus.Queued, FailureReason = null } },
+            new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
+        Assert.Equal("AWAITING_FORMER_NAMES", retried.Stages[PipelineStage.Litigation].ReasonCode);
+    }
+
+    [Theory]
+    [InlineData(AutoFetchJobStatus.WaitingForRefresh, CompanyReportLifecycleState.NeverRequested)] // a first probe still running
+    [InlineData(AutoFetchJobStatus.WaitingForRefresh, CompanyReportLifecycleState.Refreshing)]
+    [InlineData(AutoFetchJobStatus.WaitingForUnlock, CompanyReportLifecycleState.Unlocking)]
+    [InlineData(AutoFetchJobStatus.Queued, CompanyReportLifecycleState.Unlocked)]
+    public void A_fetch_still_pending_keeps_the_former_name_hold(AutoFetchJobStatus status, CompanyReportLifecycleState state)
+    {
+        var s = FinishedSearchBeforeExport(status, new LifecycleFacts(state, null, state == CompanyReportLifecycleState.Refreshing));
+        var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
+
+        Assert.Equal("AWAITING_FORMER_NAMES", d.Stages[PipelineStage.Litigation].ReasonCode);
+        Assert.Equal(PipelineStageStateKind.Waiting, State(d, PipelineStage.LitigationAnalysis));
+    }
+
+    [Fact]
+    public void A_failed_ingestion_releases_the_hold_as_before()
+    {
+        var s = FinishedSearchBeforeExport(AutoFetchJobStatus.Completed, new LifecycleFacts(CompanyReportLifecycleState.Unlocked, DateTime.UtcNow, false)) with
+        {
+            AutoFetch = new AutoFetchFacts(5, AutoFetchJobStatus.Completed, RocDocumentId: 7, IncludeFilings: false, null, null),
+            LatestIngestionStatus = IngestionRunStatus.Failed
+        };
+        var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
+
+        Assert.Equal("INGEST_FAILED", d.Stages[PipelineStage.Ingest].ReasonCode);
+        Assert.Equal(PipelineStageStateKind.Succeeded, State(d, PipelineStage.Litigation));
+    }
+
+    [Fact]
+    public void Former_names_the_search_did_not_cover_get_a_top_up_search_before_analysis()
+    {
+        var s = ManualDone() with
+        {
+            LitigationConfigured = true, LitigationNameKnown = true, UnsearchedFormerNames = ["OLD NAME PRIVATE LIMITED"],
+            LitigationSearch = new LitigationSearchFacts(40, LitigationSearchJobStatus.Completed, null, 41, LitigationReportSnapshotStatus.Completed, OrdersFullyProcessed: true)
+        };
+        var d = PipelineDecider.Decide(s, new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
+
+        Assert.Equal(PipelineStageStateKind.NotStarted, State(d, PipelineStage.Litigation));
+        Assert.Equal("WOULD_START", d.Stages[PipelineStage.Litigation].ReasonCode);
+        Assert.Contains("OLD NAME PRIVATE LIMITED", d.Stages[PipelineStage.Litigation].ReasonDetail);
+        Assert.Equal(PipelineStageStateKind.Waiting, State(d, PipelineStage.LitigationAnalysis));
+
+        var covered = PipelineDecider.Decide(s with { UnsearchedFormerNames = [] }, new PipelinePolicy { LitigationSearch = true, LitigationAnalysis = true });
+        Assert.Equal(PipelineStageStateKind.Succeeded, State(covered, PipelineStage.Litigation));
+    }
+
+    [Fact]
     public void LitigationAnalysis_is_not_ready_while_order_documents_are_still_being_processed()
     {
         var s = ManualDone() with

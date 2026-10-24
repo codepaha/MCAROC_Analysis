@@ -18,7 +18,6 @@ public sealed class LitigationKeywordOptions
 /// <item>the registered and former names and their legal-suffix forms (<see cref="LitigationKeywordPlanner"/>);</item>
 /// <item>other written forms of the name: Corp for Corporation, a joined word split, an acronym spaced or dotted (<see cref="NameFormVariants"/>);</item>
 /// <item>checked Devanagari spellings and written-out acronyms (<see cref="CompanyNameSuggestionService"/>);</item>
-/// <item>the initials of the name (BPCL);</item>
 /// <item>phonetic spellings (<see cref="PhoneticVariantGenerator"/>).</item>
 /// </list>
 /// At most <see cref="MaxKeywords"/>, cut from the end of that order. Every generated keyword carries its reason. The litigation data service takes them all in
@@ -58,7 +57,6 @@ public sealed class LitigationKeywordSuggester(CompanyNameSuggestionService sugg
             var written = string.Join(' ', words.Select(w => w.Equals(e.Acronym, StringComparison.OrdinalIgnoreCase) ? e.FullForm : w));
             Add(new(written, LitigationKeywordSource.GeneratedAcronymExpansion, $"\"{e.Acronym}\" written out"));
         }
-        foreach (var f in forms.Where(f => f.Source == LitigationKeywordSource.GeneratedAcronym)) Add(new(f.Value, f.Source, f.Reason));
         foreach (var v in variants) Add(new(v.Value, LitigationKeywordSource.GeneratedPhoneticVariant, v.Reason));
         return result;
     }
