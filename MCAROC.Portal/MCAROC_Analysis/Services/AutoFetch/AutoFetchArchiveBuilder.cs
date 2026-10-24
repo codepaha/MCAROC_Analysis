@@ -59,7 +59,7 @@ public static partial class AutoFetchArchiveBuilder
             {
                 // Named after what the file is, not what it was planned as: an XBRL .xml or .xlsx attachment kept as .pdf would be
                 // read as a corrupt PDF by the filings pipeline (which takes only .pdf entries) instead of kept as an attachment.
-                var extension = DownloadedFileType.ExtensionOf(DownloadedFileType.ReadHead(file.LocalPath)) ?? ".pdf";
+                var extension = DownloadedFileType.ExtensionOfFile(file.LocalPath) ?? ".pdf";
                 var name = UniqueEntryName(SanitizeEntryName(file.EntryName, extension), usedNames);
                 nested.CreateEntryFromFile(file.LocalPath, name, CompressionLevel.Fastest);
                 if (!string.IsNullOrEmpty(file.AwsPath) || !string.IsNullOrEmpty(file.Did))

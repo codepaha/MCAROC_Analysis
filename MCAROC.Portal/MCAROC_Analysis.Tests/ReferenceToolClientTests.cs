@@ -266,6 +266,11 @@ public class ReferenceToolClientTests : IDisposable
     [Theory]
     [InlineData("xbrl", ".xml")]
     [InlineData("xbrl-bom", ".xml")]
+    [InlineData("xbrl-utf16le", ".xml")]
+    [InlineData("xbrl-utf16be", ".xml")]
+    [InlineData("xbrl-other-prefix", ".xml")]
+    [InlineData("xbrl-html-in-comment", ".xml")]
+    [InlineData("xbrl-html-in-text", ".xml")]
     [InlineData("xlsx", ".xlsx")]
     [InlineData("xls", ".xls")]
     public async Task An_xml_or_spreadsheet_attachment_downloads_without_a_relogin(string body, string expectedExtension)
@@ -273,7 +278,12 @@ public class ReferenceToolClientTests : IDisposable
         var bytes = body switch
         {
             "xbrl" => "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xbrli:xbrl xmlns:xbrli=\"http://www.xbrl.org/2003/instance\"></xbrli:xbrl>"u8.ToArray(),
-            "xbrl-bom" => [0xEF, 0xBB, 0xBF, .. "\r\n<?xml version=\"1.0\"?><xbrl/>"u8.ToArray()],
+            "xbrl-bom" => [0xEF, 0xBB, 0xBF, .. "<?xml version=\"1.0\"?>\r\n<xbrl/>"u8.ToArray()],
+            "xbrl-utf16le" => [.. Encoding.Unicode.GetPreamble(), .. Encoding.Unicode.GetBytes(Xbrl16)],
+            "xbrl-utf16be" => [.. Encoding.BigEndianUnicode.GetPreamble(), .. Encoding.BigEndianUnicode.GetBytes(Xbrl16)],
+            "xbrl-other-prefix" => "<!-- generated --><x:xbrl xmlns:x=\"http://www.xbrl.org/2003/instance\"/>"u8.ToArray(),
+            "xbrl-html-in-comment" => "<?xml version=\"1.0\"?><!-- source <html> marker --><xbrli:xbrl xmlns:xbrli=\"http://www.xbrl.org/2003/instance\"/>"u8.ToArray(),
+            "xbrl-html-in-text" => "<?xml version=\"1.0\"?><xbrli:xbrl xmlns:xbrli=\"http://www.xbrl.org/2003/instance\"><note>&lt;html&gt; <![CDATA[<html><body>policy</body></html>]]></note></xbrli:xbrl>"u8.ToArray(),
             "xlsx" => [0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x06, 0x00, 0x08, 0x00],
             _ => [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0x00, 0x00],
         };
@@ -286,6 +296,27 @@ public class ReferenceToolClientTests : IDisposable
         Assert.Equal(expectedExtension, await client.DownloadDocumentAsync("bid", "265271", "214/x/fs.xml", "fsv1", dest, CancellationToken.None));
         Assert.Equal(bytes, await File.ReadAllBytesAsync(dest));
         Assert.DoesNotContain(handler.Requests, r => r.RequestUri!.AbsolutePath.EndsWith("login.php"));
+    }
+
+    private const string Xbrl16 = "<?xml version=\"1.0\" encoding=\"UTF-16\"?><xbrli:xbrl xmlns:xbrli=\"http://www.xbrl.org/2003/instance\"/>";
+
+    /// <summary>Review of #517: judged by the root element, so a login page is still a session reply, XHTML included, and a cut-off or
+    /// broken body is neither a file nor a logout. A DTD is never processed, so an external entity is not read.</summary>
+    [Theory]
+    [InlineData("<!doctype html><html><body>Login</body></html>", null, true)]
+    [InlineData("<!DOCTYPE html>\n<html lang=en><meta charset=utf-8><body>Login", null, true)]
+    [InlineData("<?xml version=\"1.0\"?><!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\"><html xmlns=\"http://www.w3.org/1999/xhtml\"><body/></html>", null, true)]
+    [InlineData("<html><body>Login</body></html>", null, true)]
+    [InlineData("{\"error\":\"session expired\"}", null, true)]
+    [InlineData("<?xml version=\"1.0\"?><ix:header xmlns:ix=\"http://www.xbrl.org/2013/inlineXBRL\"/>", ".xml", false)]
+    [InlineData("<?xml version=\"1.0\"?><!DOCTYPE x [<!ENTITY e SYSTEM \"file:///c:/windows/win.ini\">]><x>&e;</x>", ".xml", false)]
+    [InlineData("<?xml version=\"1.0\"?><!-- only a comment, cut off", null, false)]
+    [InlineData("plain text", null, false)]
+    public void A_body_is_judged_by_its_root_element(string body, string? extension, bool sessionReply)
+    {
+        var bytes = Encoding.UTF8.GetBytes(body);
+        Assert.Equal(extension, DownloadedFileType.ExtensionOf(bytes));
+        Assert.Equal(sessionReply, DownloadedFileType.LooksLikeSessionReply(bytes));
     }
 
     [Fact]
