@@ -68,10 +68,10 @@ public class LitigationBaselineRiskTests
         Assert.Equal(LitigationRiskTier.R3, Assess(type: forum, caseType: "Appeal").Tier);
 
     [Fact]
-    public void A_cheque_bounce_case_against_the_company_or_with_no_stated_side_is_critical_but_not_when_the_company_is_the_complainant()
+    public void A_cheque_bounce_case_against_the_company_is_critical_but_not_when_the_side_is_unstated_or_the_company_is_complainant()
     {
         Assert.Equal(LitigationRiskTier.R3, Assess(type: "districtcourt", caseType: "Complaint under Section 138 Negotiable Instruments Act", side: LitigationCompanySide.AgainstCompany).Tier);
-        Assert.Equal(LitigationRiskTier.R3, Assess(type: "districtcourt", caseType: "Complaint under Section 138 Negotiable Instruments Act").Tier);
+        Assert.Equal(LitigationRiskTier.R1, Assess(type: "districtcourt", caseType: "Complaint under Section 138 Negotiable Instruments Act").Tier);
         Assert.Equal(LitigationRiskTier.R1, Assess(type: "districtcourt", caseType: "Complaint under Section 138 Negotiable Instruments Act", side: LitigationCompanySide.ByCompany).Tier);
     }
 
@@ -86,7 +86,8 @@ public class LitigationBaselineRiskTests
     [Fact]
     public void A_criminal_case_is_critical_while_pending_for_the_company_and_high_when_disposed_or_brought_by_it()
     {
-        Assert.Equal(LitigationRiskTier.R3, Assess(type: "districtcourt", caseType: "Criminal Misc. Bail Application").Tier);
+        Assert.Equal(LitigationRiskTier.R3, Assess(type: "districtcourt", caseType: "Criminal Misc. Bail Application", side: LitigationCompanySide.AgainstCompany).Tier);
+        Assert.Equal(LitigationRiskTier.R2, Assess(type: "districtcourt", caseType: "Criminal Misc. Bail Application").Tier);
         Assert.Equal(LitigationRiskTier.R2, Assess(type: "districtcourt", caseType: "Criminal Case", status: LitigationCaseStatusBucket.Disposed).Tier);
         Assert.Equal(LitigationRiskTier.R2, Assess(type: "districtcourt", caseType: "Criminal Case", side: LitigationCompanySide.ByCompany).Tier);
     }
@@ -214,6 +215,16 @@ public class LitigationCompanySidesTests
     [Fact]
     public void With_no_company_names_the_side_is_unknown() =>
         Assert.Equal(LitigationCompanySide.Unknown, LitigationCompanySides.Determine(["A"], ["B"], []));
+
+    [Theory]
+    [InlineData("Coastal Projects Long Products Limited")]
+    [InlineData("COASTAL PROJECTS INFRASTRUCTURE LIMITED")]
+    [InlineData("X Long Products Limited")]
+    public void A_different_company_sharing_a_prefix_is_not_the_company(string party)
+    {
+        Assert.False(LitigationCompanySides.IsCompany(party, ["COASTAL PROJECTS"]));
+        Assert.False(LitigationCompanySides.IsCompany(party, ["X"]));
+    }
 }
 
 public sealed class LitigationCasePageServiceTests : IAsyncLifetime

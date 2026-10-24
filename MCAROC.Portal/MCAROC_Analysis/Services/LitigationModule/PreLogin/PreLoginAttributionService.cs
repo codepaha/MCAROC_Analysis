@@ -159,7 +159,9 @@ public sealed class PreLoginAttributionService(
             else
             {
                 // Individual target (Director): rules only until #452
-                var (outcome, rule, party, reason) = AssessIndividual(parties, target.TargetName);
+                var profile = GetPersonTargetProfile(job, target, data);
+                var personAssessment = PersonAttributionRules.Assess(parties, profile, rec?.District, rec?.State, rec?.CaseType, rec?.Court);
+                var (outcome, rule, party, reason) = (personAssessment.Outcome, personAssessment.Rule, personAssessment.Party, personAssessment.Reason);
                 ApplyOutcome(sc, target, outcome, rule, party, reason, mode, now, ref suggested, ref autoExcluded);
                 assessed++;
                 if (outcome == LitigationAttributionOutcome.Attributed) attributed++;
@@ -346,6 +348,44 @@ public sealed class PreLoginAttributionService(
                 });
             }
         }
+    }
+
+    private static PersonTargetProfile GetPersonTargetProfile(
+        PreLoginReportJob job,
+        PreLoginLitigationTarget target,
+        InstaReportData? data)
+    {
+        var targetName = target.TargetName;
+        string? din = null;
+        string? pan = null;
+        string? fatherOrHusband = null;
+
+        var dMatch = data?.Directors?.FirstOrDefault(d => string.Equals(d.Name?.Trim(), targetName.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (dMatch != null && !string.IsNullOrWhiteSpace(dMatch.DinOrPan))
+        {
+            var clean = dMatch.DinOrPan.Trim();
+            if (clean.Length == 8 && clean.All(char.IsDigit)) din = clean;
+            else if (clean.Length == 10) pan = clean;
+        }
+
+        var pMatch = data?.Assignment?.CompanyDetails?.DirectorsOrPartners?.FirstOrDefault(p => string.Equals(p.Name?.Trim(), targetName.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (pMatch != null)
+        {
+            din ??= pMatch.Din;
+            pan ??= pMatch.Pan;
+        }
+
+        var address = data?.Company?.Address ?? data?.Assignment?.CompanyDetails?.RegisteredOfficeAddress;
+        var associatedCompany = job.SubmittedCompanyName;
+
+        return new PersonTargetProfile(
+            Name: targetName,
+            FatherOrHusbandName: fatherOrHusband,
+            District: address,
+            State: null,
+            AssociatedCompanyName: associatedCompany,
+            Din: din,
+            Pan: pan);
     }
 
     private static (LitigationAttributionOutcome Outcome, string Rule, string? Party, string Reason) AssessIndividual(

@@ -23,8 +23,7 @@ public enum LitigationForum { SupremeCourt, HighCourt, DistrictCourt, Nclt, Ncla
 
 /// <summary>#step 1 of the litigation case page: a baseline R0–R3 tier worked out from the case's own court record — forum, case type,
 /// act, status and the company's side — by the owner's Case Risk Analysis trigger table for a bank lender. It is free and
-/// reproducible. It is deliberately conservative where the record is silent (an unknown status is treated as pending, an unknown side
-/// as against the company), and it is a baseline: when the orders have been analysed they can confirm or raise it.
+/// reproducible. It is deliberately conservative where the record is silent (an unknown status is treated as pending), and it is a baseline: when the orders have been analysed they can confirm or raise it.
 /// Triggers are evaluated in strict order and the first match decides.</summary>
 public static partial class LitigationBaselineRisk
 {
@@ -68,7 +67,7 @@ public static partial class LitigationBaselineRisk
             .Where(s => !string.IsNullOrWhiteSpace(s))).ToLowerInvariant();
         var compact = NonAlphanumeric().Replace(text, "");
         var pendingLike = c.Status != LitigationCaseStatusBucket.Disposed; // an unknown status is treated as pending
-        var againstOrUnknown = c.Side != LitigationCompanySide.ByCompany;
+        var isAgainst = c.Side is LitigationCompanySide.AgainstCompany or LitigationCompanySide.Both;
 
         bool Has(params string[] words) => words.Any(w => text.Contains(w, StringComparison.Ordinal));
         bool HasCompact(params string[] words) => words.Any(w => compact.Contains(w, StringComparison.Ordinal));
@@ -93,15 +92,15 @@ public static partial class LitigationBaselineRisk
         if (Has("sarfaesi", "securitisation", "securitization")) return new(LitigationRiskTier.R3, "SARFAESI action", "A SARFAESI proceeding is critical at any status.");
         if (HasCompact("wilfuldefaulter")) return new(LitigationRiskTier.R3, "Wilful defaulter", "A wilful-defaulter matter is critical at any status.");
         if (HasCompact("pocso") || Has("domestic violence")) return new(LitigationRiskTier.R3, "POCSO / domestic violence proceeding", "Critical at any status.");
-        if (againstOrUnknown && (Has("negotiable instrument", "n.i. act", "ni act") || HasCompact("section138", "s138", "ni138") || (Has("cheque") && Has("138"))))
+        if (isAgainst && (Has("negotiable instrument", "n.i. act", "ni act") || HasCompact("section138", "s138", "ni138") || (Has("cheque") && Has("138"))))
             return new(LitigationRiskTier.R3, "NI Act s.138 (cheque bounce)", "A cheque-bounce prosecution against the company is critical at any status.");
         if (Has("cbi") && criminal) return new(LitigationRiskTier.R3, "CBI case", "A CBI case is critical at any status.");
         if (pendingLike && Has("recovery suit", "money suit", "money recovery", "possession suit", "execution petition", "execution application", "darkhast"))
             return new(LitigationRiskTier.R3, "Pending recovery / execution proceeding",
                 "A pending recovery suit or execution proceeding is critical while it is pending; once disposed it falls to a lower tier.");
-        if (pendingLike && criminal && againstOrUnknown)
-            return new(LitigationRiskTier.R3, "Pending criminal case (company as accused or side unstated)",
-                "A pending criminal case puts the company's management or the company itself at risk; a side the record does not state is treated as against the company.");
+        if (pendingLike && criminal && isAgainst)
+            return new(LitigationRiskTier.R3, "Pending criminal case (company as accused)",
+                "A pending criminal case puts the company's management or the company itself at risk.");
 
         // ── R2: high ──
         if (criminal) return new(LitigationRiskTier.R2, "Criminal case — historical or non-accused exposure", "A criminal case stays a material disclosure item even when disposed.");
@@ -181,13 +180,17 @@ public sealed class LitigationRiskProfile
 /// most records, so it is worked out here: a party name that is the company's name — current or earlier — marks that side.</summary>
 public static partial class LitigationCompanySides
 {
-    private static readonly string[] SuffixWords = ["LIMITED", "LTD", "PRIVATE", "PVT", "LLP", "COMPANY", "CO", "INDIA", "THE", "M", "MS", "OF", "AND"];
+    private static readonly string[] SuffixWords = ["LIMITED", "LTD", "PRIVATE", "PVT", "P", "LLP", "COMPANY", "CO", "INDIA", "THE", "M", "MS", "OF", "AND"];
 
     /// <summary>A name reduced to its distinguishing words: upper case, no punctuation, no "Ltd / Pvt / M/s" and the like.</summary>
     public static string Core(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return "";
-        var words = NonAlnum().Replace(MessrsPrefix().Replace(name.ToUpperInvariant(), " ").Replace("&", " AND "), " ")
+        var t = StatusNote().Replace(name.ToUpperInvariant(), " ");
+        t = RepresentativePrefix().Replace(t, " ");
+        t = RepresentationTail().Replace(t, " ");
+        t = Others().Replace(t, " ");
+        var words = NonAlnum().Replace(MessrsPrefix().Replace(t, " ").Replace("&", " AND "), " ")
             .Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Where(w => !SuffixWords.Contains(w));
         return string.Join(' ', words);
@@ -201,8 +204,6 @@ public static partial class LitigationCompanySides
         {
             if (core.Length == 0) continue;
             if (party == core) return true;
-            // "COASTAL PROJECTS (IN LIQUIDATION)" and "COASTAL PROJECTS" are the same party; a one-word core must match whole.
-            if (core.Contains(' ') && (party.StartsWith(core + " ", StringComparison.Ordinal) || party.EndsWith(" " + core, StringComparison.Ordinal))) return true;
         }
         return false;
     }
@@ -248,6 +249,18 @@ public static partial class LitigationCompanySides
         LitigationCompanySide.Both => "Company appears on both sides",
         _ => "Company's side not stated"
     };
+
+    [GeneratedRegex(@"\(\s*(?:IN|UNDER)\s+(?:LIQUIDATION|CIRP|CIR\s+PROCESS|RESOLUTION|INSOLVENCY)[^)]*\)", RegexOptions.CultureInvariant)]
+    private static partial Regex StatusNote();
+
+    [GeneratedRegex(@"^(?:.{0,60}?\b)?(?:THE\s+)?(?:CHAIRMAN|CHAIRPERSON|MANAGING\s+DIRECTOR|GENERAL\s+MANAGER|CHIEF\s+EXECUTIVE\s+OFFICER|AUTHORI[SZ]ED\s+SIGNATORY|(?:OFFICIAL\s+)?LIQUIDATOR|(?:INTERIM\s+)?RESOLUTION\s+PROFESSIONAL|ADMINISTRATOR)\s*(?:,|\bOF\b|\bFOR\b|\bTO\b)\s*", RegexOptions.CultureInvariant)]
+    private static partial Regex RepresentativePrefix();
+
+    [GeneratedRegex(@"\b(?:(?:THROUGH|THR\.?|THRU)\s+ITS\b|REPRESENTED\s+BY\b|REP\.?\s*BY\b|REPD\.?\s*BY\b|ITS\s+(?:MANAGING\s+DIRECTOR|DIRECTOR|AUTHORI[SZ]ED|PROPRIETOR|PARTNER)\b).*$", RegexOptions.CultureInvariant)]
+    private static partial Regex RepresentationTail();
+
+    [GeneratedRegex(@"[\s,]*(?:&|\bAND\b)\s*(?:\d{1,4}\s*)?(?:ANR|ANOTHER|ORS|OTHERS)\b[\s,.;)]*$", RegexOptions.CultureInvariant)]
+    private static partial Regex Others();
 
     [GeneratedRegex(@"[^A-Z0-9]+")]
     private static partial Regex NonAlnum();

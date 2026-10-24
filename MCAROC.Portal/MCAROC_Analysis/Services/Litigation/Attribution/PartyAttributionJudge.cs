@@ -7,17 +7,28 @@ namespace MCAROC_Analysis.Services.LitigationData.Attribution;
 /// <summary>The company the parties are judged against.</summary>
 public sealed record AttributionSubject(string LegalName, IReadOnlyList<string> FormerNames, string? Identifier, string? RegisteredOffice);
 
+/// <summary>The individual person (director, partner, proprietor) the parties are judged against (#452).</summary>
+public sealed record PersonAttributionSubject(
+    string PersonName,
+    string? FatherOrHusband = null,
+    string? District = null,
+    string? State = null,
+    string? AssociatedCompany = null,
+    string? Din = null);
+
 public sealed record PartyJudgement(string Party, LitigationPartyVerdictKind Verdict, string Reason);
 
 /// <summary>
-/// The judgement for party names the rules could not settle (#489, decision a; owner: an AI judges whether the party is the company). One call per batch of
-/// distinct names. The answer for a name counts only if it quotes that name exactly as given; a name left out, misquoted or with an unknown verdict counts
-/// as <see cref="LitigationPartyVerdictKind.Unsure"/>, never as the company.
+/// The judgement for party names the rules could not settle (#489, decision a; owner: an AI judges whether the party is the company or individual).
+/// One call per batch of distinct names. The answer for a name counts only if it quotes that name exactly as given; a name left out, misquoted
+/// or with an unknown verdict counts as <see cref="LitigationPartyVerdictKind.Unsure"/>, never as the target.
 /// </summary>
 public static class PartyAttributionJudge
 {
     public const string PromptMarker = "MCAROC PARTY ATTRIBUTION";
     public const string PromptVersion = "party-attribution-v1";
+    public const string PersonPromptMarker = "MCAROC PERSON ATTRIBUTION";
+    public const string PersonPromptVersion = "person-attribution-v1";
     public const int BatchSize = 40;
 
     public static string BuildPrompt(AttributionSubject subject, IReadOnlyList<string> parties)
@@ -38,6 +49,33 @@ public static class PartyAttributionJudge
             - "different": another company, body or person. A person is "different" even when described by the company's name
               (for example its director or former director). A group or associated company with a different name is "different".
             - "unsure": the name alone cannot tell.
+            Quote each party exactly as given. Reason in at most 20 words.
+            Answer with JSON only: {"verdicts": [{"party": "...", "verdict": "same|different|unsure", "reason": "..."}]}
+
+            Parties:
+            """);
+        for (var i = 0; i < parties.Count; i++) sb.AppendLine($"{i + 1}. {parties[i]}");
+        return sb.ToString();
+    }
+
+    public static string BuildPrompt(PersonAttributionSubject subject, IReadOnlyList<string> parties)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"{PersonPromptMarker} ({PersonPromptVersion})");
+        sb.AppendLine("You decide whether each party name below, taken from Indian court records, is the individual described here.");
+        sb.AppendLine();
+        sb.AppendLine($"Individual: {subject.PersonName}");
+        if (!string.IsNullOrWhiteSpace(subject.FatherOrHusband)) sb.AppendLine($"Father / Husband: {subject.FatherOrHusband}");
+        if (!string.IsNullOrWhiteSpace(subject.District) || !string.IsNullOrWhiteSpace(subject.State))
+            sb.AppendLine($"Location: {string.Join(", ", new[] { subject.District, subject.State }.Where(s => !string.IsNullOrWhiteSpace(s)))}");
+        if (!string.IsNullOrWhiteSpace(subject.AssociatedCompany)) sb.AppendLine($"Associated company / firm: {subject.AssociatedCompany}");
+        if (!string.IsNullOrWhiteSpace(subject.Din)) sb.AppendLine($"Director Identification Number (DIN): {subject.Din}");
+        sb.AppendLine();
+        sb.AppendLine("""
+            For each party answer:
+            - "same": the party is this individual, however written: transliteration variants (Md/Mohd/Mohammed), honorifics (Shri/Smt/Dr), or minor spelling difference with matching corroboration.
+            - "different": another person, another company, a relative of this person (e.g. S/O this person), or someone with a conflicting father/location.
+            - "unsure": the name matches but lacks corroborating details to confirm whether it is this individual.
             Quote each party exactly as given. Reason in at most 20 words.
             Answer with JSON only: {"verdicts": [{"party": "...", "verdict": "same|different|unsure", "reason": "..."}]}
 

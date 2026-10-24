@@ -246,7 +246,7 @@ public class PreLoginModuleScopeAndAttributionTests : IAsyncLifetime
         var sc2 = await db.Set<ModuleScopeCase>().FirstAsync(s => s.ScopeId == scope.ScopeId && s.Alias == "C-2");
 
         Assert.Equal(LitigationAttributionOutcome.Attributed, sc1.AttributionOutcome);
-        Assert.Equal("exact-individual-name", sc1.AttributionRule);
+        Assert.Equal("probable-lender-link", sc1.AttributionRule);
         Assert.False(sc1.IsExcluded);
 
         Assert.Equal(LitigationAttributionOutcome.NotTheCompany, sc2.AttributionOutcome);
