@@ -114,6 +114,98 @@ public sealed class IntegrationCaptureTests : IDisposable
         Assert.True(await Client(new Tool(), blocked).IsMcaAvailableForRefreshAsync(isLlp: false, CancellationToken.None));
     }
 
+    /// <summary>A body the network hands over in pieces, of no declared length, and optionally failing part way: what a real reply stream does.</summary>
+    private sealed class NetworkStream(byte[] data, int failAfter = -1) : Stream
+    {
+        private int _pos;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (failAfter >= 0 && _pos >= failAfter) throw new IOException("connection reset");
+            var n = Math.Min(Math.Min(count, 8192), data.Length - _pos);
+            Array.Copy(data, _pos, buffer, offset, n);
+            _pos += n;
+            return n;
+        }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private async Task<HttpResponseMessage> SendThroughCapture(byte[] body, string mediaType, bool declareLength, int failAfter = -1)
+    {
+        var inner = new LambdaHandler(_ =>
+        {
+            var content = new StreamContent(new NetworkStream(body, failAfter));
+            content.Headers.ContentType = new(mediaType);
+            if (declareLength) content.Headers.ContentLength = body.Length;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+        });
+        var http = new HttpClient(new CaptureHandler(CaptureService.ReferenceTool, _dir, NullLogger<CaptureHandler>.Instance) { InnerHandler = inner });
+        return await http.GetAsync("https://reference.test/server/common/api/service.php", HttpCompletionOption.ResponseHeadersRead);
+    }
+
+    private static byte[] JsonOf(int bytes) => Encoding.UTF8.GetBytes("{\"rows\":\"" + new string('x', bytes) + "\"}");
+
+    /// <summary>Review of #520: a reply over the cap must reach the caller byte for byte whether its length is declared or not, and whatever its type.</summary>
+    [Theory]
+    [InlineData("application/json", false)]
+    [InlineData("application/json", true)]
+    [InlineData("text/plain", false)]
+    [InlineData("text/xml", false)]
+    [InlineData("application/xml", true)]
+    public async Task A_reply_over_the_cap_reaches_the_caller_byte_for_byte(string mediaType, bool declareLength)
+    {
+        var body = mediaType.Contains("xml") ? Encoding.UTF8.GetBytes("<?xml version=\"1.0\"?><xbrl>" + new string('x', 5 * 1024 * 1024) + "</xbrl>") : JsonOf(5 * 1024 * 1024);
+
+        using var response = await SendThroughCapture(body, mediaType, declareLength);
+        Assert.Equal(body, await response.Content.ReadAsByteArrayAsync());
+
+        var record = JsonDocument.Parse(Assert.Single(Captured())).RootElement;
+        Assert.Equal(JsonValueKind.Null, record.GetProperty("body").ValueKind);
+    }
+
+    [Fact]
+    public async Task A_small_text_reply_is_kept_and_still_reaches_the_caller_whole()
+    {
+        var body = JsonOf(1000);
+        using var response = await SendThroughCapture(body, "application/json", declareLength: false);
+        Assert.Equal(body, await response.Content.ReadAsByteArrayAsync());
+        Assert.Equal(1000, JsonDocument.Parse(Assert.Single(Captured())).RootElement.GetProperty("body").GetProperty("rows").GetString()!.Length);
+    }
+
+    [Fact]
+    public async Task A_reply_that_fails_part_way_fails_the_caller_the_same_way()
+    {
+        using var response = await SendThroughCapture(JsonOf(100_000), "application/json", declareLength: false, failAfter: 40_000);
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => response.Content.ReadAsByteArrayAsync());
+        Assert.Contains("connection reset", ex.ToString());
+    }
+
+    /// <summary>Review of #520: a presigned link's credential, session token and signature are access material on any host, allowed or not.</summary>
+    [Fact]
+    public void A_presigned_link_loses_its_access_parameters_wherever_it_appears()
+    {
+        const string signed = "https://bucket.s3.amazonaws.com/orders/order.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=EXAMPLEACCESSKEY%2F20261024%2Fap-south-1%2Fs3%2Faws4_request"
+            + "&X-Amz-Date=20261024T000000Z&X-Amz-Expires=900&X-Amz-Security-Token=EXAMPLESESSIONTOKEN&X-Amz-SignedHeaders=host&X-Amz-Signature=EXAMPLESIGNATURE";
+        var encoded = Uri.EscapeDataString(signed);
+        var json = $"{{\"orders\":[{{\"pdf_url\":\"{signed}\",\"link\":\"{encoded}\"}}],\"X-Amz-Signature\":\"EXAMPLESIGNATURE\"}}";
+
+        foreach (var leaky in new[] { signed, encoded, json })
+            Assert.Contains(CaptureRedactor.FindLeaks(leaky), l => l.StartsWith("signed link"));
+
+        var redacted = CaptureRedactor.RedactBody(json, accountCall: false) + CaptureRedactor.RedactText(signed) + CaptureRedactor.RedactText(encoded);
+        foreach (var secret in new[] { "EXAMPLEACCESSKEY", "EXAMPLESESSIONTOKEN", "EXAMPLESIGNATURE" }) Assert.DoesNotContain(secret, redacted);
+        Assert.True(CaptureRedactor.FindLeaks(redacted).Count == 0, string.Join(" | ", CaptureRedactor.FindLeaks(redacted)) + " IN " + redacted);
+        Assert.Contains("bucket.s3.amazonaws.com/orders/order.pdf", redacted); // the link's place stays: it is the fixture's fact
+        Assert.Contains("X-Amz-Expires=900", redacted);
+    }
+
     [Theory]
     [InlineData("{\"t\":\"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4eHh4In0.abcdefgh\"}", "token")]
     [InlineData("Cookie: PHPSESSID=abcdef123", "cookie")]

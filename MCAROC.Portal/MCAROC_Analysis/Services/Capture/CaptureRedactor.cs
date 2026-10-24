@@ -11,6 +11,9 @@ public static partial class CaptureRedactor
 {
     public const string Redacted = "<redacted>";
 
+    /// <summary>Indented, and without escaping "&lt;" or "&amp;": a fixture is read by people, and "<redacted>" would hide the marker from the leak check.</summary>
+    public static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
     /// <summary>Hosts a committed fixture may name: the placeholders written in place of the real services, and our own order-document bucket.</summary>
     public static readonly IReadOnlyList<string> AllowedHosts = ["reference.test", "litigation.test", "amazonaws.com", "w3.org", "xbrl.org"];
 
@@ -19,6 +22,8 @@ public static partial class CaptureRedactor
     {
         "u", "p", "password", "pwd", "secret_key", "secretKey", "jwtToken", "jwt", "token", "access_token", "authorization", "cookie",
         "userId", "user_id", "userName", "user_name", "username", "email", "mobile", "phone", "teamId", "team_id", "mcc",
+        // A presigned document link's access material, when it appears as its own field.
+        "X-Amz-Credential", "X-Amz-Security-Token", "X-Amz-Signature", "X-Goog-Credential", "X-Goog-Signature", "AWSAccessKeyId", "Signature",
     };
 
     /// <summary>Calls whose whole reply is about our account (who is signed in, the sign-in itself): every value is replaced, the shape kept.</summary>
@@ -57,7 +62,7 @@ public static partial class CaptureRedactor
         try
         {
             var node = JsonNode.Parse(body);
-            return RedactJson(node, accountCall)?.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) ?? body;
+            return RedactJson(node, accountCall)?.ToJsonString(Json) ?? body;
         }
         catch (JsonException)
         {
@@ -68,6 +73,8 @@ public static partial class CaptureRedactor
     /// <summary>Patterns that must never reach a fixture: a signed token, a session cookie, an e-mail address, a host other than <see cref="AllowedHosts"/>.</summary>
     public static string RedactText(string text)
     {
+        // A signed link's credential, session token and signature are reusable access, not company facts: removed on every host, allowed or not.
+        text = SignedUrlParameter().Replace(text, m => m.Groups["name"].Value + m.Groups["eq"].Value + Redacted);
         text = Jwt().Replace(text, Redacted);
         text = SessionCookie().Replace(text, "$1=" + Redacted);
         text = Email().Replace(text, Redacted);
@@ -88,11 +95,18 @@ public static partial class CaptureRedactor
         leaks.AddRange(Url().Matches(text).Where(m => !IsAllowedHost(m.Groups["host"].Value) && m.Groups["host"].Value != "redacted.test")
             .Select(m => "host " + m.Groups["host"].Value));
         leaks.AddRange(IpAddress().Matches(text).Select(m => "address " + m.Value));
+        leaks.AddRange(SignedUrlParameter().Matches(text).Where(m => m.Groups["value"].Value is not (Redacted or "%3Credacted%3E"))
+            .Select(m => "signed link " + m.Groups["name"].Value));
         return leaks;
     }
 
     private static bool IsAllowedHost(string host) =>
         AllowedHosts.Any(a => host.Equals(a, StringComparison.OrdinalIgnoreCase) || host.EndsWith("." + a, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>A presigned link's access parameters, raw or URL-encoded (<c>X-Amz-Signature=</c>, <c>X-Amz-Signature%3D</c>), in a URL, a query
+    /// string or JSON text.</summary>
+    [GeneratedRegex(@"(?<name>X-Amz-(?:Credential|Security-Token|Signature)|X-Goog-(?:Credential|Signature)|AWSAccessKeyId|(?<=[?&]|%26|%3F)Signature)(?<eq>=|%3D)(?<value>(?:(?!%26)[^&\s""'#<\\])+)", RegexOptions.IgnoreCase)]
+    private static partial Regex SignedUrlParameter();
 
     [GeneratedRegex(@"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*")]
     private static partial Regex Jwt();

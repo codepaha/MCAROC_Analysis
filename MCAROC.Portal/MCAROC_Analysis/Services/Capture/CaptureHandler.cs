@@ -30,8 +30,7 @@ public sealed class CaptureHandler(string service, string directory, ILogger<Cap
         if (record is null) return response;
         try
         {
-            await DescribeResponseAsync(record, response, cancellationToken);
-            Write(record);
+            await CaptureResponseAsync(record, response, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -76,27 +75,55 @@ public sealed class CaptureHandler(string service, string directory, ILogger<Cap
         return record;
     }
 
-    private async Task DescribeResponseAsync(JsonObject record, HttpResponseMessage response, CancellationToken ct)
+    /// <summary>A document (any type but JSON or plain text/HTML, XML attachments included), or a reply declared larger than the cap, is recorded by
+    /// type and size and left untouched. A text reply is never buffered either: the caller reads it through <see cref="CaptureTeeStream"/>, which hands
+    /// on every byte, error and cancellation exactly as received and keeps a copy of up to <see cref="MaxTextBytes"/>; the record is written once the
+    /// caller has read to the end (or disposed the reply).</summary>
+    private async Task CaptureResponseAsync(JsonObject record, HttpResponseMessage response, CancellationToken ct)
     {
-        var mediaType = response.Content.Headers.ContentType?.MediaType ?? "";
+        var original = response.Content;
+        var mediaType = original.Headers.ContentType?.MediaType ?? "";
         record["status"] = (int)response.StatusCode;
         record["contentType"] = mediaType;
-        record["contentLength"] = response.Content.Headers.ContentLength;
-        // Only JSON and plain-text replies are read; a body of any other type (or of unknown size beyond the cap) is never buffered, so a capture
-        // can't consume or truncate a document the client is about to stream to disk.
-        var isText = mediaType.Contains("json") || mediaType.StartsWith("text/");
-        if (!isText || response.Content.Headers.ContentLength is null or > MaxTextBytes && !mediaType.Contains("json"))
+        record["contentLength"] = original.Headers.ContentLength;
+        var isText = mediaType.Contains("json") || mediaType is "text/plain" or "text/html";
+        if (!isText || original.Headers.ContentLength > MaxTextBytes)
         {
-            record["body"] = null; // a document: its type and size are the fixture's facts, and it streams on unread
+            record["body"] = null; // its type and size are the fixture's facts; it streams on unread
+            Write(record);
             return;
         }
-        await response.Content.LoadIntoBufferAsync(MaxTextBytes, ct);
-        var text = await response.Content.ReadAsStringAsync(ct);
-        var path = record["url"]!.GetValue<string>();
-        var account = CaptureRedactor.IsAccountCall(path, record["action"]?.GetValue<string>());
-        var redacted = CaptureRedactor.RedactBody(text, account);
-        try { record["body"] = JsonNode.Parse(redacted); }
-        catch (JsonException) { record["body"] = redacted; }
+
+        var account = CaptureRedactor.IsAccountCall(record["url"]!.GetValue<string>(), record["action"]?.GetValue<string>());
+        var inner = await original.ReadAsStreamAsync(ct);
+        // Nothing below can fail: once the reply's stream has been taken, the caller must get it back whatever happens to the capture.
+        var tee = new CaptureTeeStream(inner, original, MaxTextBytes, (bytes, complete) => Finish(record, bytes, complete, account));
+        var replacement = new StreamContent(tee);
+        foreach (var header in original.Headers) replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        response.Content = replacement;
+    }
+
+    private void Finish(JsonObject record, byte[]? bytes, bool complete, bool account)
+    {
+        try
+        {
+            if (bytes is null || !complete)
+            {
+                record["body"] = null;
+                record["bodyNote"] = bytes is null ? $"larger than {MaxTextBytes / (1024 * 1024)} MB; not kept" : "the caller did not read it to the end; not kept";
+            }
+            else
+            {
+                var redacted = CaptureRedactor.RedactBody(System.Text.Encoding.UTF8.GetString(bytes), account);
+                try { record["body"] = JsonNode.Parse(redacted); }
+                catch (JsonException) { record["body"] = redacted; }
+            }
+            Write(record);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Capture could not record a {Service} response", service);
+        }
     }
 
     private void Write(JsonObject record)
@@ -105,7 +132,7 @@ public sealed class CaptureHandler(string service, string directory, ILogger<Cap
         var seq = Interlocked.Increment(ref _sequence);
         var action = record["action"]?.GetValue<string>() ?? Path.GetFileNameWithoutExtension(new Uri(record["url"]!.GetValue<string>()).AbsolutePath);
         var name = $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{seq:D5}-{service}-{Safe(action)}.json";
-        File.WriteAllText(Path.Combine(directory, name), record.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(Path.Combine(directory, name), record.ToJsonString(CaptureRedactor.Json));
     }
 
     private static string Safe(string s) => string.Concat(s.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '_'));
