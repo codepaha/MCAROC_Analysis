@@ -97,6 +97,8 @@ public static partial class CaptureRedactor
         leaks.AddRange(IpAddress().Matches(text).Select(m => "address " + m.Value));
         leaks.AddRange(SignedUrlParameter().Matches(text).Where(m => m.Groups["value"].Value is not (Redacted or "%3Credacted%3E"))
             .Select(m => "signed link " + m.Groups["name"].Value));
+        // A wide encoding read as a narrow one leaves NULs between letters, and field names the redactor never recognised: not a fixture to trust.
+        if (text.Contains('\0') || text.Contains("\\u0000", StringComparison.OrdinalIgnoreCase)) leaks.Add("encoding artifact (NUL characters)");
         return leaks;
     }
 

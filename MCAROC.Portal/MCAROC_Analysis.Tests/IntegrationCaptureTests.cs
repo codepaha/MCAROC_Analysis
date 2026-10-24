@@ -142,7 +142,7 @@ public sealed class IntegrationCaptureTests : IDisposable
         var inner = new LambdaHandler(_ =>
         {
             var content = new StreamContent(new NetworkStream(body, failAfter));
-            content.Headers.ContentType = new(mediaType);
+            content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(mediaType);
             if (declareLength) content.Headers.ContentLength = body.Length;
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
         });
@@ -186,6 +186,76 @@ public sealed class IntegrationCaptureTests : IDisposable
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => response.Content.ReadAsByteArrayAsync());
         Assert.Contains("connection reset", ex.ToString());
     }
+
+    private const string AccountJson = "{\"userName\":\"PRIVATE_ACCOUNT_NAME\",\"password\":\"PRIVATE_PASSWORD\",\"company\":\"NATURE EARTH KHARKHODA LLP\"}";
+
+    /// <summary>Review of #520: a reply is decoded the way the caller decodes it (byte-order mark, then declared charset), so a UTF-16 JSON reply's
+    /// fields are redacted by name, and the caller still gets every byte.</summary>
+    [Theory]
+    [InlineData("utf-16le-bom", null)]
+    [InlineData("utf-16be-bom", null)]
+    [InlineData("utf-16le", "utf-16")]
+    [InlineData("utf-16be", "utf-16BE")]
+    [InlineData("utf-8-bom", null)]
+    [InlineData("utf-8", "utf-8")]
+    public async Task A_reply_in_any_declared_or_marked_encoding_is_redacted_by_field(string form, string? charset)
+    {
+        var body = form switch
+        {
+            "utf-16le-bom" => [.. Encoding.Unicode.GetPreamble(), .. Encoding.Unicode.GetBytes(AccountJson)],
+            "utf-16be-bom" => [.. Encoding.BigEndianUnicode.GetPreamble(), .. Encoding.BigEndianUnicode.GetBytes(AccountJson)],
+            "utf-16le" => Encoding.Unicode.GetBytes(AccountJson),
+            "utf-16be" => Encoding.BigEndianUnicode.GetBytes(AccountJson),
+            "utf-8-bom" => [.. Encoding.UTF8.GetPreamble(), .. Encoding.UTF8.GetBytes(AccountJson)],
+            _ => Encoding.UTF8.GetBytes(AccountJson),
+        };
+        using var response = await SendThroughCapture(body, "application/json" + (charset is null ? "" : "; charset=" + charset), declareLength: false);
+
+        Assert.Equal(body, await response.Content.ReadAsByteArrayAsync());
+        var file = Assert.Single(Captured());
+        Assert.DoesNotContain("PRIVATE_PASSWORD", file.Replace("\0", "").Replace("\\u0000", ""));
+        Assert.DoesNotContain("PRIVATE_ACCOUNT_NAME", file.Replace("\0", "").Replace("\\u0000", ""));
+        var captured = JsonDocument.Parse(file).RootElement.GetProperty("body");
+        Assert.Equal(CaptureRedactor.Redacted, captured.GetProperty("password").GetString());
+        Assert.Equal("NATURE EARTH KHARKHODA LLP", captured.GetProperty("company").GetString());
+        Assert.Empty(CaptureRedactor.FindLeaks(file));
+    }
+
+    /// <summary>What cannot be decoded, or is declared JSON and does not parse, is not kept: never written as text whose fields could not be checked.</summary>
+    [Theory]
+    [InlineData("application/json; charset=x-no-such-charset", "utf-8")]
+    [InlineData("application/json; charset=utf-8", "invalid-utf-8")]
+    [InlineData("application/json; charset=us-ascii", "utf-16le")]
+    [InlineData("application/json", "not-json")]
+    public async Task An_undecodable_or_unparsable_reply_is_omitted_and_still_reaches_the_caller(string contentType, string form)
+    {
+        var body = form switch
+        {
+            "invalid-utf-8" => [(byte)'{', (byte)'"', 0xC3, 0x28, (byte)'"', (byte)':', (byte)'1', (byte)'}'],
+            "utf-16le" => Encoding.Unicode.GetBytes(AccountJson),
+            "not-json" => Encoding.UTF8.GetBytes("password=PRIVATE_PASSWORD; user=PRIVATE_ACCOUNT_NAME"),
+            _ => Encoding.UTF8.GetBytes(AccountJson),
+        };
+        var inner = new LambdaHandler(_ =>
+        {
+            var content = new StreamContent(new NetworkStream(body));
+            content.Headers.TryAddWithoutValidation("Content-Type", contentType);
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+        });
+        var http = new HttpClient(new CaptureHandler(CaptureService.ReferenceTool, _dir, NullLogger<CaptureHandler>.Instance) { InnerHandler = inner });
+        using var response = await http.GetAsync("https://reference.test/server/common/api/data", HttpCompletionOption.ResponseHeadersRead);
+
+        Assert.Equal(body, await response.Content.ReadAsByteArrayAsync());
+        var file = Assert.Single(Captured());
+        Assert.DoesNotContain("PRIVATE_PASSWORD", file.Replace("\0", "").Replace("\\u0000", ""));
+        var record = JsonDocument.Parse(file).RootElement;
+        Assert.Equal(JsonValueKind.Null, record.GetProperty("body").ValueKind);
+        Assert.Contains("not kept", record.GetProperty("bodyNote").GetString());
+    }
+
+    [Fact]
+    public void A_fixture_left_with_nul_characters_fails_the_leak_check() =>
+        Assert.Contains(CaptureRedactor.FindLeaks("{\"body\":\"{\\u0000\\\"\\u0000p\\u0000\"}"), l => l.StartsWith("encoding artifact"));
 
     /// <summary>Review of #520: a presigned link's credential, session token and signature are access material on any host, allowed or not.</summary>
     [Fact]

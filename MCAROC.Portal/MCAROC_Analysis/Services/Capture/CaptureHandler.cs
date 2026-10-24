@@ -97,26 +97,34 @@ public sealed class CaptureHandler(string service, string directory, ILogger<Cap
         var account = CaptureRedactor.IsAccountCall(record["url"]!.GetValue<string>(), record["action"]?.GetValue<string>());
         var inner = await original.ReadAsStreamAsync(ct);
         // Nothing below can fail: once the reply's stream has been taken, the caller must get it back whatever happens to the capture.
-        var tee = new CaptureTeeStream(inner, original, MaxTextBytes, (bytes, complete) => Finish(record, bytes, complete, account));
+        var charset = original.Headers.ContentType?.CharSet;
+        var isJson = mediaType.Contains("json");
+        var tee = new CaptureTeeStream(inner, original, MaxTextBytes, (bytes, complete) => Finish(record, bytes, complete, account, charset, isJson));
         var replacement = new StreamContent(tee);
         foreach (var header in original.Headers) replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
         response.Content = replacement;
     }
 
-    private void Finish(JsonObject record, byte[]? bytes, bool complete, bool account)
+    private void Finish(JsonObject record, byte[]? bytes, bool complete, bool account, string? charset, bool isJson)
     {
         try
         {
-            if (bytes is null || !complete)
+            string? Omit(string why)
             {
                 record["body"] = null;
-                record["bodyNote"] = bytes is null ? $"larger than {MaxTextBytes / (1024 * 1024)} MB; not kept" : "the caller did not read it to the end; not kept";
+                record["bodyNote"] = why;
+                return null;
             }
-            else
+            var text = bytes is null ? Omit($"larger than {MaxTextBytes / (1024 * 1024)} MB; not kept")
+                : !complete ? Omit("the caller did not read it to the end; not kept")
+                : Decode(bytes, charset) ?? Omit($"not decodable as {charset ?? "UTF-8"}; not kept");
+            if (text is not null)
             {
-                var redacted = CaptureRedactor.RedactBody(System.Text.Encoding.UTF8.GetString(bytes), account);
-                try { record["body"] = JsonNode.Parse(redacted); }
-                catch (JsonException) { record["body"] = redacted; }
+                // A JSON reply is kept only once it parses, so its fields are redacted by name; text that only looks like JSON could carry them unredacted.
+                var parsed = isJson ? TryParse(text) : null;
+                if (isJson && parsed is null) Omit("declared JSON but did not parse; not kept");
+                else if (parsed is not null) record["body"] = JsonNode.Parse(CaptureRedactor.RedactBody(text, account));
+                else record["body"] = CaptureRedactor.RedactBody(text, account);
             }
             Write(record);
         }
@@ -124,6 +132,38 @@ public sealed class CaptureHandler(string service, string directory, ILogger<Cap
         {
             logger.LogWarning(ex, "Capture could not record a {Service} response", service);
         }
+    }
+
+    /// <summary>The text as <see cref="HttpContent.ReadAsStringAsync()"/> would read it: a byte-order mark first, else the declared charset, else UTF-8.
+    /// Strict: an unknown charset, bytes invalid in it, or a NUL in the result (a wide encoding read as a narrow one) give null, not mangled text.</summary>
+    internal static string? Decode(byte[] bytes, string? charset)
+    {
+        System.Text.Encoding encoding;
+        var bom = 0;
+        if (bytes is [0xEF, 0xBB, 0xBF, ..]) { encoding = new System.Text.UTF8Encoding(false, true); bom = 3; }
+        else if (bytes is [0xFF, 0xFE, ..]) { encoding = new System.Text.UnicodeEncoding(false, false, true); bom = 2; }
+        else if (bytes is [0xFE, 0xFF, ..]) { encoding = new System.Text.UnicodeEncoding(true, false, true); bom = 2; }
+        else
+        {
+            try
+            {
+                var named = string.IsNullOrWhiteSpace(charset) ? System.Text.Encoding.UTF8 : System.Text.Encoding.GetEncoding(charset.Trim('"', ' '));
+                encoding = (System.Text.Encoding)named.Clone();
+                encoding.DecoderFallback = System.Text.DecoderFallback.ExceptionFallback;
+            }
+            catch (ArgumentException) { return null; } // a charset this runtime does not know
+        }
+        try
+        {
+            var text = encoding.GetString(bytes, bom, bytes.Length - bom);
+            return text.Contains('\0') ? null : text;
+        }
+        catch (System.Text.DecoderFallbackException) { return null; }
+    }
+
+    private static JsonNode? TryParse(string text)
+    {
+        try { return JsonNode.Parse(text); } catch (JsonException) { return null; }
     }
 
     private void Write(JsonObject record)
