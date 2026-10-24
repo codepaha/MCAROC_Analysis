@@ -10,14 +10,20 @@ failed at five points that the 10-13 runs and the Coastal demo never reached.
 
    | Setting | Value for the round | Why |
    |---|---|---|
-   | `IntegrationCapture:Directory` | an empty folder outside the repository, e.g. `E:\e2e-captures\<yyyymmdd>` | every reference-tool and litigation-API call is saved, redacted, for fixtures |
+   | `IntegrationCapture:Directory` | an empty folder outside the repository, e.g. `E:\e2e-captures\<yyyymmdd>` | every reference-tool and litigation-API call is saved, redacted, for fixtures. **Only when the portal runs in Development** (`ASPNETCORE_ENVIRONMENT=Development`, as `dotnet run` does by default); in any other environment the setting is ignored |
    | `Pipeline:Policy:LitigationSearch`, `:LitigationAnalysis`, `:CourtUpdate` | `false` while the litigation service is down; `true` for profiles 6 and 7 | each run copies the policy when it is created, so set this **before** creating the requests |
    | `LitigationKeywords:UseGeneratedKeywords` | `true` | profiles 6 and 7 check the generated keyword list |
 
    Restart the portal after changing them.
-2. **Pre-flight:** open `/Preflight` (sidebar → Pre-flight). Every row must pass, except the litigation rows while litigation is off. Fix any failure
-   first. The run is kept in the audit log, and each request's run record shows the last pre-flight made before it was created.
-3. **Companies:** the list proposed for each profile (posted on #514) is approved, including which ones may spend a credit (at most 2 for the round).
+2. **Pre-flight:** open `/Preflight` (sidebar → Pre-flight). Fix any failure first. The run is kept in the audit log, and each request's run
+   record shows the last pre-flight made before it was created. Every row must pass, with these exceptions:
+   - the litigation rows (litigation API, order-document host, court update), while litigation is off;
+   - the MCA status rows may show **Warning: ALERT** (the peak-filing notice). Runs proceed through it, and it is what profile 8 needs. A **Fail**
+     (MCA maintenance) still blocks the round: refreshes and first probes wait until it clears.
+3. **Capture check:** the pre-flight itself calls the reference tool, so the capture folder must now hold files such as
+   `…-reference-tool-getUpgradeStatusForCompanies.json`. If it is empty, capture isn't on (wrong environment, or the portal wasn't restarted):
+   fix that before creating any request, or the round's calls won't be kept.
+4. **Companies:** the list proposed for each profile (posted on #514) is approved, including which ones may spend a credit (at most 2 for the round).
 
 ## The profiles
 
