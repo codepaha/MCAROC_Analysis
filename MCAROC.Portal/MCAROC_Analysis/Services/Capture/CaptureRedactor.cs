@@ -64,6 +64,24 @@ public static partial class CaptureRedactor
         }
     }
 
+    /// <summary>A recorded call (capture format) redacted again by today's rules: its payload, plain query, request body and reply. A capture written before a
+    /// field joined <see cref="SecretKeys"/> (created_by and srcTeamId did, after the 2026-09-22 traces) still carries it, and the pattern check behind
+    /// <see cref="FindLeaks"/> cannot see a numeric id; promoting a capture therefore always runs this.</summary>
+    public static JsonObject Reredact(JsonObject record)
+    {
+        var copy = record.DeepClone().AsObject();
+        var account = IsAccountCall(copy["url"]?.GetValue<string>() ?? "", copy["action"]?.GetValue<string>());
+        copy["payload"] = RedactJson(copy["payload"]?.DeepClone());
+        copy["query"] = RedactJson(copy["query"]?.DeepClone());
+        copy["requestBody"] = RedactJson(copy["requestBody"]?.DeepClone(), everything: account);
+        copy["body"] = copy["body"] switch
+        {
+            JsonValue v when v.TryGetValue<string>(out var text) => JsonValue.Create(account ? Redacted : RedactText(text)),
+            var body => RedactJson(body?.DeepClone(), everything: account),
+        };
+        return copy;
+    }
+
     /// <summary>A response body as text: JSON redacted field by field, anything else by pattern (tokens, cookies, e-mail addresses, hosts).</summary>
     public static string RedactBody(string body, bool accountCall)
     {

@@ -3,7 +3,7 @@
 // would still hold a token, cookie, e-mail address, real host or IP address.
 //
 // Reads any of:
-//   - a capture-mode directory (IntegrationCapture:Directory), already redacted: the selected calls are copied and re-checked;
+//   - a capture-mode directory (IntegrationCapture:Directory): the selected calls are redacted again by today's rules and re-checked;
 //   - a browser trace: a JSON list of {url, method, status, action, req_payload, response};
 //   - a named-call trace: a JSON object of {name: {url, method, payload, status_code, headers, body}}.
 //
@@ -22,7 +22,9 @@ var actions = (Arg("--actions=")?.Split(',', StringSplitOptions.RemoveEmptyEntri
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
 var records = Directory.Exists(input) ? FromCaptureDirectory(input) : FromTrace(JsonNode.Parse(File.ReadAllText(input))!);
-records = records.Where(r => r["action"]?.GetValue<string>() is { } a && actions.Contains(a)).ToList();
+// Every record is redacted again by today's rules, whatever its input: a capture made before a field joined the list still carries it, and the
+// leak check below can't see a numeric id.
+records = records.Where(r => r["action"]?.GetValue<string>() is { } a && actions.Contains(a)).Select(CaptureRedactor.Reredact).ToList();
 if (records.Count == 0)
 {
     Console.Error.WriteLine("No calls matched; nothing written.");

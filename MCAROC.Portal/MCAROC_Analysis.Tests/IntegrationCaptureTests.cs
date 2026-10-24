@@ -269,6 +269,29 @@ public sealed class IntegrationCaptureTests : IDisposable
         Assert.DoesNotContain("116723", redacted.ToJsonString());
     }
 
+    /// <summary>Review of #521: a capture written before created_by and srcTeamId joined the list still carries them, and the pattern check cannot see a
+    /// numeric id, so promoting a capture redacts it again by today's rules (payload, plain query, request body and reply).</summary>
+    [Fact]
+    public void An_older_capture_is_redacted_again_by_todays_rules()
+    {
+        var old = System.Text.Json.Nodes.JsonNode.Parse("""
+            {"service":"reference-tool","url":"https://reference.test/server/user/service.php","action":"getAssetTeams",
+             "payload":{"action":"getAssetTeams","bid":"abc","created_by":116723},"query":{"v":"3.1.6","userId":"116723"},"requestBody":null,
+             "status":200,"contentType":"application/json",
+             "body":{"teams":[{"teamId":0,"addedAt":"2026-09-22T09:41:59+05:30","created_by":116723,"srcTeamId":120019}]}}
+            """)!.AsObject();
+        Assert.Empty(CaptureRedactor.FindLeaks(old.ToJsonString())); // what the leak check alone would let through
+
+        var record = CaptureRedactor.Reredact(old);
+        var promoted = record.ToJsonString(CaptureRedactor.Json);   // as the promotion tool writes it
+
+        Assert.DoesNotContain("116723", promoted);
+        Assert.DoesNotContain("120019", promoted);
+        Assert.Equal("2026-09-22T09:41:59+05:30", record["body"]!["teams"]![0]!["addedAt"]!.GetValue<string>()); // company facts kept
+        Assert.Equal("abc", record["payload"]!["bid"]!.GetValue<string>());
+        Assert.Contains("116723", old.ToJsonString());             // the input is not changed in place
+    }
+
     [Fact]
     public void A_fixture_left_with_nul_characters_fails_the_leak_check() =>
         Assert.Contains(CaptureRedactor.FindLeaks("{\"body\":\"{\\u0000\\\"\\u0000p\\u0000\"}"), l => l.StartsWith("encoding artifact"));
