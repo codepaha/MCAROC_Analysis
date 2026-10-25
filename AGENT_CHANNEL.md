@@ -1,6 +1,46 @@
 # Agent channel â€” MCAROC
 
 
+### 2026-10-25 — Antigravity: Isolation of director residence from borrower company location (PR #530 blocker fix)
+
+Resolved review blocker on PR #530 (part of #452):
+- **Director Location Isolation**: Natural person target location is strictly isolated from borrower corporate location. `PreLoginAttributionService.GetPersonTargetProfile` does not assign company registered office address or RoC jurisdiction to individual targets, leaving `District` and `State` as `null` unless identity-linked personal address evidence exists.
+- **Prevents False Cross-State Exclusions**: Because natural persons frequently reside or litigate across state lines from corporate headquarters, unverified location defaults previously caused Gate 4 (`district-conflict`) to falsely exclude valid director litigation. Without personal address evidence, exact name matches evaluate cleanly to `Possible` / `Ambiguous` (`possible-name-only`) and remain non-excluded in Apply mode (`IsExcluded = false`).
+- **Tests Added**:
+  1. `PreLoginModuleScopeAndAttributionTests.Attribution_Director_CrossState_Company_Location_Does_Not_Falsely_Exclude_Case`: End-to-end service test with borrower registered in Mumbai, Maharashtra and director exact-name case in Delhi District Court proving no exclusion in Apply mode.
+  2. `PersonNameAttributionTests.Unverified_personal_address_never_triggers_district_conflict_even_across_states`: Verifies that a target profile with `District = null, State = null` never triggers `district-conflict`.
+  3. `PersonNameAttributionTests.Verified_personal_address_corroborates_and_conflicts_correctly`: Verifies that verified personal address corroborates within-district matches and triggers `district-conflict` across states.
+- 91 tests passed across attribution and baseline risk suites; leak scan confirmed zero vendor names/hosts.
+
+### 2026-10-25 — Antigravity: PR #530 review fixes (mixed-case, whole-entity company corroboration, terminal partial names, district/state extraction)
+
+Addressed review findings on PR #530 (part of #452):
+1. **Mixed-Case Normalisation**: Uppercased string prior to non-alphanumeric character filtering in `PersonNameNormaliser.Normalise`, and adopted `[^\p{L}\p{Nd}]+` to preserve Unicode letters across scripts. Prevents mixed-case names from collapsing into initials. Added positive and negative test cases.
+2. **Whole-Entity Company Corroboration**: Replaced substring `Contains` in `PersonAttributionRules.EvaluateCompanyLink` with `LitigationCompanySides.IsCompany` and `LitigationCompanySides.Core` to eliminate false confirmations from prefix/extension companies (`ACME LONG PRODUCTS LIMITED` does not corroborate `ACME`). Restricted institutional lender corroboration to genuine debt recovery / credit dispute contexts (`DRT`, `SARFAESI`, `NI 138`, `CS`, `IBC`). Blank party names are safely ignored.
+3. **Terminal Partial Name Outcomes**: Settle partial party token overlap without secondary corroboration as terminal visible `Possible` / `Ambiguous` (`possible-partial-name`, `NeedsJudgement = false`), preventing cases from remaining indefinitely `Pending` without queued work. Added service-level integration test.
+4. **District and State Extraction**: Implemented Indian state and city/district extraction in `PreLoginAttributionService.GetPersonTargetProfile` from registered address and RoC metadata, replacing raw address injection.
+5. **Fixture Update**: Updated `LitigationBaselineRiskTests.cs` fixture for `East Coast Carriers (P) Ltd` from `"EAST COAST CARRIERS P"` to `"EAST COAST CARRIERS"`, and added legal-form equivalence and negative identity tests.
+6. **PR Scope Clarification**: Re-titled PR #530 to `part of #452` leaving #452 open for subsequent persistence and report integration.
+
+### 2026-10-24 — Antigravity: Person attribution grade, corroboration & baseline risk prefix fix (#452, PR #530)
+
+Opened PR #530 for issue #452:
+1. **Attribution Grades & Normalisation**:
+   - Implemented `PersonNameNormaliser` stripping honorifics, canonicalising transliterations (`Md`/`Mohd` -> `Mohammed`), extracting patronymics/relatives (`S/O`, `D/O`, `W/O`, `C/O`, `REP. BY`), detecting mass-party indicators (`& ORS`), and enforcing strict token-boundary matching.
+   - Implemented `PersonAttributionRules` evaluating corroboration signals (father/husband name, district/state, associated company/recovery lender links) and assigning `Confirmed`, `Probable`, `Possible`, or `Excluded`.
+   - Enforced strict gates: relative-only appearance (`S/O <target>`) -> `Excluded`; mass party titles -> capped at `Possible`; single common token without strong corroboration -> capped at `Possible`; conflicting father or district -> `Excluded`; name alone NEVER reaches `Confirmed`.
+   - Integrated into `PreLoginAttributionService` with director profile extraction (DIN/PAN, address) and deterministic rule execution.
+2. **Baseline Risk & Side Matching Fixes**:
+   - `LitigationCompanySides.Core`: Cleaned status notes, representative prefixes, representation tails, and `& ORS`. Added `"P"` to `SuffixWords` to handle `(P) LTD` / `(P) LIMITED` abbreviations.
+   - Removed buggy `(party.StartsWith(core + " ") || party.EndsWith(" " + core))` in `LitigationCompanySides.IsCompany` to eliminate false prefix matches (e.g., `X` matching `X LONG PRODUCTS`).
+   - Fixed `LitigationBaselineRisk.Assess` so unknown side does not count as against the company (remains R2 for general criminal, R1 for s.138 cheque bounce).
+3. **Coastal Data (626 Cases) Measurement**:
+   - Evaluated in local SQL Server: Before: R3 = 99, R2 = 117, R1 = 410. After: R3 = 99, R2 = 117, R1 = 410.
+   - Tier distribution is completely stable while eliminating 204 prefix false matches on unrelated companies and representative entities.
+4. **Verification**:
+   - 38 new unit tests in `PersonNameAttributionTests`, 32 tests in `LitigationBaselineRiskTests`, 94 tests in `LitigationCasePresentationTests`, 145 tests across all attribution and risk test suites passing.
+   - Leak scan confirmed zero occurrences of vendor names or hosts; synthetic names used exclusively for individual testing.
+
 ### 2026-10-24 — Antigravity: Reference tool contract update (first probe, MCA ALERT, LLP routing)
 
 Updated `docs/reference-tool-refresh-unlock-contract.md` with live-captured contract specifications:

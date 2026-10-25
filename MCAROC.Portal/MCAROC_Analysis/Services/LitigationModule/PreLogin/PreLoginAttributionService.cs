@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
@@ -159,7 +160,9 @@ public sealed class PreLoginAttributionService(
             else
             {
                 // Individual target (Director): rules only until #452
-                var (outcome, rule, party, reason) = AssessIndividual(parties, target.TargetName);
+                var profile = GetPersonTargetProfile(job, target, data);
+                var personAssessment = PersonAttributionRules.Assess(parties, profile, rec?.District, rec?.State, rec?.CaseType, rec?.Court);
+                var (outcome, rule, party, reason) = (personAssessment.Outcome, personAssessment.Rule, personAssessment.Party, personAssessment.Reason);
                 ApplyOutcome(sc, target, outcome, rule, party, reason, mode, now, ref suggested, ref autoExcluded);
                 assessed++;
                 if (outcome == LitigationAttributionOutcome.Attributed) attributed++;
@@ -346,6 +349,49 @@ public sealed class PreLoginAttributionService(
                 });
             }
         }
+    }
+
+    private static PersonTargetProfile GetPersonTargetProfile(
+        PreLoginReportJob job,
+        PreLoginLitigationTarget target,
+        InstaReportData? data)
+    {
+        var targetName = target.TargetName;
+        string? din = null;
+        string? pan = null;
+        string? fatherOrHusband = null;
+
+        var dMatch = data?.Directors?.FirstOrDefault(d => string.Equals(d.Name?.Trim(), targetName.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (dMatch != null && !string.IsNullOrWhiteSpace(dMatch.DinOrPan))
+        {
+            var clean = dMatch.DinOrPan.Trim();
+            if (clean.Length == 8 && clean.All(char.IsDigit)) din = clean;
+            else if (clean.Length == 10) pan = clean;
+        }
+
+        var pMatch = data?.Assignment?.CompanyDetails?.DirectorsOrPartners?.FirstOrDefault(p => string.Equals(p.Name?.Trim(), targetName.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (pMatch != null)
+        {
+            din ??= pMatch.Din;
+            pan ??= pMatch.Pan;
+        }
+
+        var associatedCompany = job.SubmittedCompanyName ?? data?.Company?.Name ?? data?.Assignment?.CompanyDetails?.CompanyName;
+
+        // Individual director address is NOT the borrower company's registered office or RoC.
+        // Unless identity-linked personal address evidence exists for the person, personal location is left null
+        // so cross-state cases are not falsely excluded by company geography.
+        string? personalDistrict = null;
+        string? personalState = null;
+
+        return new PersonTargetProfile(
+            Name: targetName,
+            FatherOrHusbandName: fatherOrHusband,
+            District: personalDistrict,
+            State: personalState,
+            AssociatedCompanyName: associatedCompany,
+            Din: din,
+            Pan: pan);
     }
 
     private static (LitigationAttributionOutcome Outcome, string Rule, string? Party, string Reason) AssessIndividual(

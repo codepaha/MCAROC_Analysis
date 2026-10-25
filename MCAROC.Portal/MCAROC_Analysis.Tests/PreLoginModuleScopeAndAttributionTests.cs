@@ -246,12 +246,106 @@ public class PreLoginModuleScopeAndAttributionTests : IAsyncLifetime
         var sc2 = await db.Set<ModuleScopeCase>().FirstAsync(s => s.ScopeId == scope.ScopeId && s.Alias == "C-2");
 
         Assert.Equal(LitigationAttributionOutcome.Attributed, sc1.AttributionOutcome);
-        Assert.Equal("exact-individual-name", sc1.AttributionRule);
+        Assert.Equal("probable-lender-link", sc1.AttributionRule);
         Assert.False(sc1.IsExcluded);
 
         Assert.Equal(LitigationAttributionOutcome.NotTheCompany, sc2.AttributionOutcome);
         Assert.Equal("corporate-entities-only", sc2.AttributionRule);
         Assert.True(sc2.IsExcluded);
+    }
+
+    [Fact]
+    public async Task Attribution_Director_Partial_Name_Settles_As_Ambiguous_Without_Hanging_In_Pending()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            new("district", "City Court", "CNR350", "CS/350/2023", "CS", "2023", "PENDING", "-", "2023-01-01", "Delhi", "Delhi",
+                "Director: Ramesh Kumar (partial match)", "2023-05-01", "Pending",
+                CaseRowId: "C-1", Petitioner: "RAMESH", Respondent: "STATE OF TEST")
+        };
+        var (job, _, _) = await CreateJobWithTargetsAsync(db, "TEST ENTERPRISES", "RAMESH KUMAR", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var opt = Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Apply });
+        var attributionService = new PreLoginAttributionService(db, opt, new ServiceCollection().BuildServiceProvider());
+
+        var res = await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        Assert.Equal(1, res.Assessed);
+        Assert.Equal(1, res.Ambiguous);
+        Assert.Equal(0, res.Attributed);
+
+        var scope = await db.Set<ModuleScope>().FirstAsync(s => s.Kind == ModuleScopeKind.Assignment && s.ExternalId == job.PreLoginReportJobId);
+        var sc1 = await db.Set<ModuleScopeCase>().FirstAsync(s => s.ScopeId == scope.ScopeId && s.Alias == "C-1");
+
+        // Terminal visible unconfirmed result, NOT left in Pending
+        Assert.Equal(LitigationAttributionOutcome.Ambiguous, sc1.AttributionOutcome);
+        Assert.Equal("possible-partial-name", sc1.AttributionRule);
+    }
+
+    [Fact]
+    public async Task Attribution_Director_CrossState_Company_Location_Does_Not_Falsely_Exclude_Case()
+    {
+        await using var db = Ctx();
+        // Borrower company registered in Mumbai, Maharashtra (RoC-Mumbai)
+        var company = new InstaCompany(
+            "ACME LIMITED", "RoC-Mumbai", "12345", "Company", "Sub", "Class", "1000", "1000", "1", "2020",
+            "123 Nariman Point, Mumbai, Maharashtra 400021", "info@acme.test", "Unlisted", "2023", "2023", "Active");
+
+        var cases = new List<LegalCaseRecord>
+        {
+            // Director case in Delhi (cross-state from company office)
+            new("district", "Delhi District Court", "CNR360", "CS/360/2023", "CS", "2023", "PENDING", "-", "2023-01-01", "Delhi", "Delhi",
+                "Director: Ramesh Kumar (cross-state)", "2023-05-01", "Pending",
+                CaseRowId: "C-1", Petitioner: "RAMESH KUMAR", Respondent: "STATE OF TEST")
+        };
+
+        var job = new PreLoginReportJob
+        {
+            Cin = "U12345MH2020PLC123456",
+            SubmittedCompanyName = "ACME LIMITED",
+            Status = PreLoginReportJobStatus.Completed,
+            DataJson = JsonSerializer.Serialize(new InstaReportData(company, [], [], new InstaLegalCases(0, 0, 1, 0, 0, 0, 0, 0, 0, cases))),
+            CreatedUtc = DateTime.UtcNow
+        };
+        db.PreLoginReportJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var borrower = new PreLoginLitigationTarget
+        {
+            PreLoginReportJobId = job.PreLoginReportJobId,
+            TargetKind = PreLoginTargetKind.Borrower,
+            TargetName = "ACME LIMITED",
+            Status = "Completed"
+        };
+        var dirRamesh = new PreLoginLitigationTarget
+        {
+            PreLoginReportJobId = job.PreLoginReportJobId,
+            TargetKind = PreLoginTargetKind.Director,
+            TargetName = "RAMESH KUMAR",
+            Status = "Completed"
+        };
+        db.PreLoginLitigationTargets.AddRange(borrower, dirRamesh);
+        await db.SaveChangesAsync();
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var opt = Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Apply });
+        var attributionService = new PreLoginAttributionService(db, opt, new ServiceCollection().BuildServiceProvider());
+
+        var res = await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        var scope = await db.Set<ModuleScope>().FirstAsync(s => s.Kind == ModuleScopeKind.Assignment && s.ExternalId == job.PreLoginReportJobId);
+        var sc1 = await db.Set<ModuleScopeCase>().FirstAsync(s => s.ScopeId == scope.ScopeId && s.Alias == "C-1");
+
+        // Cross-state company office must NOT trigger district-conflict or exclude the case in Apply mode!
+        Assert.Equal(LitigationAttributionOutcome.Ambiguous, sc1.AttributionOutcome);
+        Assert.Equal("possible-name-only", sc1.AttributionRule);
+        Assert.False(sc1.IsExcluded);
     }
 
     [Fact]

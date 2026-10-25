@@ -68,10 +68,10 @@ public class LitigationBaselineRiskTests
         Assert.Equal(LitigationRiskTier.R3, Assess(type: forum, caseType: "Appeal").Tier);
 
     [Fact]
-    public void A_cheque_bounce_case_against_the_company_or_with_no_stated_side_is_critical_but_not_when_the_company_is_the_complainant()
+    public void A_cheque_bounce_case_against_the_company_is_critical_but_not_when_the_side_is_unstated_or_the_company_is_complainant()
     {
         Assert.Equal(LitigationRiskTier.R3, Assess(type: "districtcourt", caseType: "Complaint under Section 138 Negotiable Instruments Act", side: LitigationCompanySide.AgainstCompany).Tier);
-        Assert.Equal(LitigationRiskTier.R3, Assess(type: "districtcourt", caseType: "Complaint under Section 138 Negotiable Instruments Act").Tier);
+        Assert.Equal(LitigationRiskTier.R1, Assess(type: "districtcourt", caseType: "Complaint under Section 138 Negotiable Instruments Act").Tier);
         Assert.Equal(LitigationRiskTier.R1, Assess(type: "districtcourt", caseType: "Complaint under Section 138 Negotiable Instruments Act", side: LitigationCompanySide.ByCompany).Tier);
     }
 
@@ -86,7 +86,8 @@ public class LitigationBaselineRiskTests
     [Fact]
     public void A_criminal_case_is_critical_while_pending_for_the_company_and_high_when_disposed_or_brought_by_it()
     {
-        Assert.Equal(LitigationRiskTier.R3, Assess(type: "districtcourt", caseType: "Criminal Misc. Bail Application").Tier);
+        Assert.Equal(LitigationRiskTier.R3, Assess(type: "districtcourt", caseType: "Criminal Misc. Bail Application", side: LitigationCompanySide.AgainstCompany).Tier);
+        Assert.Equal(LitigationRiskTier.R2, Assess(type: "districtcourt", caseType: "Criminal Misc. Bail Application").Tier);
         Assert.Equal(LitigationRiskTier.R2, Assess(type: "districtcourt", caseType: "Criminal Case", status: LitigationCaseStatusBucket.Disposed).Tier);
         Assert.Equal(LitigationRiskTier.R2, Assess(type: "districtcourt", caseType: "Criminal Case", side: LitigationCompanySide.ByCompany).Tier);
     }
@@ -160,9 +161,24 @@ public class LitigationCompanySidesTests
     [InlineData("M/s Coastal Projects Ltd.", "COASTAL PROJECTS")]
     [InlineData("COASTAL PROJECTS LIMITED (IN LIQUIDATION)", "COASTAL PROJECTS")]
     [InlineData("The Coastal Projects Private Limited", "COASTAL PROJECTS")]
-    [InlineData("East Coast Carriers (P) Ltd", "EAST COAST CARRIERS P")]
+    [InlineData("East Coast Carriers (P) Ltd", "EAST COAST CARRIERS")]
     public void Names_are_reduced_to_their_distinguishing_words(string name, string expectedStart) =>
         Assert.StartsWith(expectedStart, LitigationCompanySides.Core(name));
+
+    [Fact]
+    public void Core_name_reduction_treats_legal_form_variants_as_equivalent_and_rejects_unrelated_extensions()
+    {
+        var baseCore = LitigationCompanySides.Core("East Coast Carriers Limited");
+        Assert.Equal("EAST COAST CARRIERS", baseCore);
+        Assert.Equal(baseCore, LitigationCompanySides.Core("East Coast Carriers (P) Ltd"));
+        Assert.Equal(baseCore, LitigationCompanySides.Core("East Coast Carriers Pvt Ltd"));
+        Assert.Equal(baseCore, LitigationCompanySides.Core("East Coast Carriers Private Limited"));
+
+        // Negative identity: unrelated company extending the name must have different core
+        var differentCore = LitigationCompanySides.Core("East Coast Carriers Heavy Haulage Limited");
+        Assert.Equal("EAST COAST CARRIERS HEAVY HAULAGE", differentCore);
+        Assert.False(LitigationCompanySides.IsCompany("East Coast Carriers Heavy Haulage Limited", [baseCore]));
+    }
 
     [Fact]
     public void The_side_follows_which_list_names_the_company_current_or_earlier_name()
@@ -214,6 +230,16 @@ public class LitigationCompanySidesTests
     [Fact]
     public void With_no_company_names_the_side_is_unknown() =>
         Assert.Equal(LitigationCompanySide.Unknown, LitigationCompanySides.Determine(["A"], ["B"], []));
+
+    [Theory]
+    [InlineData("Coastal Projects Long Products Limited")]
+    [InlineData("COASTAL PROJECTS INFRASTRUCTURE LIMITED")]
+    [InlineData("X Long Products Limited")]
+    public void A_different_company_sharing_a_prefix_is_not_the_company(string party)
+    {
+        Assert.False(LitigationCompanySides.IsCompany(party, ["COASTAL PROJECTS"]));
+        Assert.False(LitigationCompanySides.IsCompany(party, ["X"]));
+    }
 }
 
 public sealed class LitigationCasePageServiceTests : IAsyncLifetime
