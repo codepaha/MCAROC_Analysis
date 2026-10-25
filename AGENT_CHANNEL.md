@@ -1,29 +1,20 @@
 # Agent channel â€” MCAROC
 
-### 2026-10-25 — Antigravity: Person attribution grade persistence, suggestion-first rule & unresolved KPI status (PR #534, part of #452)
+### 2026-10-25 — Antigravity: Preserve Probable grades for upgraded person matches (PR #534, part of #452)
 
-Updated PR #534 in worktree `E:/MCAROC_wt_person_counts` (branch `feat/452-person-attribution-ui-counts`):
-1. **Scope & Downstream Alignment**:
-   - Scoped PR #534 as `part of #452`, implementing entity/schema persistence, suggestion-first rule, and workspace UI/KPI separation (Verified vs. Possible namesake counts and Unresolved status banner). Downstream Word report generation and AI pipeline gating remain open for subsequent work under #452.
-2. **Predicate Parity & Existing-Row Upgrade (Review Finding 1 Fix)**:
-   - Synchronized Verified and Possible eligibility predicates across `PreLoginCaseAttributionDto.IsVerified` / `IsPossible`, `AssignmentDetailViewModel.VerifiedCasesCount` / `PossibleCasesCount`, and `ViewAssignment.cshtml` table rows (`data-is-verified`, `data-is-possible`). The UI filter and KPI counts now evaluate identical logic.
-   - Provided safe upgrade policy for existing rows with `AttributionGrade = null`:
-     - Added SQL backfill in EF migration `20261025060415_AddScopeCaseAttributionGradeAndSignals.cs` populating missing grades from settled `AttributionOutcome` (`Attributed` -> `Confirmed`, `NotTheCompany` -> `Excluded`, `Ambiguous` -> `Possible`).
-     - Added in-service safe upgrade path in `PreLoginAttributionService.CheckAttributionAsync` to backfill missing grades on settled rows without modifying exclusions, rule labels, or analyst decisions.
-     - Added fallback `effectiveGrade` in `GetCaseAttributionsForJobAsync` and view badge rendering so migrated rows display the proper grade badge and match the Verified filter immediately.
-   - Added regression test `Existing_Attributed_Scope_Row_With_Null_Grade_Counts_As_Verified_And_Matches_Verified_Filter` in `PreLoginAttributionUiTests.cs`.
-3. **Schema & Migration**:
-   - Added `PersonAttributionGrade? AttributionGrade` and `string? AttributionSignalsJson` to `LitigationCase` (`LitigationCase.cs`) and `ModuleScopeCase` (`ModuleEntities.cs`).
-   - Relocated `PersonAttributionGrade` enum to `MCAROC_Analysis.Data.Entities`.
-   - Updated entity type configurations in `AppDbContext` and `LitigationModuleModel`.
-   - Created EF Core migration `20261025060415_AddScopeCaseAttributionGradeAndSignals.cs` via `migrate.sh add`. Validated model snapshot parity with `migrate.sh check` (`PASS — migration fully captures current model`).
-4. **Suggestion-First Rule for Exclusions**:
-   - Person-match exclusions in Suggest mode are never automatically hidden or excluded (`sc.IsExcluded = false`). Instead, a `PreLoginAttributionDecision` is recorded with `Action = Suggested`, presenting the item to analysts with Accept/Reject controls and Trust Report tracking until explicitly switched to Apply mode.
-5. **Verification**:
-   - All 23 tests in `PreLoginAttributionUiTests` pass (including the existing-row regression).
-   - All 91 tests across `PersonNameAttributionTests`, `PreLoginModuleScopeAndAttributionTests`, and `LitigationBaselineRiskTests` pass.
-   - Full solution builds cleanly with 0 errors.
-   - Leak scan confirmed zero vendor tokens.
+Resolved second review finding on PR #534 in worktree `E:/MCAROC_wt_person_counts` (branch `feat/452-person-attribution-ui-counts`):
+1. **Preserve Probable Grades on Upgrade**:
+   - Implemented `PreLoginAttributionService.InferGrade(outcome, rule)` to preserve known `Probable` classifications from retained rule evidence:
+     - Person rules with plausible secondary signals (`probable-district-match`, `probable-relative-partial`, `probable-lender-link`) infer `PersonAttributionGrade.Probable`.
+     - Confirmed rules (`confirmed-father-match`, `confirmed-company-coparty`) and exact company matches (`exact`, `company-exact-name`, `judged-same`) infer `Confirmed`.
+     - Legacy or unclassified rules with `Attributed` outcome conservatively fall back to `Probable` rather than overstating evidence to `Confirmed`.
+     - Applied consistently in migration SQL backfill, in-service `CheckAttributionAsync` safe upgrade path, and view / DTO fallbacks.
+2. **Exclusions and Analyst Decisions Untouched**:
+   - Safe upgrade path fills missing `AttributionGrade` on settled rows without mutating `IsExcluded`, `ExclusionReason`, `AttributionOutcome`, or any existing `PreLoginAttributionDecision`.
+3. **Comprehensive Regression Testing**:
+   - Added theory test `Existing_Person_Attributed_Scope_Row_Preserves_Probable_And_Confirmed_Grades_Without_Overwriting_Decisions` covering `probable-lender-link`, `probable-district-match`, `probable-relative-partial`, `confirmed-father-match`, `confirmed-company-coparty`, and legacy unclassified rules.
+   - All 29 tests in `PreLoginAttributionUiTests` pass.
+   - Full solution builds cleanly with 0 errors; leak scan confirmed zero vendor tokens.
 
 ### 2026-10-25 - Owner: review workspace, evidence and CI rules
 

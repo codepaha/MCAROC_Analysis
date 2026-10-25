@@ -517,13 +517,7 @@
                                         var isUnconfirmed = attr?.IsUnconfirmed == true;
                                         var isVerified = attr?.IsVerified == true;
                                         var isPossible = attr?.IsPossible == true;
-                                        var effectiveGrade = attr?.Grade ?? (attr?.Outcome switch
-                                        {
-                                            MCAROC_Analysis.Data.Entities.LitigationAttributionOutcome.Attributed => MCAROC_Analysis.Data.Entities.PersonAttributionGrade.Confirmed,
-                                            MCAROC_Analysis.Data.Entities.LitigationAttributionOutcome.NotTheCompany => MCAROC_Analysis.Data.Entities.PersonAttributionGrade.Excluded,
-                                            MCAROC_Analysis.Data.Entities.LitigationAttributionOutcome.Ambiguous => MCAROC_Analysis.Data.Entities.PersonAttributionGrade.Possible,
-                                            _ => (MCAROC_Analysis.Data.Entities.PersonAttributionGrade?)null
-                                        });
+                                        var effectiveGrade = attr?.Grade ?? MCAROC_Analysis.Services.LitigationModule.PreLogin.PreLoginAttributionService.InferGrade(attr?.Outcome, attr?.Rule);
                                         <tr data-case-row-id="@c.CaseRowId"
                                             data-cnr="@c.CnrNumber"
                                             data-court="@c.Court"

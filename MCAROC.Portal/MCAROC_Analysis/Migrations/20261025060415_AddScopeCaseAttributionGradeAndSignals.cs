@@ -53,10 +53,18 @@ namespace MCAROC_Analysis.Migrations
 
             migrationBuilder.Sql(@"
                 UPDATE [litigation].[ScopeCases]
-                SET [AttributionGrade] = CASE [AttributionOutcome]
-                    WHEN 'Attributed' THEN 'Confirmed'
-                    WHEN 'NotTheCompany' THEN 'Excluded'
-                    WHEN 'Ambiguous' THEN 'Possible'
+                SET [AttributionGrade] = CASE 
+                    WHEN [AttributionOutcome] = 'NotTheCompany' THEN 'Excluded'
+                    WHEN [AttributionOutcome] = 'Ambiguous' THEN 'Possible'
+                    WHEN [AttributionOutcome] = 'Attributed' THEN 
+                        CASE 
+                            WHEN [AttributionRule] LIKE 'probable%' THEN 'Probable'
+                            WHEN [AttributionRule] LIKE 'confirmed%' THEN 'Confirmed'
+                            WHEN [AttributionRule] LIKE 'exact%' THEN 'Confirmed'
+                            WHEN [AttributionRule] = 'judged-same' THEN 'Confirmed'
+                            WHEN [AttributionRule] = 'company-exact-name' THEN 'Confirmed'
+                            ELSE 'Probable'
+                        END
                     ELSE [AttributionGrade]
                 END
                 WHERE [AttributionGrade] IS NULL AND [AttributionOutcome] IS NOT NULL;
@@ -64,10 +72,18 @@ namespace MCAROC_Analysis.Migrations
 
             migrationBuilder.Sql(@"
                 UPDATE [LitigationCases]
-                SET [AttributionGrade] = CASE [AttributionOutcome]
-                    WHEN 'Attributed' THEN 'Confirmed'
-                    WHEN 'NotTheCompany' THEN 'Excluded'
-                    WHEN 'Ambiguous' THEN 'Possible'
+                SET [AttributionGrade] = CASE 
+                    WHEN [AttributionOutcome] = 'NotTheCompany' THEN 'Excluded'
+                    WHEN [AttributionOutcome] = 'Ambiguous' THEN 'Possible'
+                    WHEN [AttributionOutcome] = 'Attributed' THEN 
+                        CASE 
+                            WHEN [AttributionRule] LIKE 'probable%' THEN 'Probable'
+                            WHEN [AttributionRule] LIKE 'confirmed%' THEN 'Confirmed'
+                            WHEN [AttributionRule] LIKE 'exact%' THEN 'Confirmed'
+                            WHEN [AttributionRule] = 'judged-same' THEN 'Confirmed'
+                            WHEN [AttributionRule] = 'company-exact-name' THEN 'Confirmed'
+                            ELSE 'Probable'
+                        END
                     ELSE [AttributionGrade]
                 END
                 WHERE [AttributionGrade] IS NULL AND [AttributionOutcome] IS NOT NULL;

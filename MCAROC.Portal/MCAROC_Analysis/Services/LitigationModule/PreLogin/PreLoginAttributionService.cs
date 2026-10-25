@@ -119,13 +119,7 @@ public sealed class PreLoginAttributionService(
                 // Safe upgrade policy: if AttributionGrade is missing on an already settled row, backfill it without touching decisions or exclusions
                 if (sc.AttributionGrade == null)
                 {
-                    sc.AttributionGrade = sc.AttributionOutcome switch
-                    {
-                        LitigationAttributionOutcome.Attributed => PersonAttributionGrade.Confirmed,
-                        LitigationAttributionOutcome.NotTheCompany => PersonAttributionGrade.Excluded,
-                        LitigationAttributionOutcome.Ambiguous => PersonAttributionGrade.Possible,
-                        _ => null
-                    };
+                    sc.AttributionGrade = InferGrade(sc.AttributionOutcome, sc.AttributionRule);
                 }
                 continue;
             }
@@ -933,6 +927,31 @@ public sealed class PreLoginAttributionService(
         return true;
     }
 
+    public static PersonAttributionGrade? InferGrade(LitigationAttributionOutcome? outcome, string? rule)
+    {
+        if (outcome == null) return null;
+        return outcome switch
+        {
+            LitigationAttributionOutcome.NotTheCompany => PersonAttributionGrade.Excluded,
+            LitigationAttributionOutcome.Ambiguous => PersonAttributionGrade.Possible,
+            LitigationAttributionOutcome.Attributed => IsKnownConfirmedRule(rule)
+                ? PersonAttributionGrade.Confirmed
+                : PersonAttributionGrade.Probable,
+            _ => null
+        };
+    }
+
+    private static bool IsKnownConfirmedRule(string? rule)
+    {
+        if (string.IsNullOrWhiteSpace(rule)) return false;
+        if (rule.StartsWith("probable", StringComparison.OrdinalIgnoreCase)) return false;
+        if (rule.StartsWith("confirmed", StringComparison.OrdinalIgnoreCase)) return true;
+        if (rule.StartsWith("exact", StringComparison.OrdinalIgnoreCase)) return true;
+        if (rule.Equals("judged-same", StringComparison.OrdinalIgnoreCase)) return true;
+        if (rule.Equals("company-exact-name", StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
     public async Task<IReadOnlyDictionary<string, PreLoginCaseAttributionDto>> GetCaseAttributionsForJobAsync(long jobId, CancellationToken ct = default)
     {
         var scope = await db.Set<ModuleScope>().AsNoTracking()
@@ -972,13 +991,7 @@ public sealed class PreLoginAttributionService(
 
             bool isUnconfirmed = sc.AttributionOutcome == LitigationAttributionOutcome.Ambiguous;
 
-            var effectiveGrade = sc.AttributionGrade ?? (sc.AttributionOutcome switch
-            {
-                LitigationAttributionOutcome.Attributed => PersonAttributionGrade.Confirmed,
-                LitigationAttributionOutcome.NotTheCompany => PersonAttributionGrade.Excluded,
-                LitigationAttributionOutcome.Ambiguous => PersonAttributionGrade.Possible,
-                _ => (PersonAttributionGrade?)null
-            });
+            var effectiveGrade = sc.AttributionGrade ?? InferGrade(sc.AttributionOutcome, sc.AttributionRule);
 
             dict[sc.Alias] = new PreLoginCaseAttributionDto(
                 sc.ScopeCaseId,

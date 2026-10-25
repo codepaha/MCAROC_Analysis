@@ -1280,4 +1280,79 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
         Assert.Equal(LitigationAttributionOutcome.Attributed, reloaded.AttributionOutcome);
         Assert.False(reloaded.IsExcluded);
     }
+
+    [Theory]
+    [InlineData("probable-lender-link", PersonAttributionGrade.Probable)]
+    [InlineData("probable-district-match", PersonAttributionGrade.Probable)]
+    [InlineData("probable-relative-partial", PersonAttributionGrade.Probable)]
+    [InlineData("confirmed-father-match", PersonAttributionGrade.Confirmed)]
+    [InlineData("confirmed-company-coparty", PersonAttributionGrade.Confirmed)]
+    [InlineData("legacy-unclassified-rule", PersonAttributionGrade.Probable)] // conservative fallback for unknown legacy
+    public async Task Existing_Person_Attributed_Scope_Row_Preserves_Probable_And_Confirmed_Grades_Without_Overwriting_Decisions(
+        string rule, PersonAttributionGrade expectedGrade)
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            new("district", "City Civil Court", "CNR501", "CS/501/2023", "CS", "2023", "PENDING", "-", "2023-01-01", "Maharashtra", "Mumbai",
+                "Director: Dinesh Shah litigation", "2023-05-01", "Pending",
+                CaseRowId: "C-501", Petitioner: "DINESH SHAH", Respondent: "TEST BANK")
+        };
+
+        var (job, _, director) = await CreateJobWithTargetsAsync(db, "ACME LIMITED", "DINESH SHAH", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var scope = await db.Set<ModuleScope>().FirstAsync(s => s.Kind == ModuleScopeKind.Assignment && s.ExternalId == job.PreLoginReportJobId);
+        var sc = await db.Set<ModuleScopeCase>().FirstAsync(s => s.ScopeId == scope.ScopeId && s.Alias == "C-501");
+
+        // Simulate an existing settled person row with Grade=null and a specific rule
+        sc.TargetId = director.PreLoginLitigationTargetId;
+        sc.AttributionOutcome = LitigationAttributionOutcome.Attributed;
+        sc.AttributionRule = rule;
+        sc.AttributionGrade = null;
+        sc.IsExcluded = false;
+
+        // Simulate an analyst decision on this case
+        var analystDecision = new PreLoginAttributionDecision
+        {
+            ScopeCaseId = sc.ScopeCaseId,
+            PreLoginReportJobId = job.PreLoginReportJobId,
+            CaseRowId = sc.Alias,
+            TargetId = director.PreLoginLitigationTargetId,
+            TargetKind = PreLoginTargetKind.Director,
+            PartyName = "DINESH SHAH",
+            ReasonKind = rule,
+            Action = PreLoginAttributionAction.Accepted,
+            DecidedBy = "Senior Analyst",
+            DecidedUtc = DateTime.UtcNow.AddDays(-1)
+        };
+        db.PreLoginAttributionDecisions.Add(analystDecision);
+        await db.SaveChangesAsync();
+
+        var opt = Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, opt, new ServiceCollection().BuildServiceProvider());
+
+        // 1. DTO effectiveGrade respects the specific rule and does not overstate Probable to Confirmed
+        var dtos = await attributionService.GetCaseAttributionsForJobAsync(job.PreLoginReportJobId);
+        var dto = dtos["C-501"];
+        Assert.Equal(expectedGrade, dto.Grade);
+        Assert.True(dto.IsVerified); // Both Probable and Confirmed are verified
+        Assert.False(dto.IsPossible);
+
+        // 2. Safe upgrade policy: CheckAttributionAsync upgrades missing AttributionGrade to expectedGrade
+        await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        var reloaded = await db.Set<ModuleScopeCase>().AsNoTracking().FirstAsync(s => s.ScopeCaseId == sc.ScopeCaseId);
+        Assert.Equal(expectedGrade, reloaded.AttributionGrade);
+        Assert.Equal(LitigationAttributionOutcome.Attributed, reloaded.AttributionOutcome);
+        Assert.False(reloaded.IsExcluded); // Exclusions untouched
+
+        // 3. Analyst decisions remain completely untouched
+        var decisions = await db.PreLoginAttributionDecisions.Where(d => d.ScopeCaseId == sc.ScopeCaseId).ToListAsync();
+        Assert.Single(decisions);
+        Assert.Equal("Senior Analyst", decisions[0].DecidedBy);
+        Assert.Equal(PreLoginAttributionAction.Accepted, decisions[0].Action);
+    }
 }
