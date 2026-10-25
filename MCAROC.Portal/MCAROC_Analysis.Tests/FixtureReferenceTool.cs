@@ -45,14 +45,17 @@ public sealed class FixtureReferenceTool : HttpMessageHandler
     public string? RecordedBid => _replies.Values.SelectMany(q => q).Select(r => r["payload"]?["bid"]?.GetValue<string>()).FirstOrDefault(b => b is not null);
 
     /// <summary>Replaces an action's recorded replies (a test's own variant: a different date, a failure the tool was not recorded giving).</summary>
-    public FixtureReferenceTool With(string action, int status, object? body)
+    public FixtureReferenceTool With(string action, int status, object? body) => WithReplies(action, status, body);
+
+    /// <summary>Replaces an action's recorded replies with several, given in order (pages of a search); the last one repeats.</summary>
+    public FixtureReferenceTool WithReplies(string action, int status, params object?[] bodies)
     {
         lock (_sync)
-            _replies[action] = [new JsonObject
+            _replies[action] = bodies.Select(body => new JsonObject
             {
                 ["action"] = action, ["status"] = status, ["contentType"] = "application/json",
                 ["body"] = body is null ? null : JsonSerializer.SerializeToNode(body), ["source"] = "test override"
-            }];
+            }).ToList();
         return this;
     }
 

@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261025051716_AddCompanyFormerNames")]
+    [Migration("20261025055635_AddCompanyFormerNames")]
     partial class AddCompanyFormerNames
     {
         /// <inheritdoc />
@@ -1879,6 +1879,37 @@ namespace MCAROC_Analysis.Migrations
                     b.HasIndex("RequestId", "IngestionRunId");
 
                     b.ToTable("CompanyNameHistories");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.CompanyNameSearch", b =>
+                {
+                    b.Property<long>("CompanyNameSearchId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("CompanyNameSearchId"));
+
+                    b.Property<bool>("Complete")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("NameNormalized")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("ResultJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("SearchedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("CompanyNameSearchId");
+
+                    b.HasIndex("NameNormalized")
+                        .IsUnique();
+
+                    b.ToTable("CompanyNameSearches");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.CompanyNameToken", b =>

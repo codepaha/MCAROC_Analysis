@@ -30,10 +30,32 @@ namespace MCAROC_Analysis.Migrations
                     table.PrimaryKey("PK_CompanyFormerNames", x => x.CompanyFormerNameId);
                 });
 
+            migrationBuilder.CreateTable(
+                name: "CompanyNameSearches",
+                columns: table => new
+                {
+                    CompanyNameSearchId = table.Column<long>(type: "bigint", nullable: false)
+                        .Annotation("SqlServer:Identity", "1, 1"),
+                    NameNormalized = table.Column<string>(type: "nvarchar(450)", maxLength: 450, nullable: false),
+                    SearchedUtc = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    Complete = table.Column<bool>(type: "bit", nullable: false),
+                    ResultJson = table.Column<string>(type: "nvarchar(max)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_CompanyNameSearches", x => x.CompanyNameSearchId);
+                });
+
             migrationBuilder.CreateIndex(
                 name: "IX_CompanyFormerNames_FormerNameNormalized_Identifier",
                 table: "CompanyFormerNames",
                 columns: new[] { "FormerNameNormalized", "Identifier" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_CompanyNameSearches_NameNormalized",
+                table: "CompanyNameSearches",
+                column: "NameNormalized",
                 unique: true);
         }
 
@@ -42,6 +64,9 @@ namespace MCAROC_Analysis.Migrations
         {
             migrationBuilder.DropTable(
                 name: "CompanyFormerNames");
+
+            migrationBuilder.DropTable(
+                name: "CompanyNameSearches");
         }
     }
 }

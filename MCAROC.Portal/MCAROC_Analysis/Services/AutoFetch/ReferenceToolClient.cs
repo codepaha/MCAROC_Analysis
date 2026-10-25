@@ -312,12 +312,39 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
     public Task<IReadOnlyList<ReferenceCompanyHint>> SearchCompaniesAsync(string query, int limit, CancellationToken ct)
     {
         EnsureConfigured();
-        return WithSessionRecoveryAsync(() => SearchCompaniesCoreAsync(query, limit, ct), ct);
+        return WithSessionRecoveryAsync(async () => (await SearchPageAsync(query, 0, limit, ct)).Hits, ct);
     }
 
-    private async Task<IReadOnlyList<ReferenceCompanyHint>> SearchCompaniesCoreAsync(string query, int limit, CancellationToken ct)
+    /// <summary>Every hit for <paramref name="query"/>, page by page, and whether the search was read to its end (#497). The search is an autocomplete:
+    /// one page proves nothing about what lies beyond it, so pages are read until one comes back short. It is <b>not</b> complete when
+    /// <paramref name="maxPages"/> pages are all full, or a page repeats rows already seen (the tool ignoring the offset). Rows without a CIN
+    /// (partnerships, proprietorships) count toward a page being full, though they are not returned.</summary>
+    public Task<ReferenceSearchResult> SearchCompaniesExhaustivelyAsync(string query, int pageSize, int maxPages, CancellationToken ct)
     {
-        var payload = new { action = "getNameHints", q = query.Trim(), filters = "{}", offset = 0, limit };
+        EnsureConfigured();
+        return WithSessionRecoveryAsync(async () =>
+        {
+            var hits = new List<ReferenceCompanyHint>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            for (var page = 0; page < maxPages; page++)
+            {
+                var result = await SearchPageAsync(query, page * pageSize, pageSize, ct);
+                var fresh = result.RowKeys.Count(k => seen.Add(k));
+                if (result.RowKeys.Count > 0 && fresh == 0)
+                    return new ReferenceSearchResult(hits, Complete: false);   // the same rows again: paging is not working
+                hits.AddRange(result.Hits.Where(h => !hits.Any(x => x.Cin == h.Cin && x.NameHint == h.NameHint && x.Context == h.Context)));
+                if (result.RowKeys.Count < pageSize)
+                    return new ReferenceSearchResult(hits, Complete: true);
+            }
+            return new ReferenceSearchResult(hits, Complete: false);
+        }, ct);
+    }
+
+    private sealed record SearchPage(IReadOnlyList<ReferenceCompanyHint> Hits, IReadOnlyList<string> RowKeys);
+
+    private async Task<SearchPage> SearchPageAsync(string query, int offset, int limit, CancellationToken ct)
+    {
+        var payload = new { action = "getNameHints", q = query.Trim(), filters = "{}", offset, limit };
         using var response = await SendSignedAsync("server/common/search/service.php", payload, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
@@ -325,11 +352,14 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
 
         using var doc = ParseJsonOrThrow(body, "search");
         var hits = new List<ReferenceCompanyHint>();
+        var rowKeys = new List<string>();
         if (doc.RootElement.ValueKind == JsonValueKind.Object
             && doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
         {
             foreach (var item in data.EnumerateArray())
             {
+                // Every row counts toward the page, whether or not it is a company we can use.
+                rowKeys.Add(string.Join('|', Text(item, "bid"), Text(item, "cin"), Text(item, "name_hint"), Text(item, "context")));
                 var cin = Text(item, "cin");
                 var name = Text(item, "legal_name") ?? Text(item, "name");
                 if (string.IsNullOrWhiteSpace(cin) || string.IsNullOrWhiteSpace(name)) continue;
@@ -344,7 +374,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
                     incorporated));
             }
         }
-        return hits;
+        return new SearchPage(hits, rowKeys);
     }
 
     // ── Workbook exports ────────────────────────────────────────────────────────────────────────────

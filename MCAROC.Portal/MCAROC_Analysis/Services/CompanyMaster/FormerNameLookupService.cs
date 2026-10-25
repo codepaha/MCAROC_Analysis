@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.AutoFetch;
@@ -5,36 +6,43 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.CompanyMaster;
 
-/// <summary>Finds companies that were registered under a name before (#497).</summary>
+/// <summary>Finds companies that were registered under a name before, and those that have it today (#497).</summary>
 public interface IFormerNameLookup
 {
     Task<FormerNameLookup> FindAsync(string name, CancellationToken ct);
 }
 
-/// <summary>Former names from the reference tool's free company search (a hit whose context is <c>oldName</c>), kept in
-/// <see cref="CompanyFormerName"/> so the same name later resolves without a search. A name already stored is answered from the store. A search
-/// that fails, or a tool that isn't configured, reports <see cref="FormerNameLookup.NotSearched"/>, and resolution falls back to the master alone,
-/// as before; it never guesses.</summary>
+/// <summary>Former names from the reference tool's free company search (a hit whose context is <c>oldName</c>), and current holders (<c>legalName</c>),
+/// read page by page so the result says whether the search was read to its end. Each search is kept whole in <see cref="CompanyNameSearch"/>: a later
+/// request by the same name gets exactly what this search showed (conflicts and completeness included) until it is <see cref="MaxAge"/> old.
+/// Every former name seen is also kept in <see cref="CompanyFormerName"/> (the request page reads it). A search that fails, or a tool that isn't
+/// configured, reports <see cref="FormerNameLookup.NotSearched"/>, and resolution falls back to the master alone, as before; it never guesses.</summary>
 public sealed class FormerNameLookupService(AppDbContext db, ReferenceToolClient client, TimeProvider time, ILogger<FormerNameLookupService> logger) : IFormerNameLookup
 {
     public const string SearchSource = "reference-tool-search";
-    private const int SearchLimit = 25;
+    public static readonly TimeSpan MaxAge = TimeSpan.FromDays(30);
+    public const int PageSize = 25;
+    public const int MaxPages = 4;
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    private sealed record Observation(IReadOnlyList<FormerNameHit> FormerNames, IReadOnlyList<CompanyHolder> CurrentHolders);
 
     public async Task<FormerNameLookup> FindAsync(string name, CancellationToken ct)
     {
         var normalized = CompanyNameNormalizer.Normalize(name).NameNormalized;
-        if (normalized.Length == 0) return FormerNameLookup.NotSearched;
+        if (normalized.Length == 0 || normalized.Length > 450) return FormerNameLookup.NotSearched;
+        var now = time.GetUtcNow().UtcDateTime;
 
-        var stored = await db.CompanyFormerNames.AsNoTracking().Where(f => f.FormerNameNormalized == normalized).ToListAsync(ct);
-        if (stored.Count > 0)
-            return new FormerNameLookup(true,
-                stored.Select(f => new FormerNameHit(f.Identifier, f.FormerName, f.CurrentNameWhenSeen, null, null, null, null)).ToList(), []);
+        var stored = await db.CompanyNameSearches.AsNoTracking().FirstOrDefaultAsync(s => s.NameNormalized == normalized, ct);
+        if (stored is not null && now - stored.SearchedUtc < MaxAge
+            && JsonSerializer.Deserialize<Observation>(stored.ResultJson, Json) is { } kept)
+            return new FormerNameLookup(true, stored.Complete, kept.FormerNames ?? [], kept.CurrentHolders ?? []);
 
         if (!client.IsConfigured) return FormerNameLookup.NotSearched;
-        IReadOnlyList<ReferenceCompanyHint> hits;
+        ReferenceSearchResult result;
         try
         {
-            hits = await client.SearchCompaniesAsync(name.Trim(), SearchLimit, ct);
+            result = await client.SearchCompaniesExhaustivelyAsync(name.Trim(), PageSize, MaxPages, ct);
         }
         catch (Exception ex) when (ex is ReferenceToolException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
         {
@@ -42,22 +50,32 @@ public sealed class FormerNameLookupService(AppDbContext db, ReferenceToolClient
             return FormerNameLookup.NotSearched;
         }
 
-        var former = hits.Where(h => h.IsFormerNameMatch && !string.IsNullOrWhiteSpace(h.NameHint)).ToList();
-        await StoreAsync(former, ct);
-        var currentHolders = hits
-            .Where(h => string.Equals(h.Context, "legalName", StringComparison.OrdinalIgnoreCase)
-                && CompanyNameNormalizer.Normalize(h.LegalName).NameNormalized == normalized)
-            .Select(h => h.Cin).ToList();
-        return new FormerNameLookup(true,
+        var former = result.Hits.Where(h => h.IsFormerNameMatch && !string.IsNullOrWhiteSpace(h.NameHint)).ToList();
+        var observation = new Observation(
             former.Select(h => new FormerNameHit(h.Cin, h.NameHint!, h.LegalName, h.Status, h.State, h.PinCode, h.IncorporationDate)).ToList(),
-            currentHolders);
+            result.Hits.Where(h => string.Equals(h.Context, "legalName", StringComparison.OrdinalIgnoreCase)
+                    && CompanyNameNormalizer.Normalize(h.LegalName).NameNormalized == normalized)
+                .Select(h => new CompanyHolder(h.Cin, h.LegalName, h.Status, h.State, h.PinCode, h.IncorporationDate)).ToList());
+
+        await KeepSearchAsync(normalized, result.Complete, observation, now, ct);
+        await KeepFormerNamesAsync(former, now, ct);
+        return new FormerNameLookup(true, result.Complete, observation.FormerNames, observation.CurrentHolders);
     }
 
-    /// <summary>Every former name the search reported, not only the requested one: a later request by any of them then resolves from the store.</summary>
-    private async Task StoreAsync(IReadOnlyList<ReferenceCompanyHint> former, CancellationToken ct)
+    private async Task KeepSearchAsync(string normalized, bool complete, Observation observation, DateTime now, CancellationToken ct)
     {
-        if (former.Count == 0) return;
-        var now = time.GetUtcNow().UtcDateTime;
+        var json = JsonSerializer.Serialize(observation, Json);
+        var updated = await db.CompanyNameSearches.Where(s => s.NameNormalized == normalized)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.SearchedUtc, now).SetProperty(x => x.Complete, complete).SetProperty(x => x.ResultJson, json), ct);
+        if (updated > 0) return;
+        db.CompanyNameSearches.Add(new CompanyNameSearch { NameNormalized = normalized, SearchedUtc = now, Complete = complete, ResultJson = json });
+        try { await db.SaveChangesAsync(ct); }
+        catch (DbUpdateException) { db.ChangeTracker.Clear(); } // kept by a concurrent search for the same name
+    }
+
+    /// <summary>Every former name the search reported, not only the requested one: the request page shows "its former name" from these.</summary>
+    private async Task KeepFormerNamesAsync(IReadOnlyList<ReferenceCompanyHint> former, DateTime now, CancellationToken ct)
+    {
         foreach (var h in former.DistinctBy(h => (CompanyNameNormalizer.Normalize(h.NameHint).NameNormalized, h.Cin)))
         {
             var key = CompanyNameNormalizer.Normalize(h.NameHint).NameNormalized;
@@ -71,7 +89,7 @@ public sealed class FormerNameLookupService(AppDbContext db, ReferenceToolClient
                 Source = SearchSource, FirstSeenUtc = now, LastSeenUtc = now
             });
             try { await db.SaveChangesAsync(ct); }
-            catch (DbUpdateException) { db.ChangeTracker.Clear(); } // stored by a concurrent search: theirs is as good
+            catch (DbUpdateException) { db.ChangeTracker.Clear(); }
         }
     }
 }

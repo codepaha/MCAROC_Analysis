@@ -52,6 +52,10 @@ public sealed class ReferenceToolException : Exception
 /// current legal name.</param>
 /// <param name="Context">What <paramref name="NameHint"/> is: <c>legalName</c> (the current name), <c>oldName</c> (a former name), or another
 /// match kind the tool reports (e.g. <c>partProp</c>).</param>
+/// <summary>A search read page by page (<see cref="ReferenceToolClient.SearchCompaniesExhaustivelyAsync"/>). <paramref name="Complete"/> is true only
+/// when the search was read to its end, so what it did not return can be taken as absent.</summary>
+public sealed record ReferenceSearchResult(IReadOnlyList<ReferenceCompanyHint> Hits, bool Complete);
+
 public sealed record ReferenceCompanyHint(string LegalName, string Cin, string? Bid, string? Status, string? CompanyType,
     string? NameHint = null, string? Context = null, string? State = null, string? PinCode = null, DateOnly? IncorporationDate = null)
 {

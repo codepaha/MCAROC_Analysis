@@ -34,6 +34,7 @@ public sealed class FormerNameResolutionTests : IAsyncLifetime
         await db.IdentityResolutions.Where(r => r.RequestId != null && _requests.Contains(r.RequestId.Value)).ExecuteDeleteAsync();
         await db.Requests.Where(r => _requests.Contains(r.RequestId)).ExecuteDeleteAsync();
         await db.CompanyFormerNames.Where(f => f.Identifier.EndsWith(_serial) || f.FormerName.Contains(_word)).ExecuteDeleteAsync();
+        await db.CompanyNameSearches.Where(x => x.NameNormalized.Contains(_word)).ExecuteDeleteAsync();
         await db.CompanyNameTokens.Where(t => t.Identifier.EndsWith(_serial)).ExecuteDeleteAsync();
         await db.CompanyMasterRecords.Where(r => r.Identifier.EndsWith(_serial)).ExecuteDeleteAsync();
     }
@@ -46,7 +47,7 @@ public sealed class FormerNameResolutionTests : IAsyncLifetime
     private static ResolutionDecision MasterDecision(string input, ResolverOptions o, params MasterCandidate[] master) =>
         CompanyNameResolver.Decide(input, CompanyNameResolver.Rank(input, ResolutionHints.None, master), o);
 
-    private static FormerNameLookup Found(params FormerNameHit[] hits) => new(true, hits, []);
+    private static FormerNameLookup Found(params FormerNameHit[] hits) => new(true, true, hits, []);
     private static FormerNameHit Hit(string id, string former, string current) => new(id, former, current, "Active", null, null, null);
     private static readonly ResolverOptions Suggest = new() { AutoSelectEnabled = true };
     private static readonly ResolverOptions Apply = new() { AutoSelectEnabled = true, AutoSelectFormerName = true };
@@ -112,12 +113,34 @@ public sealed class FormerNameResolutionTests : IAsyncLifetime
     public void A_name_the_search_says_someone_holds_today_counts_even_when_our_master_is_stale()
     {
         const string asked = "SUNRISE HOLDINGS LIMITED";
-        var lookup = new FormerNameLookup(true, [Hit("U33333DL2001PLC000003", asked, "DAWN CAPITAL LIMITED")], ["U44444DL2001PLC000004"]);
+        var lookup = new FormerNameLookup(true, true, [Hit("U33333DL2001PLC000003", asked, "DAWN CAPITAL LIMITED")],
+            [new CompanyHolder("U44444DL2001PLC000004", asked, "Active", "Delhi", null, null)]);
         var decision = FormerNameResolver.Decide(asked, ResolutionHints.None, MasterDecision(asked, Apply), lookup,
             new Dictionary<string, MasterCandidate> { ["U33333DL2001PLC000003"] = Row("U33333DL2001PLC000003", "DAWN CAPITAL LIMITED") }, Apply);
 
         Assert.Equal(ResolutionReasonCodes.FormerNameConflict, decision.ReasonCode);
         Assert.Null(decision.ChosenIdentifier);
+        // Review of #533: the holder only the search knows about is one of the choices, marked as such.
+        var holder = Assert.Single(decision.Candidates, c => c.Candidate.Identifier == "U44444DL2001PLC000004");
+        Assert.True(holder.Candidate.IsToolOnly);
+        Assert.Equal(asked, holder.Candidate.Name);
+        Assert.Contains("has this name today, by the reference tool's search", holder.Reasons);
+        Assert.Contains(decision.Candidates, c => c.Candidate.Identifier == "U33333DL2001PLC000003");
+    }
+
+    /// <summary>Review of #533: a search not read to its end cannot show that no other company had the name, or has it today.</summary>
+    [Fact]
+    public void A_search_not_read_to_its_end_never_lets_a_former_name_be_chosen_automatically()
+    {
+        const string asked = "Bharti Tele-Ventures Limited";
+        var rows = new Dictionary<string, MasterCandidate> { [BhartiAirtel] = Row(BhartiAirtel, "BHARTI AIRTEL LIMITED") };
+        var partial = new FormerNameLookup(true, false, [Hit(BhartiAirtel, "BHARTI TELE-VENTURES LIMITED", "BHARTI AIRTEL LIMITED")], []);
+
+        var decision = FormerNameResolver.Decide(asked, ResolutionHints.None, MasterDecision(asked, Apply), partial, rows, Apply);
+
+        Assert.Equal((ResolutionStatus.NeedsConfirmation, ResolutionReasonCodes.FormerNameNeedsConfirmation), (decision.Status, decision.ReasonCode));
+        Assert.False(decision.AutoSelectEligible);
+        Assert.Contains(decision.Candidates[0].Reasons, r => r.Contains("could not be read to its end"));
     }
 
     [Fact]
@@ -209,6 +232,92 @@ public sealed class FormerNameResolutionTests : IAsyncLifetime
         Assert.Equal(1, tool.Count("getNameHints"));                   // answered from the store
     }
 
+    private static Dictionary<string, object?> Company(string cin, string name, string context, string? hint = null) => new()
+    {
+        ["cin"] = cin, ["bid"] = "b-" + cin, ["name_hint"] = hint ?? name, ["context"] = context, ["legal_name"] = name, ["company_llp_status"] = "Active"
+    };
+
+    private static Dictionary<string, object?> Proprietorship(int n) => new()
+    {
+        ["cin"] = null, ["bid"] = $"p-{n}", ["name_hint"] = $"FIRM {n}", ["context"] = "partProp", ["legal_name"] = $"FIRM {n}", ["entity_type"] = "PROPRIETORSHIP"
+    };
+
+    /// <summary>Seeds the former holder A in the master (Active), so only the guards stand between the request and choosing it.</summary>
+    private async Task<(string Former, string CurrentOfA)> SeedFormerHolderAsync()
+    {
+        var currentOfA = $"{_word} COMMUNICATIONS LIMITED";
+        await using (var seed = CreateContext())
+        {
+            seed.CompanyMasterRecords.Add(new CompanyMasterRecord { Identifier = Cin(1), RecordType = CompanyMasterRecordType.Company, Name = currentOfA, Status = "Active" });
+            await seed.SaveChangesAsync();
+        }
+        await using var connection = new SqlConnection(TestDatabase.ConnectionString);
+        await CompanyMasterNameBackfill.RunAsync(connection, onlyMissing: true);
+        await CompanyNameTokenIndex.RebuildAsync(connection);
+        return ($"{_word} TELECOM VENTURES LIMITED", currentOfA);
+    }
+
+    private async Task<(IdentityResolutionResult Result, IdentityResolution Audit, McaRequest Request)> ResolveTwiceAsync(FixtureReferenceTool tool, string asked, int run)
+    {
+        var requestId = await RequestAsync(asked);
+        await using var db = CreateContext();
+        var lookup = new FormerNameLookupService(db, FakeReferenceTool.NewClient(tool), new Clock(), NullLogger<FormerNameLookupService>.Instance);
+        var service = new IdentityResolutionService(db, Options.Create(new ResolverOptions { AutoSelectEnabled = true, AutoSelectFormerName = true }), lookup);
+        var result = await service.ResolveForRequestAsync(requestId, asked, null, ResolutionHints.None, $"run-{run}", CancellationToken.None);
+        await using var read = CreateContext();
+        return (result, await read.IdentityResolutions.AsNoTracking().SingleAsync(r => r.IdentityResolutionId == result.IdentityResolutionId),
+            await read.Requests.AsNoTracking().SingleAsync(r => r.RequestId == requestId));
+    }
+
+    /// <summary>Review of #533: the first page is full of other rows (companies and proprietorships) with former holder A among them; the company holding
+    /// the name today (B, known only to the search) is on page 2. Read to the end, the search finds the conflict; and a repeat request, answered from the
+    /// stored search, keeps it. Neither request chooses A, applies anything, or becomes spend-trusted.</summary>
+    [Fact]
+    public async Task A_current_holder_on_a_later_page_is_found_and_the_stored_search_keeps_the_conflict()
+    {
+        var (former, currentOfA) = await SeedFormerHolderAsync();
+        var page1 = Enumerable.Range(10, 20).Select(n => Company(Cin(n), $"{_word} UNRELATED {n} LIMITED", "legalName"))
+            .Concat(Enumerable.Range(1, 4).Select(Proprietorship))
+            .Append(Company(Cin(1), currentOfA, "oldName", former)).ToList();
+        Assert.Equal(FormerNameLookupService.PageSize, page1.Count);
+        var page2 = new[] { Company(Cin(2), former, "legalName") };
+        var tool = new FixtureReferenceTool("unlocked-stale-coastal-20260922").WithReplies("getNameHints", 200, new { data = page1 }, new { data = page2 });
+
+        for (var run = 1; run <= 2; run++)
+        {
+            var (result, audit, request) = await ResolveTwiceAsync(tool, former, run);
+            Assert.Equal((ResolutionStatus.Ambiguous, ResolutionReasonCodes.FormerNameConflict), (audit.Status, audit.ReasonCode));
+            Assert.False(result.AppliedToRequest);
+            Assert.Null(request.Cin);
+            Assert.Null(audit.ChosenIdentifier);
+            Assert.Contains(Cin(2), audit.CandidatesJson);              // B is one of the choices
+            Assert.Contains(Cin(1), audit.CandidatesJson);              // and so is A
+        }
+        Assert.Equal(2, tool.Count("getNameHints"));                    // two pages, once: the repeat came from the stored search
+    }
+
+    /// <summary>Review of #533: when the tool returns the same full page whatever the offset, the search cannot be read to its end. A former holder is
+    /// then only offered, never chosen; and the stored search remembers that it was incomplete.</summary>
+    [Fact]
+    public async Task A_search_whose_paging_does_not_work_is_incomplete_and_never_chooses_automatically()
+    {
+        var (former, currentOfA) = await SeedFormerHolderAsync();
+        var fullPage = Enumerable.Range(10, 24).Select(n => Company(Cin(n), $"{_word} UNRELATED {n} LIMITED", "legalName"))
+            .Append(Company(Cin(1), currentOfA, "oldName", former)).ToList();
+        var tool = new FixtureReferenceTool("unlocked-stale-coastal-20260922").With("getNameHints", 200, new { data = fullPage });
+
+        for (var run = 1; run <= 2; run++)
+        {
+            var (result, audit, request) = await ResolveTwiceAsync(tool, former, run);
+            Assert.Equal((ResolutionStatus.NeedsConfirmation, ResolutionReasonCodes.FormerNameNeedsConfirmation), (audit.Status, audit.ReasonCode));
+            Assert.False(audit.AutoSelectEligible);
+            Assert.False(result.AppliedToRequest);
+            Assert.Null(request.Cin);
+        }
+        await using var db = CreateContext();
+        Assert.False((await db.CompanyNameSearches.AsNoTracking().SingleAsync(s => s.NameNormalized == CompanyNameNormalizer.Normalize(former).NameNormalized)).Complete);
+    }
+
     [Fact]
     public async Task A_search_that_fails_leaves_resolution_to_the_master_as_before()
     {
@@ -256,7 +365,7 @@ public sealed class FormerNameResolutionTests : IAsyncLifetime
             await CompanyNameTokenIndex.RebuildAsync(connection);
         }
         var requestId = await RequestAsync(former);
-        var lookup = new StubLookup(new FormerNameLookup(true, [new FormerNameHit(Cin(1), former, current, "Active", null, null, null)], []));
+        var lookup = new StubLookup(new FormerNameLookup(true, true, [new FormerNameHit(Cin(1), former, current, "Active", null, null, null)], []));
 
         await using var db = CreateContext();
         var service = new IdentityResolutionService(db,

@@ -86,7 +86,8 @@ public sealed class IdentityResolutionService(AppDbContext db, IOptions<Resolver
         var lookup = await formerNames.FindAsync(name!, ct);
         if (!lookup.Searched || lookup.FormerNames.Count == 0) return decision;
         var rows = new Dictionary<string, MasterCandidate>(StringComparer.OrdinalIgnoreCase);
-        foreach (var id in lookup.FormerNames.Select(f => f.Identifier.Trim().ToUpperInvariant()).Distinct())
+        foreach (var id in lookup.FormerNames.Select(f => f.Identifier).Concat(lookup.CurrentHolders.Select(h => h.Identifier))
+                     .Select(i => i.Trim().ToUpperInvariant()).Distinct())
             if (await CompanyNameCandidateRetriever.GetByIdentifierAsync(connection, id, ct) is { } row) rows[id] = row;
         return FormerNameResolver.Decide(name!, hints, decision, lookup, rows, options.Value);
     }

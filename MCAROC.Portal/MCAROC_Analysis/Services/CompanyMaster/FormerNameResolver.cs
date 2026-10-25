@@ -7,12 +7,16 @@ namespace MCAROC_Analysis.Services.CompanyMaster;
 /// <param name="CurrentName">The company's legal name as the tool reported it; the master's current name is preferred when the master has the row.</param>
 public sealed record FormerNameHit(string Identifier, string FormerName, string? CurrentName, string? Status, string? State, string? PinCode, DateOnly? IncorporationDate);
 
-/// <summary>What a former-name lookup found for a requested name. <paramref name="CurrentHolders"/> are companies the search reports as holding the
-/// name today (context <c>legalName</c>); they may be missing from a stale master. <paramref name="Searched"/> is false when nothing could be looked up
-/// (search not configured or failed): the master's decision then stands, as before.</summary>
-public sealed record FormerNameLookup(bool Searched, IReadOnlyList<FormerNameHit> FormerNames, IReadOnlyList<string> CurrentHolders)
+/// <summary>A company the search reports as holding the requested name today (context <c>legalName</c>); it may be missing from a stale master.</summary>
+public sealed record CompanyHolder(string Identifier, string Name, string? Status, string? State, string? PinCode, DateOnly? IncorporationDate);
+
+/// <summary>What a former-name lookup found for a requested name.
+/// <paramref name="Searched"/> is false when nothing could be looked up (search not configured or failed): the master's decision then stands, as before.
+/// <paramref name="Complete"/> is true only when the search was read to its end (or a stored observation records that it was): only then does
+/// "exactly one company had the name, and none has it today" hold, and only then may a company be chosen automatically.</summary>
+public sealed record FormerNameLookup(bool Searched, bool Complete, IReadOnlyList<FormerNameHit> FormerNames, IReadOnlyList<CompanyHolder> CurrentHolders)
 {
-    public static readonly FormerNameLookup NotSearched = new(false, [], []);
+    public static readonly FormerNameLookup NotSearched = new(false, false, [], []);
 }
 
 /// <summary>Resolution by former name (#497), the pure part: given the master's decision for a requested name and what a former-name lookup found,
@@ -41,16 +45,21 @@ public static class FormerNameResolver
             .ToList();
         if (former.Count == 0) return master;
 
-        var currentHolders = master.Candidates.Where(c => c.Features.GetValueOrDefault("ExactNormalized") == 1)
-            .Select(c => c.Candidate.Identifier.Trim().ToUpperInvariant())
-            .Concat(lookup.CurrentHolders.Select(i => i.Trim().ToUpperInvariant()))
-            .ToHashSet(StringComparer.Ordinal);
+        var masterHolders = master.Candidates.Where(c => c.Features.GetValueOrDefault("ExactNormalized") == 1)
+            .Select(c => c.Candidate.Identifier.Trim().ToUpperInvariant()).ToHashSet(StringComparer.Ordinal);
+        var currentHolders = masterHolders.Concat(lookup.CurrentHolders.Select(h => h.Identifier.Trim().ToUpperInvariant())).ToHashSet(StringComparer.Ordinal);
         var formerOthers = former.Where(f => !currentHolders.Contains(f.Identifier)).ToList();
         if (formerOthers.Count == 0) return master; // the company that holds the name today also held it before: nothing new
 
-        var formerCandidates = formerOthers.Select(f => Candidate(f, inputName, hints, masterRows.GetValueOrDefault(f.Identifier))).ToList();
-        var shown = formerCandidates.Concat(master.Candidates.Where(c => !formerOthers.Any(f => f.Identifier == c.Candidate.Identifier)))
-            .Take(Math.Max(options.MaxCandidates, formerCandidates.Count)).ToList();
+        var formerCandidates = formerOthers.Select(f => Candidate(f, inputName, hints, masterRows.GetValueOrDefault(f.Identifier), lookup.Complete)).ToList();
+        // A company holding the name today that only the search knows about is a choice too: the client may mean it.
+        var searchOnlyHolders = lookup.CurrentHolders
+            .Where(h => !masterHolders.Contains(h.Identifier.Trim().ToUpperInvariant()))
+            .DistinctBy(h => h.Identifier.Trim().ToUpperInvariant())
+            .Select(h => Holder(h, hints, masterRows.GetValueOrDefault(h.Identifier.Trim().ToUpperInvariant()))).ToList();
+        var shown = formerCandidates.Concat(searchOnlyHolders)
+            .Concat(master.Candidates.Where(c => !formerOthers.Any(f => f.Identifier == c.Candidate.Identifier)))
+            .Take(Math.Max(options.MaxCandidates, formerCandidates.Count + searchOnlyHolders.Count)).ToList();
 
         if (currentHolders.Count > 0)
             return new(ResolutionStatus.Ambiguous, null, null, null, false, master.TopScore, null, ResolutionReasonCodes.FormerNameConflict, master.NormalizedInput, shown);
@@ -58,7 +67,8 @@ public static class FormerNameResolver
             return new(ResolutionStatus.Ambiguous, null, null, null, false, 1.0, 0, ResolutionReasonCodes.FormerNameAmbiguous, master.NormalizedInput, shown);
 
         var only = formerCandidates[0];
-        var trustworthy = !only.Candidate.IsToolOnly && CompanyNameResolver.IsActive(only.Candidate.Status)
+        // Only a search read to its end shows that no other company had the name, and none has it today.
+        var trustworthy = lookup.Complete && !only.Candidate.IsToolOnly && CompanyNameResolver.IsActive(only.Candidate.Status)
             && only.Features.GetValueOrDefault("HintsDisagreed") == 0;
         if (trustworthy && options.AutoSelectEnabled && options.AutoSelectFormerName)
             return new(ResolutionStatus.Resolved, ResolutionMethod.AutoSelected, only.Candidate.Identifier, only.Candidate.Identifier, true,
@@ -69,13 +79,28 @@ public static class FormerNameResolver
 
     /// <summary>The company as a candidate: the master's row when it has one (current name, status, address), else what the search reported, marked
     /// tool-only. Scored for hints against the master's data, so a requester's state or year that disagrees still stops an automatic choice.</summary>
-    private static ScoredCandidate Candidate(FormerNameHit hit, string inputName, ResolutionHints hints, MasterCandidate? row)
+    private static ScoredCandidate Candidate(FormerNameHit hit, string inputName, ResolutionHints hints, MasterCandidate? row, bool searchComplete)
     {
         var candidate = row ?? new MasterCandidate(hit.Identifier, hit.Identifier.Contains('-') ? CompanyMasterRecordType.Llp : CompanyMasterRecordType.Company,
             hit.CurrentName ?? hit.Identifier, Status: hit.Status, State: hit.State, PinCode: hit.PinCode, RegistrationDate: hit.IncorporationDate, IsToolOnly: true);
         var scored = CompanyNameResolver.Rank(candidate.Name, hints, [candidate])[0];
         var features = new Dictionary<string, double>(scored.Features, StringComparer.Ordinal) { ["FormerNameExact"] = 1, ["ExactNormalized"] = 0 };
         var reasons = new List<string> { $"registered as \"{hit.FormerName.Trim()}\" before; registered name now \"{candidate.Name}\"" };
+        if (!searchComplete)
+            reasons.Add("the reference tool's search could not be read to its end, so another company with this name cannot be ruled out");
+        reasons.AddRange(scored.Reasons.Where(r => r != "exact normalized name"));
+        return new ScoredCandidate(candidate, 1.0, features, reasons);
+    }
+
+    /// <summary>A company holding the requested name today that the master does not list as such (a stale master), shown so it can be chosen.</summary>
+    private static ScoredCandidate Holder(CompanyHolder holder, ResolutionHints hints, MasterCandidate? row)
+    {
+        var candidate = row ?? new MasterCandidate(holder.Identifier.Trim().ToUpperInvariant(),
+            holder.Identifier.Contains('-') ? CompanyMasterRecordType.Llp : CompanyMasterRecordType.Company, holder.Name,
+            Status: holder.Status, State: holder.State, PinCode: holder.PinCode, RegistrationDate: holder.IncorporationDate, IsToolOnly: true);
+        var scored = CompanyNameResolver.Rank(candidate.Name, hints, [candidate])[0];
+        var features = new Dictionary<string, double>(scored.Features, StringComparer.Ordinal) { ["CurrentHolderBySearch"] = 1 };
+        var reasons = new List<string> { "has this name today, by the reference tool's search" };
         reasons.AddRange(scored.Reasons.Where(r => r != "exact normalized name"));
         return new ScoredCandidate(candidate, 1.0, features, reasons);
     }
