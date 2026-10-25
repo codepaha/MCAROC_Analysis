@@ -68,8 +68,8 @@ public sealed class ResolverOptions
     /// The score weighs hints a name-only intake never has, so an exact unique match could otherwise never be selected unattended.</summary>
     public bool AutoSelectUniqueExact { get; set; } = true;
     /// <summary><c>Resolve:AutoSelectFormerName</c> (#497): select a company found by its former name (no company holds the name today, exactly one held
-    /// it before, Active, no hint disagreeing) with auto-select on. Off by default: until the owner switches it on, such a match is offered for
-    /// confirmation, filled in (trust before automation).</summary>
+    /// it before, Active, no hint disagreeing, the search read to its end) with auto-select on. Off in code, so a configuration without it offers such a
+    /// match for confirmation, filled in (trust before automation); the owner switched it on in appsettings.json on 2026-10-25.</summary>
     public bool AutoSelectFormerName { get; set; }
 }
 
