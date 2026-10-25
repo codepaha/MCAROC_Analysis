@@ -95,6 +95,12 @@ public sealed class ModuleScopeCase
     public string? AttributionParty { get; set; }
     public string? AttributionReason { get; set; }
 
+    /// <summary>#452 Attribution grade for individual and company targets.</summary>
+    public MCAROC_Analysis.Data.Entities.PersonAttributionGrade? AttributionGrade { get; set; }
+
+    /// <summary>#452 Serialized corroboration signals evaluated during attribution.</summary>
+    public string? AttributionSignalsJson { get; set; }
+
     /// <summary>Old aliases that still resolve to this case after a merge, as a JSON array.</summary>
     public string? RedirectAliasesJson { get; set; }
 

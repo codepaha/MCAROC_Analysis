@@ -1,5 +1,34 @@
 # Agent channel â€” MCAROC
 
+### 2026-10-25 — Antigravity: Person attribution grade & signals persistence, suggestion-first rule, and unresolved KPI status (#452 Part 2)
+
+Completed Part 2 of #452 in worktree `E:/MCAROC_wt_person_counts` (branch `feat/452-person-attribution-ui-counts`):
+1. **Schema & Migration**:
+   - Added `PersonAttributionGrade? AttributionGrade` and `string? AttributionSignalsJson` to `LitigationCase` (`LitigationCase.cs`) and `ModuleScopeCase` (`ModuleEntities.cs`).
+   - Relocated `PersonAttributionGrade` enum to `MCAROC_Analysis.Data.Entities` so it is cleanly shared across entity definitions and DTOs.
+   - Updated entity type configurations in `AppDbContext` and `LitigationModuleModel`.
+   - Created EF Core migration `20261025060415_AddScopeCaseAttributionGradeAndSignals.cs` via `migrate.sh add`. Validated model snapshot parity with `migrate.sh check` (`PASS — migration fully captures current model`).
+2. **DTO & Service Persistence**:
+   - Added `PersonAttributionGrade? Grade = null` and `string? SignalsJson = null` to `PreLoginCaseAttributionDto`.
+   - Updated `PreLoginAttributionService.ApplyOutcome` to persist `AttributionGrade` and `AttributionSignalsJson` to `ModuleScopeCase`. Individual target runs serialize corroboration signal dicts into JSON. Company targets map to `Confirmed`, `Excluded`, or `Possible`.
+   - Populated `Grade` and `SignalsJson` on `PreLoginCaseAttributionDto` in `GetCaseAttributionsForJobAsync`.
+3. **Suggestion-First Rule for Exclusions**:
+   - Per owner rule, person-match exclusions in Suggest mode are never automatically hidden or excluded (`sc.IsExcluded = false`). Instead, a `PreLoginAttributionDecision` is recorded with `Action = Suggested`, presenting the item to analysts with Accept/Reject controls and Trust Report tracking until explicitly switched to Apply mode.
+4. **Read Models & UI Separation**:
+   - Separated verified cases from namesake cases in `AssignmentDetailViewModel`:
+     - `VerifiedCasesCount`: cases with `AttributionGrade` of `Confirmed` or `Probable` (or company cases that are `Attributed`).
+     - `PossibleCasesCount`: cases with `AttributionGrade` of `Possible` (namesake cases without corroboration).
+     - `IsUnresolved`: `TotalCases > 0 && VerifiedCasesCount == 0`, alerting analysts when legal records exist but none are verified to the borrower or directors.
+   - Updated `ViewAssignment.cshtml` with an amber warning banner for Unresolved status (preventing a misleading clean zero), added separate KPI cards for Verified and Possible Cases, rendered Grade badges on table rows, and added filtering controls.
+5. **Verification**:
+   - Added 3 integration/UI tests to `PreLoginAttributionUiTests.cs`:
+     - `Attribution_Grade_And_Signals_Are_Persisted_And_Exposed_In_Dto`
+     - `Suggest_Mode_Generates_Suggestions_For_Excluded_Director_Cases_Without_Hiding`
+     - `Possible_Cases_Remain_Unexcluded_And_Counted_Apart_From_Verified_Cases`
+   - All 22 tests in `PreLoginAttributionUiTests` pass.
+   - All 91 tests across `PersonNameAttributionTests`, `PreLoginModuleScopeAndAttributionTests`, and `LitigationBaselineRiskTests` pass.
+   - Leak scan passed with zero vendor tokens.
+
 ### 2026-10-25 - Owner: review workspace, evidence and CI rules
 
 - Review each exact PR head in a detached Git worktree outside the shared checkout: `git worktree add --detach E:/MCAROC_review_pr<N> <sha>`. Never copy a repository into `tmp/`.

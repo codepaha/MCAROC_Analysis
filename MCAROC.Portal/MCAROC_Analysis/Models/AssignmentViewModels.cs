@@ -58,6 +58,11 @@ public sealed class AssignmentDetailViewModel
     public int ExcludedCases => Cases.Count(c => c.IsExcludedFromReport);
     public int SuggestedExclusionsCount => CaseAttributions.Values.Count(a => a.IsSuggestedExclusion);
     public int AutoExcludedCount => CaseAttributions.Values.Count(a => a.IsAutoExcluded);
+
+    // #452 Attribution grade and verified metrics
+    public int VerifiedCasesCount => CaseAttributions.Values.Count(a => !a.IsExcluded && (a.Grade == PersonAttributionGrade.Confirmed || a.Grade == PersonAttributionGrade.Probable || (a.Grade == null && a.Outcome == LitigationAttributionOutcome.Attributed)));
+    public int PossibleCasesCount => CaseAttributions.Values.Count(a => !a.IsExcluded && (a.Grade == PersonAttributionGrade.Possible || a.IsUnconfirmed));
+    public bool IsUnresolved => TotalCases > 0 && VerifiedCasesCount == 0;
 }
 
 public sealed class AssignmentSuggestionsViewModel

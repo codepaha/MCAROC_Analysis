@@ -17,7 +17,9 @@ public sealed record PreLoginCaseAttributionDto(
     string? ExclusionReason,
     bool IsSuggestedExclusion,
     bool IsAutoExcluded,
-    bool IsUnconfirmed = false
+    bool IsUnconfirmed = false,
+    PersonAttributionGrade? Grade = null,
+    string? SignalsJson = null
 );
 
 public sealed record PreLoginSuggestionItemDto(

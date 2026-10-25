@@ -1086,5 +1086,143 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
             }
         }
     }
+
+    [Fact]
+    public async Task Attribution_Grade_And_Signals_Are_Persisted_And_Exposed_In_Dto()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            // Case 1: Director Dinesh Shah with corporate coparty -> Confirmed
+            new("district", "City Civil Court", "CNR101", "CS/101/2023", "CS", "2023", "PENDING", "-", "2023-01-01", "Maharashtra", "Mumbai",
+                "Director: Dinesh Shah co-party", "2023-05-01", "Pending",
+                CaseRowId: "C-101", Petitioner: "DINESH SHAH", Respondent: "ACME LIMITED"),
+            // Case 2: Director Dinesh Shah name-only match -> Possible
+            new("district", "City Civil Court", "CNR102", "CS/102/2023", "CS", "2023", "PENDING", "-", "2023-01-01", "Maharashtra", "Mumbai",
+                "Director: Dinesh Shah (name only)", "2023-05-01", "Pending",
+                CaseRowId: "C-102", Petitioner: "DINESH SHAH", Respondent: "STATE OF TEST"),
+            // Case 3: Director Dinesh Shah relative only -> Excluded
+            new("district", "City Civil Court", "CNR103", "CS/103/2023", "CS", "2023", "PENDING", "-", "2023-01-01", "Maharashtra", "Mumbai",
+                "Director: Dinesh Shah (relative only)", "2023-05-01", "Pending",
+                CaseRowId: "C-103", Petitioner: "RAJESH SHAH S/O DINESH SHAH", Respondent: "STATE OF TEST")
+        };
+
+        var (job, borrower, director) = await CreateJobWithTargetsAsync(db, "ACME LIMITED", "DINESH SHAH", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var opt = Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, opt, new ServiceCollection().BuildServiceProvider());
+
+        await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        var scope = await db.Set<ModuleScope>().FirstAsync(s => s.Kind == ModuleScopeKind.Assignment && s.ExternalId == job.PreLoginReportJobId);
+        var scopeCases = await db.Set<ModuleScopeCase>().Where(s => s.ScopeId == scope.ScopeId).OrderBy(s => s.Alias).ToListAsync();
+
+        // 1. Persistence checks on ModuleScopeCase
+        var sc101 = Assert.Single(scopeCases, s => s.Alias == "C-101");
+        Assert.Equal(PersonAttributionGrade.Confirmed, sc101.AttributionGrade);
+        Assert.NotNull(sc101.AttributionSignalsJson);
+        Assert.Contains("CompanyLink", sc101.AttributionSignalsJson);
+
+        var sc102 = Assert.Single(scopeCases, s => s.Alias == "C-102");
+        Assert.Equal(PersonAttributionGrade.Possible, sc102.AttributionGrade);
+        Assert.NotNull(sc102.AttributionSignalsJson);
+
+        var sc103 = Assert.Single(scopeCases, s => s.Alias == "C-103");
+        Assert.Equal(PersonAttributionGrade.Excluded, sc103.AttributionGrade);
+        Assert.NotNull(sc103.AttributionSignalsJson);
+
+        // 2. Read model DTO exposure via GetCaseAttributionsForJobAsync
+        var dtos = await attributionService.GetCaseAttributionsForJobAsync(job.PreLoginReportJobId);
+        Assert.Equal(PersonAttributionGrade.Confirmed, dtos["C-101"].Grade);
+        Assert.Equal(PersonAttributionGrade.Possible, dtos["C-102"].Grade);
+        Assert.Equal(PersonAttributionGrade.Excluded, dtos["C-103"].Grade);
+    }
+
+    [Fact]
+    public async Task Suggest_Mode_Generates_Suggestions_For_Excluded_Director_Cases_Without_Hiding()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            // Relative-only appearance (S/O DINESH SHAH) evaluates to Excluded
+            new("district", "City Civil Court", "CNR201", "CS/201/2023", "CS", "2023", "PENDING", "-", "2023-01-01", "Maharashtra", "Mumbai",
+                "Director: Dinesh Shah (relative only)", "2023-05-01", "Pending",
+                CaseRowId: "C-201", Petitioner: "ANIL SHAH S/O DINESH SHAH", Respondent: "STATE OF TEST")
+        };
+
+        var (job, _, director) = await CreateJobWithTargetsAsync(db, "ACME LIMITED", "DINESH SHAH", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        // Default mode: Suggest
+        var opt = Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, opt, new ServiceCollection().BuildServiceProvider());
+
+        var res = await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+        Assert.Equal(1, res.SuggestedExclusions);
+        Assert.Equal(0, res.AutoExcluded);
+
+        var scope = await db.Set<ModuleScope>().FirstAsync(s => s.Kind == ModuleScopeKind.Assignment && s.ExternalId == job.PreLoginReportJobId);
+        var sc = await db.Set<ModuleScopeCase>().FirstAsync(s => s.ScopeId == scope.ScopeId && s.Alias == "C-201");
+
+        // Rule compliance: Excluded person matches must NOT be auto-excluded in Suggest mode!
+        Assert.Equal(PersonAttributionGrade.Excluded, sc.AttributionGrade);
+        Assert.Equal(LitigationAttributionOutcome.NotTheCompany, sc.AttributionOutcome);
+        Assert.False(sc.IsExcluded);
+
+        // Created as a Suggested decision
+        var decision = await db.PreLoginAttributionDecisions.FirstOrDefaultAsync(d => d.ScopeCaseId == sc.ScopeCaseId);
+        Assert.NotNull(decision);
+        Assert.Equal(PreLoginAttributionAction.Suggested, decision.Action);
+        Assert.Equal(director.PreLoginLitigationTargetId, decision.TargetId);
+
+        // DTO marks as suggested exclusion
+        var dtos = await attributionService.GetCaseAttributionsForJobAsync(job.PreLoginReportJobId);
+        Assert.True(dtos["C-201"].IsSuggestedExclusion);
+        Assert.False(dtos["C-201"].IsAutoExcluded);
+    }
+
+    [Fact]
+    public async Task Possible_Cases_Remain_Unexcluded_And_Counted_Apart_From_Verified_Cases()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            // Name-only match without secondary signals -> Possible
+            new("district", "City Civil Court", "CNR301", "CS/301/2023", "CS", "2023", "PENDING", "-", "2023-01-01", "Maharashtra", "Mumbai",
+                "Director: Ramesh Kumar (name match)", "2023-05-01", "Pending",
+                CaseRowId: "C-301", Petitioner: "RAMESH KUMAR", Respondent: "STATE OF TEST")
+        };
+
+        var (job, _, _) = await CreateJobWithTargetsAsync(db, "ACME LIMITED", "RAMESH KUMAR", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var opt = Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, opt, new ServiceCollection().BuildServiceProvider());
+
+        await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        var dtos = await attributionService.GetCaseAttributionsForJobAsync(job.PreLoginReportJobId);
+        var vm = new AssignmentDetailViewModel
+        {
+            Cases = cases,
+            CaseAttributions = dtos
+        };
+
+        // KPI separation:
+        // Possible cases are counted in PossibleCasesCount, NOT in VerifiedCasesCount
+        Assert.Equal(1, vm.TotalCases);
+        Assert.Equal(0, vm.VerifiedCasesCount);
+        Assert.Equal(1, vm.PossibleCasesCount);
+
+        // Unresolved indicator is active because records exist but none are verified
+        Assert.True(vm.IsUnresolved);
+    }
 }
 

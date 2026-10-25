@@ -349,6 +349,16 @@
                 </div>
             </div>
 
+            @if (Model.IsUnresolved)
+            {
+                <div class="alert alert-warning py-2 small mb-3 d-flex align-items-center" role="alert">
+                    <i class="bi bi-exclamation-triangle-fill fs-5 me-2 text-warning"></i>
+                    <div>
+                        <strong>Litigation Status: Unresolved.</strong> @Model.TotalCases legal record(s) discovered in search, but no matters could be confirmed or probable-matched to the borrower or directors. (Unresolved records are not treated as clean/0).
+                    </div>
+                </div>
+            }
+
             <!-- KPI Summary Cards -->
             <div class="row g-2 mb-4">
                 <div class="col">
@@ -385,6 +395,18 @@
                     <div class="card border-0 shadow-sm text-center p-3 h-100">
                         <div class="text-muted small">Excluded</div>
                         <div class="h3 fw-bold text-muted mb-0" id="kpiExcluded">@Model.ExcludedCases</div>
+                    </div>
+                </div>
+                <div class="col">
+                    <div class="card border-0 shadow-sm text-center p-3 h-100 border-start border-success border-3">
+                        <div class="text-muted small">Verified</div>
+                        <div class="h3 fw-bold text-success mb-0" id="kpiVerified">@Model.VerifiedCasesCount</div>
+                    </div>
+                </div>
+                <div class="col">
+                    <div class="card border-0 shadow-sm text-center p-3 h-100 border-start border-warning border-3">
+                        <div class="text-muted small">Possible (Namesake)</div>
+                        <div class="h3 fw-bold text-warning-emphasis mb-0" id="kpiPossible">@Model.PossibleCasesCount</div>
                     </div>
                 </div>
                 <div class="col">
@@ -434,6 +456,8 @@
                         <div class="col-md-2">
                             <select id="caseInclusionFilter" class="form-select" onchange="filterCases()">
                                 <option value="all">All Inclusions</option>
+                                <option value="verified">Verified (Confirmed / Probable)</option>
+                                <option value="possible">Possible (Namesake - Review)</option>
                                 <option value="included">Included in Report</option>
                                 <option value="excluded">Excluded Only</option>
                                 <option value="suggested">Suggested Exclusion</option>
@@ -503,6 +527,7 @@
                                             data-is-suggested="@isSuggested.ToString().ToLowerInvariant()"
                                             data-is-auto-excluded="@isAutoExcluded.ToString().ToLowerInvariant()"
                                             data-is-unconfirmed="@isUnconfirmed.ToString().ToLowerInvariant()"
+                                            data-grade="@(attr?.Grade?.ToString() ?? "")"
                                             data-exclusion-reason="@(c.ExclusionReason ?? "")"
                                             data-analyst-note="@(c.AnalystNote ?? "")"
                                             data-parties="@c.CaseDetails">
@@ -533,8 +558,27 @@
                                                 <div class="small text-muted font-monospace">Act: @(c.Act != "-" ? c.Act : "N/A")</div>
                                                 @if (attr?.TargetName != null)
                                                 {
-                                                    <div class="small text-muted mt-1">
+                                                    <div class="small text-muted mt-1 d-flex flex-wrap gap-1 align-items-center">
                                                         <span class="badge bg-light text-dark border">Target: @attr.TargetName (@attr.TargetKind)</span>
+                                                        @if (attr.Grade != null)
+                                                        {
+                                                            if (attr.Grade == PersonAttributionGrade.Confirmed)
+                                                            {
+                                                                <span class="badge bg-success" title="Confirmed match"><i class="bi bi-shield-fill-check me-1"></i>Confirmed</span>
+                                                            }
+                                                            else if (attr.Grade == PersonAttributionGrade.Probable)
+                                                            {
+                                                                <span class="badge bg-primary-subtle text-primary border border-primary-subtle" title="Probable match"><i class="bi bi-shield-check me-1"></i>Probable</span>
+                                                            }
+                                                            else if (attr.Grade == PersonAttributionGrade.Possible)
+                                                            {
+                                                                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning" title="Possible namesake"><i class="bi bi-question-circle me-1"></i>Possible (Namesake)</span>
+                                                            }
+                                                            else if (attr.Grade == PersonAttributionGrade.Excluded)
+                                                            {
+                                                                <span class="badge bg-secondary" title="Excluded"><i class="bi bi-x-circle me-1"></i>Excluded</span>
+                                                            }
+                                                        }
                                                     </div>
                                                 }
                                             </td>
@@ -904,12 +948,15 @@
             let matchesCategory = category === 'all' || rowCategory.includes(category);
             let matchesDirection = direction === 'all' || rowDirection.includes(direction);
             let matchesStatus = status === 'all' || (status === 'disposed' ? rowIsConcluded : !rowIsConcluded);
+            const rowGrade = row.getAttribute('data-grade') || '';
             let matchesInclusion = inclusion === 'all' ||
                                    (inclusion === 'included' && !rowIsExcluded) ||
                                    (inclusion === 'excluded' && rowIsExcluded) ||
                                    (inclusion === 'suggested' && rowIsSuggested) ||
                                    (inclusion === 'auto-excluded' && rowIsAutoExcluded) ||
-                                   (inclusion === 'unconfirmed' && rowIsUnconfirmed);
+                                   (inclusion === 'unconfirmed' && rowIsUnconfirmed) ||
+                                   (inclusion === 'verified' && !rowIsExcluded && (rowGrade === 'Confirmed' || rowGrade === 'Probable')) ||
+                                   (inclusion === 'possible' && !rowIsExcluded && (rowGrade === 'Possible' || rowIsUnconfirmed));
 
             if (matchesSearch && matchesCategory && matchesDirection && matchesStatus && matchesInclusion) {
                 row.style.display = '';

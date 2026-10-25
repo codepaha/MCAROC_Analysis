@@ -4,13 +4,7 @@ using MCAROC_Analysis.Services.LitigationData;
 
 namespace MCAROC_Analysis.Services.LitigationData.Attribution;
 
-public enum PersonAttributionGrade
-{
-    Confirmed = 1,
-    Probable = 2,
-    Possible = 3,
-    Excluded = 4
-}
+// PersonAttributionGrade moved to MCAROC_Analysis.Data.Entities
 
 public enum CorroborationStrength
 {

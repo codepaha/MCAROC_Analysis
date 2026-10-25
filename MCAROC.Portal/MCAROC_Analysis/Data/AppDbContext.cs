@@ -360,7 +360,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.AttributionRule).HasMaxLength(60);
             e.Property(x => x.AttributionParty).HasMaxLength(500);
             e.Property(x => x.AttributionReason).HasMaxLength(600);
+            e.Property(x => x.AttributionGrade).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.AttributionSignalsJson).HasMaxLength(2000);
             e.HasIndex(x => new { x.RequestId, x.AttributionOutcome });
+            e.HasIndex(x => new { x.RequestId, x.AttributionGrade });
             e.Property(x => x.Cnr).HasMaxLength(20);
             e.Property(x => x.ProceedingType).HasMaxLength(30);
         });

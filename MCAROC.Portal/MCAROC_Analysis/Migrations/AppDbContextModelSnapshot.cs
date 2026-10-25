@@ -3573,6 +3573,10 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<DateTime?>("AttributionDecidedUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("AttributionGrade")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
                     b.Property<string>("AttributionOutcome")
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
@@ -3588,6 +3592,10 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<string>("AttributionRule")
                         .HasMaxLength(60)
                         .HasColumnType("nvarchar(60)");
+
+                    b.Property<string>("AttributionSignalsJson")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
 
                     b.Property<string>("Bench")
                         .HasColumnType("nvarchar(max)");
@@ -3681,6 +3689,8 @@ namespace MCAROC_Analysis.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.HasKey("LitigationCaseId");
+
+                    b.HasIndex("RequestId", "AttributionGrade");
 
                     b.HasIndex("RequestId", "AttributionOutcome");
 
@@ -7493,6 +7503,10 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<string>("AnalystNote")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("AttributionGrade")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
                     b.Property<string>("AttributionOutcome")
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
@@ -7508,6 +7522,10 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<string>("AttributionRule")
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("AttributionSignalsJson")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
 
                     b.Property<long>("CaseId")
                         .HasColumnType("bigint");
@@ -7547,6 +7565,8 @@ namespace MCAROC_Analysis.Migrations
                         .HasColumnType("datetime2");
 
                     b.HasKey("ScopeCaseId");
+
+                    b.HasIndex("AttributionGrade");
 
                     b.HasIndex("CaseId");
 
