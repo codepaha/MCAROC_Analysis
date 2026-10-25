@@ -49,6 +49,9 @@ public static class LitigationModuleModel
             e.Property(x => x.AttributionRule).HasMaxLength(64);
             e.Property(x => x.AttributionParty).HasMaxLength(500);
             e.Property(x => x.AttributionReason).HasMaxLength(512);
+            e.Property(x => x.AttributionGrade).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.AttributionSignalsJson).HasMaxLength(2000);
+            e.HasIndex(x => x.AttributionGrade);
             e.HasOne(x => x.Scope).WithMany().HasForeignKey(x => x.ScopeId).OnDelete(DeleteBehavior.NoAction);
             e.HasOne(x => x.Case).WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.NoAction);
             e.HasIndex(x => new { x.ScopeId, x.CaseId }).IsUnique();

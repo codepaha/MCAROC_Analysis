@@ -87,6 +87,12 @@ public sealed class LitigationCase
     /// <summary>The reason in words, shown with the case ("the party is the company's former name", the judgement's own reason).</summary>
     public string? AttributionReason { get; set; }
 
+    /// <summary>#452 Attribution grade (Confirmed, Probable, Possible, Excluded) for individual and company targets.</summary>
+    public PersonAttributionGrade? AttributionGrade { get; set; }
+
+    /// <summary>#452 Serialized corroboration signals evaluated during attribution.</summary>
+    public string? AttributionSignalsJson { get; set; }
+
     public DateTime? AttributionDecidedUtc { get; set; }
 
     public List<LitigationCaseOrder> Orders { get; set; } = [];
@@ -103,6 +109,15 @@ public enum LitigationAttributionOutcome
     Ambiguous,
     /// <summary>No party is the company (another body that contains its name, or judged different). Not shown or counted; listed apart with its reason.</summary>
     NotTheCompany
+}
+
+/// <summary>#452 Attribution grade for person and company targets.</summary>
+public enum PersonAttributionGrade
+{
+    Confirmed = 1,
+    Probable = 2,
+    Possible = 3,
+    Excluded = 4
 }
 
 /// <summary>One order/judgment record for a <see cref="LitigationCase"/>, exactly as the vendor returned it

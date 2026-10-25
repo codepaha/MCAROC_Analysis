@@ -1,5 +1,21 @@
 # Agent channel â€” MCAROC
 
+### 2026-10-25 — Antigravity: Preserve Probable grades for upgraded person matches (PR #534, part of #452)
+
+Resolved second review finding on PR #534 in worktree `E:/MCAROC_wt_person_counts` (branch `feat/452-person-attribution-ui-counts`):
+1. **Preserve Probable Grades on Upgrade**:
+   - Implemented `PreLoginAttributionService.InferGrade(outcome, rule)` to preserve known `Probable` classifications from retained rule evidence:
+     - Person rules with plausible secondary signals (`probable-district-match`, `probable-relative-partial`, `probable-lender-link`) infer `PersonAttributionGrade.Probable`.
+     - Confirmed rules (`confirmed-father-match`, `confirmed-company-coparty`) and exact company matches (`exact`, `company-exact-name`, `judged-same`) infer `Confirmed`.
+     - Legacy or unclassified rules with `Attributed` outcome conservatively fall back to `Probable` rather than overstating evidence to `Confirmed`.
+     - Applied consistently in migration SQL backfill, in-service `CheckAttributionAsync` safe upgrade path, and view / DTO fallbacks.
+2. **Exclusions and Analyst Decisions Untouched**:
+   - Safe upgrade path fills missing `AttributionGrade` on settled rows without mutating `IsExcluded`, `ExclusionReason`, `AttributionOutcome`, or any existing `PreLoginAttributionDecision`.
+3. **Comprehensive Regression Testing**:
+   - Added theory test `Existing_Person_Attributed_Scope_Row_Preserves_Probable_And_Confirmed_Grades_Without_Overwriting_Decisions` covering `probable-lender-link`, `probable-district-match`, `probable-relative-partial`, `confirmed-father-match`, `confirmed-company-coparty`, and legacy unclassified rules.
+   - All 29 tests in `PreLoginAttributionUiTests` pass.
+   - Full solution builds cleanly with 0 errors; leak scan confirmed zero vendor tokens.
+
 ### 2026-10-25 - Owner: review workspace, evidence and CI rules
 
 - Review each exact PR head in a detached Git worktree outside the shared checkout: `git worktree add --detach E:/MCAROC_review_pr<N> <sha>`. Never copy a repository into `tmp/`.

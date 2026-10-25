@@ -17,8 +17,14 @@ public sealed record PreLoginCaseAttributionDto(
     string? ExclusionReason,
     bool IsSuggestedExclusion,
     bool IsAutoExcluded,
-    bool IsUnconfirmed = false
-);
+    bool IsUnconfirmed = false,
+    PersonAttributionGrade? Grade = null,
+    string? SignalsJson = null
+)
+{
+    public bool IsVerified => !IsExcluded && (Grade == PersonAttributionGrade.Confirmed || Grade == PersonAttributionGrade.Probable || (Grade == null && Outcome == LitigationAttributionOutcome.Attributed));
+    public bool IsPossible => !IsExcluded && (Grade == PersonAttributionGrade.Possible || (Grade == null && (Outcome == LitigationAttributionOutcome.Ambiguous || IsUnconfirmed)));
+};
 
 public sealed record PreLoginSuggestionItemDto(
     long ScopeCaseId,

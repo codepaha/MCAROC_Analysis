@@ -116,6 +116,11 @@ public sealed class PreLoginAttributionService(
         {
             if (!forceAll && sc.AttributionOutcome != null && sc.AttributionOutcome != LitigationAttributionOutcome.Pending)
             {
+                // Safe upgrade policy: if AttributionGrade is missing on an already settled row, backfill it without touching decisions or exclusions
+                if (sc.AttributionGrade == null)
+                {
+                    sc.AttributionGrade = InferGrade(sc.AttributionOutcome, sc.AttributionRule);
+                }
                 continue;
             }
 
@@ -150,7 +155,14 @@ public sealed class PreLoginAttributionService(
                 }
                 else
                 {
-                    ApplyOutcome(sc, target, assessment.Outcome!.Value, assessment.Rule, assessment.Party, assessment.Reason, mode, now, ref suggested, ref autoExcluded);
+                    var companyGrade = assessment.Outcome switch
+                    {
+                        LitigationAttributionOutcome.Attributed => PersonAttributionGrade.Confirmed,
+                        LitigationAttributionOutcome.NotTheCompany => PersonAttributionGrade.Excluded,
+                        LitigationAttributionOutcome.Ambiguous => PersonAttributionGrade.Possible,
+                        _ => (PersonAttributionGrade?)null
+                    };
+                    ApplyOutcome(sc, target, assessment.Outcome!.Value, assessment.Rule, assessment.Party, assessment.Reason, mode, now, ref suggested, ref autoExcluded, companyGrade);
                     assessed++;
                     if (assessment.Outcome == LitigationAttributionOutcome.Attributed) attributed++;
                     else if (assessment.Outcome == LitigationAttributionOutcome.NotTheCompany) notCompany++;
@@ -163,7 +175,8 @@ public sealed class PreLoginAttributionService(
                 var profile = GetPersonTargetProfile(job, target, data);
                 var personAssessment = PersonAttributionRules.Assess(parties, profile, rec?.District, rec?.State, rec?.CaseType, rec?.Court);
                 var (outcome, rule, party, reason) = (personAssessment.Outcome, personAssessment.Rule, personAssessment.Party, personAssessment.Reason);
-                ApplyOutcome(sc, target, outcome, rule, party, reason, mode, now, ref suggested, ref autoExcluded);
+                var signalsJson = JsonSerializer.Serialize(personAssessment.Signals);
+                ApplyOutcome(sc, target, outcome, rule, party, reason, mode, now, ref suggested, ref autoExcluded, personAssessment.Grade, signalsJson);
                 assessed++;
                 if (outcome == LitigationAttributionOutcome.Attributed) attributed++;
                 else if (outcome == LitigationAttributionOutcome.NotTheCompany) notCompany++;
@@ -202,29 +215,29 @@ public sealed class PreLoginAttributionService(
                     var found = candidates.Select(p => (Party: p, Has: verdicts.TryGetValue(LitigationAttributionService.PartyKey(p), out var v), V: v)).Where(x => x.Has).ToList();
                     if (found.FirstOrDefault(x => x.V.Verdict == LitigationPartyVerdictKind.Same) is { Has: true } same)
                     {
-                        ApplyOutcome(sc, t, LitigationAttributionOutcome.Attributed, "judged-same", same.Party, same.V.Reason, mode, now, ref suggested, ref autoExcluded);
+                        ApplyOutcome(sc, t, LitigationAttributionOutcome.Attributed, "judged-same", same.Party, same.V.Reason, mode, now, ref suggested, ref autoExcluded, PersonAttributionGrade.Confirmed);
                         attributed++;
                     }
                     else if (found.Count < candidates.Count)
                     {
-                        ApplyOutcome(sc, t, LitigationAttributionOutcome.Pending, null, null, "Waiting for party attribution judgement.", mode, now, ref suggested, ref autoExcluded);
+                        ApplyOutcome(sc, t, LitigationAttributionOutcome.Pending, null, null, "Waiting for party attribution judgement.", mode, now, ref suggested, ref autoExcluded, null);
                         ambiguous++;
                     }
                     else if (found.FirstOrDefault(x => x.V.Verdict == LitigationPartyVerdictKind.Unsure) is { Has: true } unsure)
                     {
-                        ApplyOutcome(sc, t, LitigationAttributionOutcome.Ambiguous, "judged-unsure", unsure.Party, unsure.V.Reason, mode, now, ref suggested, ref autoExcluded);
+                        ApplyOutcome(sc, t, LitigationAttributionOutcome.Ambiguous, "judged-unsure", unsure.Party, unsure.V.Reason, mode, now, ref suggested, ref autoExcluded, PersonAttributionGrade.Possible);
                         ambiguous++;
                     }
                     else if (rules.Truncated)
                     {
                         ApplyOutcome(sc, t, LitigationAttributionOutcome.Ambiguous, "judged-partial", null,
-                            $"Checked {candidates.Count} candidate parties without finding target; others were not checked.", mode, now, ref suggested, ref autoExcluded);
+                            $"Checked {candidates.Count} candidate parties without finding target; others were not checked.", mode, now, ref suggested, ref autoExcluded, PersonAttributionGrade.Possible);
                         ambiguous++;
                     }
                     else
                     {
                         var first = found.FirstOrDefault();
-                        ApplyOutcome(sc, t, LitigationAttributionOutcome.NotTheCompany, "judged-different", first.Party, first.V.Reason, mode, now, ref suggested, ref autoExcluded);
+                        ApplyOutcome(sc, t, LitigationAttributionOutcome.NotTheCompany, "judged-different", first.Party, first.V.Reason, mode, now, ref suggested, ref autoExcluded, PersonAttributionGrade.Excluded);
                         notCompany++;
                     }
                 }
@@ -296,12 +309,16 @@ public sealed class PreLoginAttributionService(
         PreLoginAttributionMode mode,
         DateTime now,
         ref int suggested,
-        ref int autoExcluded)
+        ref int autoExcluded,
+        PersonAttributionGrade? grade = null,
+        string? signalsJson = null)
     {
         sc.AttributionOutcome = outcome;
         sc.AttributionRule = rule;
         sc.AttributionParty = Truncate(party, 500);
         sc.AttributionReason = Truncate(reason, 512);
+        sc.AttributionGrade = grade;
+        sc.AttributionSignalsJson = Truncate(signalsJson, 2000);
         sc.TargetId = target.PreLoginLitigationTargetId;
         sc.UpdatedUtc = now;
 
@@ -910,6 +927,31 @@ public sealed class PreLoginAttributionService(
         return true;
     }
 
+    public static PersonAttributionGrade? InferGrade(LitigationAttributionOutcome? outcome, string? rule)
+    {
+        if (outcome == null) return null;
+        return outcome switch
+        {
+            LitigationAttributionOutcome.NotTheCompany => PersonAttributionGrade.Excluded,
+            LitigationAttributionOutcome.Ambiguous => PersonAttributionGrade.Possible,
+            LitigationAttributionOutcome.Attributed => IsKnownConfirmedRule(rule)
+                ? PersonAttributionGrade.Confirmed
+                : PersonAttributionGrade.Probable,
+            _ => null
+        };
+    }
+
+    private static bool IsKnownConfirmedRule(string? rule)
+    {
+        if (string.IsNullOrWhiteSpace(rule)) return false;
+        if (rule.StartsWith("probable", StringComparison.OrdinalIgnoreCase)) return false;
+        if (rule.StartsWith("confirmed", StringComparison.OrdinalIgnoreCase)) return true;
+        if (rule.StartsWith("exact", StringComparison.OrdinalIgnoreCase)) return true;
+        if (rule.Equals("judged-same", StringComparison.OrdinalIgnoreCase)) return true;
+        if (rule.Equals("company-exact-name", StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
     public async Task<IReadOnlyDictionary<string, PreLoginCaseAttributionDto>> GetCaseAttributionsForJobAsync(long jobId, CancellationToken ct = default)
     {
         var scope = await db.Set<ModuleScope>().AsNoTracking()
@@ -949,6 +991,8 @@ public sealed class PreLoginAttributionService(
 
             bool isUnconfirmed = sc.AttributionOutcome == LitigationAttributionOutcome.Ambiguous;
 
+            var effectiveGrade = sc.AttributionGrade ?? InferGrade(sc.AttributionOutcome, sc.AttributionRule);
+
             dict[sc.Alias] = new PreLoginCaseAttributionDto(
                 sc.ScopeCaseId,
                 sc.Alias,
@@ -963,7 +1007,9 @@ public sealed class PreLoginAttributionService(
                 sc.ExclusionReason,
                 isSuggestedExclusion,
                 isAutoExcluded,
-                isUnconfirmed
+                isUnconfirmed,
+                effectiveGrade,
+                sc.AttributionSignalsJson
             );
         }
 
