@@ -315,10 +315,13 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         return WithSessionRecoveryAsync(async () => (await SearchPageAsync(query, 0, limit, ct)).Hits, ct);
     }
 
-    /// <summary>Every hit for <paramref name="query"/>, page by page, and whether the search was read to its end (#497). The search is an autocomplete:
-    /// one page proves nothing about what lies beyond it, so pages are read until one comes back short. It is <b>not</b> complete when
-    /// <paramref name="maxPages"/> pages are all full, or a page repeats rows already seen (the tool ignoring the offset). Rows without a CIN
-    /// (partnerships, proprietorships) count toward a page being full, though they are not returned.</summary>
+    /// <summary>Every hit for <paramref name="query"/>, page by page, and whether the search was read to its end (#497). Pages are read until one comes
+    /// back short. Rows without a CIN (partnerships, proprietorships) count toward a page being full, though they are not returned.
+    /// <para>The tool returns its 25 best matches ranked by how well they match, and ignores the offset and the limit (2026-10-25, the #514 round:
+    /// asked for rows 25-49 it sent rows 0-24 again). So a full page is also read to its end for this name when it is <b>ranked past the exact
+    /// matches</b>: every row whose name is exactly the query comes first and at least one row that is not follows; an exact match cannot rank
+    /// below a near name, so none is left unread (18 live searches, 15 with an exact match, all ranked so). A full page of exact matches only, or
+    /// a page that mixes them, proves nothing, and the search is <b>not</b> complete; nor is one whose pages are all full or repeat.</para></summary>
     public Task<ReferenceSearchResult> SearchCompaniesExhaustivelyAsync(string query, int pageSize, int maxPages, CancellationToken ct)
     {
         EnsureConfigured();
@@ -329,6 +332,8 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
             for (var page = 0; page < maxPages; page++)
             {
                 var result = await SearchPageAsync(query, page * pageSize, pageSize, ct);
+                if (page == 0 && result.RowKeys.Count >= pageSize && RankedPastExactMatches(query, result.RowNames))
+                    return new ReferenceSearchResult(result.Hits.ToList(), Complete: true);
                 var fresh = result.RowKeys.Count(k => seen.Add(k));
                 if (result.RowKeys.Count > 0 && fresh == 0)
                     return new ReferenceSearchResult(hits, Complete: false);   // the same rows again: paging is not working
@@ -340,7 +345,24 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         }, ct);
     }
 
-    private sealed record SearchPage(IReadOnlyList<ReferenceCompanyHint> Hits, IReadOnlyList<string> RowKeys);
+    /// <summary>The page's rows in the tool's order show every exact match of <paramref name="query"/> before the first row that is not one, and at least
+    /// one row that is not (see <see cref="SearchCompaniesExhaustivelyAsync"/>). Names compare as the company master does.</summary>
+    internal static bool RankedPastExactMatches(string query, IReadOnlyList<string?> rowNames)
+    {
+        var key = CompanyMaster.CompanyNameNormalizer.Normalize(query).NameNormalized;
+        if (key.Length == 0) return false;
+        var firstNear = -1;
+        for (var i = 0; i < rowNames.Count; i++)
+        {
+            var exact = CompanyMaster.CompanyNameNormalizer.Normalize(rowNames[i]).NameNormalized == key;
+            if (!exact && firstNear < 0) firstNear = i;
+            else if (exact && firstNear >= 0) return false;   // an exact match below a near name: the ranking cannot be relied on
+        }
+        return firstNear >= 0;
+    }
+
+    /// <summary>One page: the hits with a CIN, every row's key, and every row's name (the matched name, else the legal name) in the tool's order.</summary>
+    private sealed record SearchPage(IReadOnlyList<ReferenceCompanyHint> Hits, IReadOnlyList<string> RowKeys, IReadOnlyList<string?> RowNames);
 
     private async Task<SearchPage> SearchPageAsync(string query, int offset, int limit, CancellationToken ct)
     {
@@ -353,6 +375,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
         using var doc = ParseJsonOrThrow(body, "search");
         var hits = new List<ReferenceCompanyHint>();
         var rowKeys = new List<string>();
+        var rowNames = new List<string?>();
         if (doc.RootElement.ValueKind == JsonValueKind.Object
             && doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
         {
@@ -360,6 +383,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
             {
                 // Every row counts toward the page, whether or not it is a company we can use.
                 rowKeys.Add(string.Join('|', Text(item, "bid"), Text(item, "cin"), Text(item, "name_hint"), Text(item, "context")));
+                rowNames.Add(Text(item, "name_hint") ?? Text(item, "legal_name") ?? Text(item, "name"));
                 var cin = Text(item, "cin");
                 var name = Text(item, "legal_name") ?? Text(item, "name");
                 if (string.IsNullOrWhiteSpace(cin) || string.IsNullOrWhiteSpace(name)) continue;
@@ -374,7 +398,7 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
                     incorporated));
             }
         }
-        return new SearchPage(hits, rowKeys);
+        return new SearchPage(hits, rowKeys, rowNames);
     }
 
     // ── Workbook exports ────────────────────────────────────────────────────────────────────────────

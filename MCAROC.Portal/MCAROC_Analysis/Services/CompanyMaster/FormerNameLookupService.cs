@@ -40,7 +40,9 @@ public sealed class FormerNameLookupService(AppDbContext db, ReferenceToolClient
         var now = time.GetUtcNow().UtcDateTime;
 
         var stored = await db.CompanyNameSearches.AsNoTracking().FirstOrDefaultAsync(s => s.NameNormalized == normalized, ct);
-        if (stored is not null && now - stored.SearchedUtc < MaxAge
+        // Only a complete search is reused: an incomplete one is searched again (it is free), since what made it incomplete may since have been
+        // settled (the ranked page, review of the #514 round).
+        if (stored is not null && stored.Complete && now - stored.SearchedUtc < MaxAge
             && JsonSerializer.Deserialize<Observation>(stored.ResultJson, Json) is { } kept)
             return new FormerNameLookup(true, stored.Complete, kept.FormerNames ?? [], kept.CurrentHolders ?? []);
 
