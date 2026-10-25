@@ -4,7 +4,8 @@ namespace MCAROC_Analysis.Services.Excel;
 /// naming can vary slightly across exports. Lookup is trim/case-insensitive/whitespace-collapsed.</summary>
 public static class SheetAliases
 {
-    public static readonly string[] CompanyProfile = ["About the Company", "Company Master", "Company Details"];
+    /// <summary>An LLP's export names it "About the LLP" (#539), with LLPIN, contribution and "LLP Status" rows in place of the company's.</summary>
+    public static readonly string[] CompanyProfile = ["About the Company", "Company Master", "Company Details", "About the LLP"];
     public static readonly string[] Directors = ["Directors"];
     public static readonly string[] OtherDirectorships = ["Other Directorships"];
     public static readonly string[] DirectorShareholding = ["Director Shareholding"];

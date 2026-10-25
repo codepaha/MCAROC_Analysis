@@ -57,7 +57,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
                 rocWorkbook, "RocReport", requestId, run.IngestionRunId, rocDocumentId, extractedAt));
 
             var companySheet = SheetAliases.Find(rocWorkbook, SheetAliases.CompanyProfile)
-                ?? throw new IngestionFailedException("Required sheet 'About the Company' was not found in the ROC report.");
+                ?? throw new IngestionFailedException("Required sheet 'About the Company' (or 'About the LLP') was not found in the ROC report.");
 
             var companyResult = CompanyProfileParser.Parse(companySheet, requestId, run.IngestionRunId, rocDocumentId, out var companyEmails, out var sourceSnapshotDate);
             Collect(companyResult, issues, ref itemCount);
@@ -169,6 +169,10 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             !string.Equals(request.Cin, companyProfile.Cin, StringComparison.OrdinalIgnoreCase))
             reasons.Add($"Request CIN '{request.Cin}' does not match ROC report CIN '{companyProfile.Cin}'.");
 
+        if (!string.IsNullOrEmpty(request.Llpin) && !string.IsNullOrEmpty(companyProfile.Llpin) &&
+            !string.Equals(request.Llpin, companyProfile.Llpin, StringComparison.OrdinalIgnoreCase))
+            reasons.Add($"Request LLPIN '{request.Llpin}' does not match ROC report LLPIN '{companyProfile.Llpin}'.");
+
         if (!string.IsNullOrEmpty(request.Pan) && !string.IsNullOrEmpty(companyProfile.Pan) &&
             !string.Equals(request.Pan, companyProfile.Pan, StringComparison.OrdinalIgnoreCase))
             reasons.Add($"Request PAN '{request.Pan}' does not match ROC report PAN '{companyProfile.Pan}'.");
@@ -195,6 +199,7 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         var mismatches = new List<string>();
         CompareField(rocCompanySheet, chargeCompanySheet, "Legal Name", "company name", mismatches, normalize: true);
         CompareField(rocCompanySheet, chargeCompanySheet, "CIN", "CIN", mismatches, normalize: false);
+        CompareField(rocCompanySheet, chargeCompanySheet, "LLPIN", "LLPIN", mismatches, normalize: false);
         CompareField(rocCompanySheet, chargeCompanySheet, "PAN", "PAN", mismatches, normalize: false);
 
         if (mismatches.Count == 0) return true;
