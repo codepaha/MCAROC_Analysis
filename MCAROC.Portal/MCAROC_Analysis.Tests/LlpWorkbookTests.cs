@@ -98,6 +98,24 @@ public class LlpWorkbookTests : IAsyncLifetime
         Assert.Equal(("+91-11-1111111, +91-11-2222222", "https://sample.example/"), (p.Phone, p.Website));
     }
 
+    /// <summary>Review of #540: only a NIC code's shape (2 to 5 digits) is a code; a short wording is the description.</summary>
+    [Theory]
+    [InlineData(43.0, "43", null)]
+    [InlineData("4100", "4100", null)]
+    [InlineData("45200", "45200", null)]
+    [InlineData("Services", null, "Services")]
+    [InlineData("Retail", null, "Retail")]
+    [InlineData("A1", null, "A1")]
+    [InlineData("123456", null, "123456")]
+    [InlineData("Construction of buildings", null, "Construction of buildings")]
+    public void An_LLP_activity_is_a_code_only_when_it_has_a_NIC_codes_shape(object value, string? code, string? description)
+    {
+        var sheet = Sheet("Highlights", Row("PRINCIPAL BUSINESS ACTIVITIES - 31 Mar, 2026", ""),
+            Row("Business Classification", "Description of Business Activity"), Row("Business", value));
+        var a = Assert.Single(HighlightsParser.ParsePrincipalBusinessActivities(sheet, 1, 1, null).Items);
+        Assert.Equal((code, description), (a.BusinessActivityCode, a.BusinessActivityDescription));
+    }
+
     [Fact]
     public void The_LLP_business_activity_block_is_read_in_its_two_columns()
     {

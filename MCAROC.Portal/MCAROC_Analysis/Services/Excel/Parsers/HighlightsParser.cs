@@ -38,7 +38,8 @@ public static class HighlightsParser
 
             if (c0.StartsWith("Main Activity Group Code", StringComparison.OrdinalIgnoreCase)) continue; // header
             // An LLP's block (#539) has two columns, "Business Classification | Description of Business Activity", the second holding the
-            // activity's code (NIC "43") or its wording.
+            // activity's code (NIC "43") or its wording. Only a NIC code's shape (2 to 5 digits) is a code; any other value, however short
+            // ("Services", "Retail"), is the description (review of #540).
             if (c0.StartsWith("Business Classification", StringComparison.OrdinalIgnoreCase)) { llpLayout = true; continue; }
             if (c0.StartsWith("See Annexure", StringComparison.OrdinalIgnoreCase)) continue;
             if (c0.Contains("did not find this data", StringComparison.OrdinalIgnoreCase)) continue; // empty-state note
@@ -46,7 +47,7 @@ public static class HighlightsParser
             if (llpLayout)
             {
                 var activity = CleanCode(Cell(sheet, r, 1));
-                var isCode = activity is not null && activity.All(char.IsLetterOrDigit) && activity.Length <= 10;
+                var isCode = activity is { Length: >= 2 and <= 5 } && activity.All(char.IsAsciiDigit);
                 result.Items.Add(new PrincipalBusinessActivity
                 {
                     RequestId = requestId,
