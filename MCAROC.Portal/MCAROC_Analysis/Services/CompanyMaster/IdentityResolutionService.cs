@@ -84,7 +84,7 @@ public sealed class IdentityResolutionService(AppDbContext db, IOptions<Resolver
         // Our master holds current names only: a client asking by a name the company no longer has would find nothing, or the company holding that
         // name today. The former-name lookup decides again (FormerNameResolver); when it finds nothing, or cannot search, the decision stands.
         var lookup = await formerNames.FindAsync(name!, ct);
-        if (!lookup.Searched || lookup.FormerNames.Count == 0) return decision;
+        if (!lookup.Searched) return decision;   // no search (not configured, or failed): as before
         var rows = new Dictionary<string, MasterCandidate>(StringComparer.OrdinalIgnoreCase);
         foreach (var id in lookup.FormerNames.Select(f => f.Identifier).Concat(lookup.CurrentHolders.Select(h => h.Identifier))
                      .Select(i => i.Trim().ToUpperInvariant()).Distinct())

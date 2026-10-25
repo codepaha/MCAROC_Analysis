@@ -168,6 +168,25 @@ public sealed class FormerNameResolutionTests : IAsyncLifetime
         Assert.Same(master, FormerNameResolver.Decide(asked, ResolutionHints.None, master, Found(Hit("U22222DL2001PLC000002", asked, asked)), empty, Apply));
     }
 
+    /// <summary>Review of #533 (a0104fd): a search not read to its end that shows no former holder still cannot rule one out on the pages it did not
+    /// read, so the master's own automatic pick (here #495's unique exact match) is offered instead of chosen. A complete search changes nothing.</summary>
+    [Fact]
+    public void An_automatic_pick_waits_for_confirmation_when_the_former_name_search_was_not_read_to_its_end()
+    {
+        const string asked = "SUNRISE HOLDINGS LIMITED";
+        var master = MasterDecision(asked, Apply, Row("U22222DL2001PLC000002", asked));
+        Assert.Equal((ResolutionStatus.Resolved, ResolutionReasonCodes.UniqueExact), (master.Status, master.ReasonCode));
+        var empty = new Dictionary<string, MasterCandidate>();
+
+        var partial = FormerNameResolver.Decide(asked, ResolutionHints.None, master, new FormerNameLookup(true, false, [], []), empty, Apply);
+        Assert.Equal((ResolutionStatus.NeedsConfirmation, ResolutionReasonCodes.FormerNameCheckIncomplete, "U22222DL2001PLC000002"),
+            (partial.Status, partial.ReasonCode, partial.RecommendedIdentifier));
+        Assert.Null(partial.ChosenIdentifier);
+        Assert.False(partial.AutoSelectEligible);
+
+        Assert.Same(master, FormerNameResolver.Decide(asked, ResolutionHints.None, master, new FormerNameLookup(true, true, [], []), empty, Apply));
+    }
+
     // ── The search reply (as recorded) ───────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -316,6 +335,33 @@ public sealed class FormerNameResolutionTests : IAsyncLifetime
         }
         await using var db = CreateContext();
         Assert.False((await db.CompanyNameSearches.AsNoTracking().SingleAsync(s => s.NameNormalized == CompanyNameNormalizer.Normalize(former).NameNormalized)).Complete);
+    }
+
+    /// <summary>Review of #533 (a0104fd), end to end: the master has an exact, unique, Active holder of the name (which #495 alone would choose), and the
+    /// tool returns the same full page for every offset with no former holder in it. The search is incomplete, so the request is not applied.</summary>
+    [Fact]
+    public async Task A_unique_current_name_is_not_chosen_when_the_former_name_search_could_not_be_completed()
+    {
+        var holderName = $"{_word} HOLDINGS LIMITED";
+        await using (var seed = CreateContext())
+        {
+            seed.CompanyMasterRecords.Add(new CompanyMasterRecord { Identifier = Cin(3), RecordType = CompanyMasterRecordType.Company, Name = holderName, Status = "Active" });
+            await seed.SaveChangesAsync();
+        }
+        await using (var connection = new SqlConnection(TestDatabase.ConnectionString))
+        {
+            await CompanyMasterNameBackfill.RunAsync(connection, onlyMissing: true);
+            await CompanyNameTokenIndex.RebuildAsync(connection);
+        }
+        var fullPage = Enumerable.Range(10, 25).Select(n => Company(Cin(n), $"{_word} UNRELATED {n} LIMITED", "legalName")).ToList();
+        var tool = new FixtureReferenceTool("unlocked-stale-coastal-20260922").With("getNameHints", 200, new { data = fullPage });
+
+        var (result, audit, request) = await ResolveTwiceAsync(tool, holderName, 1);
+
+        Assert.Equal((ResolutionStatus.NeedsConfirmation, ResolutionReasonCodes.FormerNameCheckIncomplete, Cin(3)),
+            (audit.Status, audit.ReasonCode, audit.RecommendedIdentifier));
+        Assert.False(result.AppliedToRequest);
+        Assert.Null(request.Cin);
     }
 
     [Fact]

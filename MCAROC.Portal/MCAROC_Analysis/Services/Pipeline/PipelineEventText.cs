@@ -90,6 +90,7 @@ public static class PipelineEventText
         ["FORMER_NAME_NEEDS_CONFIRMATION"] = "the name is a former name of one company; confirm it",
         ["FORMER_NAME_CONFLICT"] = "one company has this name today and another had it before; select the company",
         ["FORMER_NAME_AMBIGUOUS"] = "several companies had this name before; select the company",
+        ["FORMER_NAME_CHECK_INCOMPLETE"] = "a likely company was found, but the check for a company that had this name before could not finish; confirm it",
         ["IDENTITY_FALSE_ACCEPT"] = "the reference tool named a different company than the one auto-selected; select the company",
         ["IDENTITY_NOT_RESOLVED"] = "the request has no CIN/LLPIN",
         ["DUPLICATE_REQUEST"] = "this client already has a request for that company",

@@ -117,6 +117,9 @@ public static class ResolutionReasonCodes
     public const string FormerNameConflict = "FORMER_NAME_CONFLICT";
     /// <summary>#497: several companies were registered under the requested name before.</summary>
     public const string FormerNameAmbiguous = "FORMER_NAME_AMBIGUOUS";
+    /// <summary>#497: the company would have been chosen automatically, but the former-name search could not be read to its end, so a company that had
+    /// the name before cannot be ruled out. Offered for confirmation, filled in.</summary>
+    public const string FormerNameCheckIncomplete = "FORMER_NAME_CHECK_INCOMPLETE";
 }
 
 /// <summary>Name → CIN/LLPIN resolution, pure part (issue #294, plan §5A.2 steps 3–4): rank retrieved master

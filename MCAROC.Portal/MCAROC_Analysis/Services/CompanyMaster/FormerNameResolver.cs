@@ -43,13 +43,13 @@ public static class FormerNameResolver
             .Where(h => CompanyNameNormalizer.Normalize(h.FormerName).NameNormalized == input.NameNormalized)
             .GroupBy(h => h.Identifier.Trim().ToUpperInvariant()).Select(g => g.First() with { Identifier = g.Key })
             .ToList();
-        if (former.Count == 0) return master;
+        if (former.Count == 0) return Unconfirmed(master, lookup);
 
         var masterHolders = master.Candidates.Where(c => c.Features.GetValueOrDefault("ExactNormalized") == 1)
             .Select(c => c.Candidate.Identifier.Trim().ToUpperInvariant()).ToHashSet(StringComparer.Ordinal);
         var currentHolders = masterHolders.Concat(lookup.CurrentHolders.Select(h => h.Identifier.Trim().ToUpperInvariant())).ToHashSet(StringComparer.Ordinal);
         var formerOthers = former.Where(f => !currentHolders.Contains(f.Identifier)).ToList();
-        if (formerOthers.Count == 0) return master; // the company that holds the name today also held it before: nothing new
+        if (formerOthers.Count == 0) return Unconfirmed(master, lookup); // the company that holds the name today also held it before: nothing new
 
         var formerCandidates = formerOthers.Select(f => Candidate(f, inputName, hints, masterRows.GetValueOrDefault(f.Identifier), lookup.Complete)).ToList();
         // A company holding the name today that only the search knows about is a choice too: the client may mean it.
@@ -76,6 +76,17 @@ public static class FormerNameResolver
         return new(ResolutionStatus.NeedsConfirmation, null, null, only.Candidate.Identifier, trustworthy, 1.0, 1.0,
             ResolutionReasonCodes.FormerNameNeedsConfirmation, master.NormalizedInput, shown);
     }
+
+    /// <summary>The master's own decision, except that an automatic pick needs the search to have been read to its end: a company that had the name
+    /// before may be on a page that was not read, and the guard above can only see what was read. Then the pick is offered, filled in, instead.</summary>
+    private static ResolutionDecision Unconfirmed(ResolutionDecision master, FormerNameLookup lookup) =>
+        lookup.Complete || master is not { Status: ResolutionStatus.Resolved, Method: ResolutionMethod.AutoSelected }
+            ? master
+            : master with
+            {
+                Status = ResolutionStatus.NeedsConfirmation, Method = null, ChosenIdentifier = null,
+                RecommendedIdentifier = master.ChosenIdentifier, AutoSelectEligible = false, ReasonCode = ResolutionReasonCodes.FormerNameCheckIncomplete
+            };
 
     /// <summary>The company as a candidate: the master's row when it has one (current name, status, address), else what the search reported, marked
     /// tool-only. Scored for hints against the master's data, so a requester's state or year that disagrees still stops an automatic choice.</summary>
