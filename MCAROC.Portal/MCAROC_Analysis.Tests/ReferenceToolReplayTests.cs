@@ -70,7 +70,7 @@ public sealed class ReferenceToolReplayTests : IAsyncLifetime
     private static Task<RefreshGateResult> EvaluateAsync(ServiceProvider sp, string identifier) =>
         InScope(sp, s => s.GetRequiredService<CompanyRefreshService>().EvaluateAsync(identifier, ReferenceToolClient.ComputeBid(identifier), CancellationToken.None));
 
-    private static async Task<AutoFetchJob> ProcessNewJobAsync(ServiceProvider sp, string identifier, EntityType entityType)
+    private static async Task<AutoFetchJob> ProcessNewJobAsync(ServiceProvider sp, string identifier, EntityType entityType, string companyName = "Replay Test Company")
     {
         long jobId;
         await using (var db = CreateContext())
@@ -78,7 +78,7 @@ public sealed class ReferenceToolReplayTests : IAsyncLifetime
             var request = new McaRequest
             {
                 Client = new Client { ClientCode = "RPL" + Guid.NewGuid().ToString("N")[..7], ClientName = "Replay Test Client", CreatedDate = DateTime.UtcNow },
-                EntityType = entityType, CompanyName = "Replay Test Company", Cin = identifier,
+                EntityType = entityType, CompanyName = companyName, Cin = identifier,
                 RequestNumber = $"RPL-{Guid.NewGuid():N}", RequestStatus = RequestStatus.Created, CreatedDate = DateTime.UtcNow
             };
             db.Requests.Add(request);
@@ -215,6 +215,23 @@ public sealed class ReferenceToolReplayTests : IAsyncLifetime
         // Confirmed from the tool's asset status after the spend (the recorded unlock time), not from addAsset's reply.
         Assert.Contains(Ist.Format(new DateTimeOffset(2026, 9, 22, 9, 41, 59, TimeSpan.FromHours(5.5))), result.Message);
         AssertAskedOnlyForRecordedCalls(tool);
+    }
+
+    /// <summary>The #514 round: a request made by its CIN alone is named by its CIN until the workbook comes, and the tool's name search does not match a
+    /// CIN; so a locked company's unlock alert asked to spend a credit on "U45403HR2025PTC131813" with no name. The free preview names it before the
+    /// job parks, and the request (and the alert, which shows the request's name) says whose unlock it is.</summary>
+    [Fact]
+    public async Task A_locked_company_requested_by_its_CIN_is_named_from_the_preview_before_it_waits_for_approval()
+    {
+        var tool = new FixtureReferenceTool("locked-unlock-tcs-20260922");
+        var sp = Services(tool, new FakeTime(new DateTimeOffset(2026, 9, 22, 4, 10, 0, TimeSpan.Zero)));
+
+        var job = await ProcessNewJobAsync(sp, TcsCin, EntityType.Company, companyName: TcsCin);
+
+        Assert.Equal(AutoFetchJobStatus.WaitingForUnlock, job.Status);
+        Assert.Equal(0, tool.Count("addAsset"));
+        await using var read = CreateContext();
+        Assert.Equal("TATA CONSULTANCY SERVICES LIMITED", await read.Requests.Where(r => r.RequestId == job.RequestId).Select(r => r.CompanyName).SingleAsync());
     }
 
     /// <summary>Profile 10 (#515): a large company with 1,354 documents across 4 sections.
