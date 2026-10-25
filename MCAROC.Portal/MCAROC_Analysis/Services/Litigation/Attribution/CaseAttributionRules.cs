@@ -7,7 +7,7 @@ namespace MCAROC_Analysis.Services.LitigationData.Attribution;
 /// <summary>What the rules alone say about one case. <see cref="Candidates"/> are the party names to judge when the rules cannot settle it, most likely first;
 /// <see cref="Truncated"/> says some possible parties were left out by the cap, so "none of the judged parties is the company" does not settle the case.</summary>
 public sealed record RuleAssessment(LitigationAttributionOutcome? Outcome, string? Rule, string? Party, string? Reason, IReadOnlyList<string> Candidates,
-    bool Truncated = false, int PossibleCount = 0)
+    bool Truncated = false, int PossibleCount = 0, string? MatchedName = null)
 {
     public bool NeedsJudgement => Outcome is null;
 }
@@ -47,7 +47,7 @@ public static class CaseAttributionRules
         {
             var match = WholeNamePartyMatcher.Match(party, currentNames, formerNames);
             if (match.Outcome == PartyMatchOutcome.Verified)
-                return new(LitigationAttributionOutcome.Attributed, match.Rule, party, ReasonFor(match), []);
+                return new(LitigationAttributionOutcome.Attributed, match.Rule, party, ReasonFor(match), [], MatchedName: match.MatchedName);
         }
 
         var companyWords = currentNames.Concat(formerNames).SelectMany(DistinctiveWords).ToHashSet(StringComparer.Ordinal);
