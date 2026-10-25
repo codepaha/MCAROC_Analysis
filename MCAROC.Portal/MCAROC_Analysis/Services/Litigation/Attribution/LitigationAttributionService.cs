@@ -50,7 +50,7 @@ public sealed class LitigationAttributionService(AppDbContext db, IServiceProvid
         // 1. Rules; a party that is one of the company's names is checked against when the company had that name (#497).
         var needing = new List<(LitigationCase Case, IReadOnlyList<string> Candidates, RuleAssessment Rules)>();
         var held = new List<FormerNameCaseQuestion>();
-        var holders = new Dictionary<(string Name, bool Former), IReadOnlyList<NameHolder>>();
+        var holders = new Dictionary<(string Name, bool Former), (IReadOnlyList<NameHolder> Others, bool Known)>();
         foreach (var c in cases)
         {
             var assessment = CaseAttributionRules.Assess(PartiesOf(c), [subject.LegalName], subject.FormerNames);
@@ -65,9 +65,9 @@ public sealed class LitigationAttributionService(AppDbContext db, IServiceProvid
                 // Who else has the name is looked up only when the dates alone could leave the case to another company.
                 if (FormerNameCaseRules.MayBeAnothersName(name, filed))
                 {
-                    if (!holders.TryGetValue((matched, former), out var others))
-                        holders[(matched, former)] = others = await OtherHoldersAsync(matched, former, subject.Identifier, ct);
-                    name = name with { Others = others };
+                    if (!holders.TryGetValue((matched, former), out var found))
+                        holders[(matched, former)] = found = await OtherHoldersAsync(matched, former, subject.Identifier, ct);
+                    name = name with { Others = found.Others, OthersKnown = found.Known };
                 }
                 var check = FormerNameCaseRules.Check(name, filed);
                 if (check.Decision == FormerNameCaseDecision.NeedsJudgement)
@@ -200,35 +200,40 @@ public sealed class LitigationAttributionService(AppDbContext db, IServiceProvid
 
     /// <summary>The other companies with <paramref name="name"/>: for a former name, those that have it today (the company master, and the reference
     /// tool's search where it is configured); for the current name, those that had it before (the search's former-name hits). The company itself is
-    /// never one. Without the company's identifier none can be told apart from it, so none is returned and the dates alone decide.</summary>
-    private async Task<IReadOnlyList<NameHolder>> OtherHoldersAsync(string name, bool former, string? identifier, CancellationToken ct)
+    /// never one. Without the company's identifier none can be told apart from it, so none is returned and the dates alone decide.
+    /// <para>Known is false when the search was made but not read to its end, or failed: an empty list is then not evidence that nobody else has the
+    /// name (review of #536). A search that is not configured at all leaves the master alone to say, as decided.</para></summary>
+    private async Task<(IReadOnlyList<NameHolder> Others, bool Known)> OtherHoldersAsync(string name, bool former, string? identifier, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(identifier)) return [];
+        if (string.IsNullOrWhiteSpace(identifier)) return ([], true);
         var self = identifier.Trim().ToUpperInvariant();
+        var normalized = CompanyNameNormalizer.Normalize(name).NameNormalized;
         var holders = new List<NameHolder>();
-        if (former)
-        {
-            var normalized = CompanyNameNormalizer.Normalize(name).NameNormalized;
-            if (normalized.Length > 0)
-                holders.AddRange(await db.CompanyMasterRecords.AsNoTracking().Where(m => m.NameNormalized == normalized && m.Identifier != self)
-                    .Select(m => new NameHolder(m.Identifier, m.Name, m.State)).Take(10).ToListAsync(ct));
-        }
-        if (services.GetService<IFormerNameLookup>() is { } lookup)
+        var known = true;
+        if (former && normalized.Length > 0)
+            holders.AddRange(await db.CompanyMasterRecords.AsNoTracking().Where(m => m.NameNormalized == normalized && m.Identifier != self)
+                .Select(m => new NameHolder(m.Identifier, m.Name, m.State)).Take(10).ToListAsync(ct));
+        if (services.GetService<IFormerNameLookup>() is { IsConfigured: true } lookup)
         {
             try
             {
                 var found = await lookup.FindAsync(name, ct);
+                known = found.Searched && found.Complete;
+                // The search returns every hit it saw; only those with exactly this name count (review of #536: "ALPHA TRADING LIMITED" is not "ALPHA LIMITED").
+                bool Same(string? other) => CompanyNameNormalizer.Normalize(other).NameNormalized == normalized;
                 holders.AddRange(former
-                    ? found.CurrentHolders.Where(h => !string.IsNullOrWhiteSpace(h.Identifier)).Select(h => new NameHolder(h.Identifier!, h.Name, h.State))
-                    : found.FormerNames.Where(h => !string.IsNullOrWhiteSpace(h.Identifier)).Select(h => new NameHolder(h.Identifier!, h.CurrentName ?? h.FormerName, h.State)));
+                    ? found.CurrentHolders.Where(h => !string.IsNullOrWhiteSpace(h.Identifier) && Same(h.Name)).Select(h => new NameHolder(h.Identifier!, h.Name, h.State))
+                    : found.FormerNames.Where(h => !string.IsNullOrWhiteSpace(h.Identifier) && Same(h.FormerName))
+                        .Select(h => new NameHolder(h.Identifier!, h.CurrentName ?? h.FormerName, h.State)));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                logger.LogWarning(ex, "Looking up other companies named '{Name}' failed; the company master alone is used", name);
+                known = false;
+                logger.LogWarning(ex, "Looking up other companies named '{Name}' failed; whether another company has it is not known", name);
             }
         }
-        return holders.Where(h => !string.Equals(h.Identifier.Trim(), self, StringComparison.OrdinalIgnoreCase))
-            .DistinctBy(h => h.Identifier.Trim().ToUpperInvariant()).ToList();
+        return (holders.Where(h => !string.Equals(h.Identifier.Trim(), self, StringComparison.OrdinalIgnoreCase))
+            .DistinctBy(h => h.Identifier.Trim().ToUpperInvariant()).ToList(), known);
     }
 
     /// <summary>Judges the names in batches and stores each verdict. A batch whose call fails is left unjudged (its cases stay waiting and are tried again).</summary>

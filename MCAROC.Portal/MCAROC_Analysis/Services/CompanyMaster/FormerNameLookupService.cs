@@ -10,6 +10,10 @@ namespace MCAROC_Analysis.Services.CompanyMaster;
 public interface IFormerNameLookup
 {
     Task<FormerNameLookup> FindAsync(string name, CancellationToken ct);
+
+    /// <summary>Whether a search can be made at all. A lookup that is not configured is a decided policy (the master alone); a configured one that
+    /// reports <see cref="FormerNameLookup.NotSearched"/> failed, and its answer is unknown.</summary>
+    bool IsConfigured => true;
 }
 
 /// <summary>Former names from the reference tool's free company search (a hit whose context is <c>oldName</c>), and current holders (<c>legalName</c>),
@@ -26,6 +30,8 @@ public sealed class FormerNameLookupService(AppDbContext db, ReferenceToolClient
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private sealed record Observation(IReadOnlyList<FormerNameHit> FormerNames, IReadOnlyList<CompanyHolder> CurrentHolders);
+
+    public bool IsConfigured => client.IsConfigured;
 
     public async Task<FormerNameLookup> FindAsync(string name, CancellationToken ct)
     {

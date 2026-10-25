@@ -12,8 +12,10 @@ public sealed record NameHolder(string Identifier, string Name, string? State);
 /// <summary>The name a party matched, and what tells whether the company had it when the case was filed. For a former name, <see cref="UsedUntil"/> is
 /// the last day the company used it (the certificate's date where one was read, else the name history's), and <see cref="Others"/> the companies that
 /// have it today. For the current name, <see cref="CurrentSince"/> is the day the company took it (its last change of name, else its incorporation),
-/// and <see cref="Others"/> the companies that had it before.</summary>
-public sealed record NameAtFiling(string MatchedName, bool IsFormer, DateOnly? UsedUntil, DateOnly? CurrentSince, IReadOnlyList<NameHolder> Others);
+/// and <see cref="Others"/> the companies that had it before. <see cref="OthersKnown"/> is false when the search for them was made but not read to its end
+/// (or failed): then an empty <see cref="Others"/> is not evidence that nobody else has the name (review of #536).</summary>
+public sealed record NameAtFiling(string MatchedName, bool IsFormer, DateOnly? UsedUntil, DateOnly? CurrentSince, IReadOnlyList<NameHolder> Others,
+    bool OthersKnown = true);
 
 public enum FormerNameCaseDecision
 {
@@ -66,25 +68,30 @@ public static class FormerNameCaseRules
 
     public static FormerNameCaseCheck Check(NameAtFiling name, DateOnly? filed)
     {
-        var others = string.Join("; ", name.Others.Select(o => $"{o.Name} ({o.Identifier})"));
+        // Nobody else has the name only when the search for others was complete and found none.
+        var nobodyElse = name.Others.Count == 0 && name.OthersKnown;
+        var others = name.Others.Count > 0 ? string.Join("; ", name.Others.Select(o => $"{o.Name} ({o.Identifier})"))
+            : "whether another company has it could not be fully checked";
         if (name.IsFormer)
         {
             if (filed is { } f && name.UsedUntil is { } until && f <= until)
                 return new(FormerNameCaseDecision.Keep, null,
                     $"A party is the company's former name ({name.MatchedName}), which it used until {D(until)}; the case was filed on {D(f)}.");
-            if (name.Others.Count == 0)
+            if (nobodyElse)
                 return filed is { } after && name.UsedUntil is { } left
                     ? new(FormerNameCaseDecision.CarriedOn, "exact-former-name-carried-on",
                         $"A party is the company's former name ({name.MatchedName}), which it used until {D(left)}; the case was filed on {D(after)}, after the change, and no other company has that name.")
                     : new(FormerNameCaseDecision.Keep, null, $"A party is the company's former name ({name.MatchedName}).");
             var when = filed is { } fd && name.UsedUntil is { } u ? $"was filed on {D(fd)}, after the company left the name on {D(u)}" : "has no filing date that shows the company still had the name";
+            var holder = name.Others.Count > 0 ? $"which another company has today ({others})" : $"of which {others}";
             return new(FormerNameCaseDecision.NeedsJudgement, null,
-                $"A party is the company's former name ({name.MatchedName}), which another company has today ({others}), and the case {when}; waiting for the judgement of whose case it is.");
+                $"A party is the company's former name ({name.MatchedName}), {holder}, and the case {when}; waiting for the judgement of whose case it is.");
         }
 
-        if (name.Others.Count > 0 && filed is { } early && name.CurrentSince is { } since && early < since)
+        if (!nobodyElse && filed is { } early && name.CurrentSince is { } since && early < since)
             return new(FormerNameCaseDecision.NeedsJudgement, null,
-                $"A party is the company's name ({name.MatchedName}), but the case was filed on {D(early)}, before the company took it on {D(since)}, and another company had it before ({others}); waiting for the judgement of whose case it is.");
+                $"A party is the company's name ({name.MatchedName}), but the case was filed on {D(early)}, before the company took it on {D(since)}, and "
+                + (name.Others.Count > 0 ? $"another company had it before ({others})" : $"{others} before") + "; waiting for the judgement of whose case it is.");
         return new(FormerNameCaseDecision.Keep, null, "");
     }
 
@@ -129,8 +136,8 @@ public static class FormerNameCaseJudge
             sb.AppendLine($"    Respondents: {string.Join("; ", q.Respondents)}");
             sb.AppendLine($"    Party in question: {q.Party}");
             sb.AppendLine(q.Name.IsFormer
-                ? $"    This company used the name {q.Name.MatchedName} until {(q.Name.UsedUntil is { } u ? FormerNameCaseRules.D(u) : "a date not known")}. The name now belongs to: {Holders(q.Name.Others)}."
-                : $"    This company has had the name {q.Name.MatchedName} since {(q.Name.CurrentSince is { } s ? FormerNameCaseRules.D(s) : "a date not known")}. Before that it belonged to: {Holders(q.Name.Others)}.");
+                ? $"    This company used the name {q.Name.MatchedName} until {(q.Name.UsedUntil is { } u ? FormerNameCaseRules.D(u) : "a date not known")}. The name now belongs to: {Holders(q.Name)}."
+                : $"    This company has had the name {q.Name.MatchedName} since {(q.Name.CurrentSince is { } s ? FormerNameCaseRules.D(s) : "a date not known")}. Before that it belonged to: {Holders(q.Name)}.");
         }
         sb.AppendLine();
         sb.AppendLine("""
@@ -144,8 +151,10 @@ public static class FormerNameCaseJudge
             """);
         return sb.ToString();
 
-        static string Holders(IReadOnlyList<NameHolder> others) =>
-            string.Join("; ", others.Select(o => $"{o.Name} ({o.Identifier}{(string.IsNullOrWhiteSpace(o.State) ? "" : $", {o.State}")})"));
+        static string Holders(NameAtFiling name) =>
+            string.Join("; ", name.Others.Select(o => $"{o.Name} ({o.Identifier}{(string.IsNullOrWhiteSpace(o.State) ? "" : $", {o.State}")})")
+                .Append(name.OthersKnown ? null : "possibly a company not found, as the search for companies with this name could not be completed")
+                .Where(x => x is not null));
     }
 
     /// <summary>One judgement per case asked about, in the order asked.</summary>

@@ -131,7 +131,7 @@ public class FormerNameAttributionTests : IAsyncLifetime
         }
     }
 
-    private sealed record World(long RequestId, string Cin, Dictionary<string, long> Cases);
+    private sealed record World(long RequestId, string Cin, Dictionary<string, long> Cases, string Word);
 
     /// <summary>Coastal as its name history has it: "EAST COAST CARRIERS PVT LTD" until 19 Jun 2014 (a name another company has today) and "COASTAL PROJECTS
     /// PRIVATE LIMITED" until 11 Aug 2010 (a name nobody has now).</summary>
@@ -172,6 +172,8 @@ public class FormerNameAttributionTests : IAsyncLifetime
             ["undated-mine"] = new() { CaseNumber = "CS MINE 3", PetitionersJson = Parties("EAST COAST CARRIERS PVT. LTD."), RespondentsJson = Parties("IFCI LIMITED") },
             ["carried-on"] = new() { CaseNumber = "CA 4/2018", FilingDate = "10-01-2018", PetitionersJson = Parties($"{word} PROJECTS PVT LTD"), RespondentsJson = Parties("UNION OF INDIA") },
             ["current"] = new() { CaseNumber = "AA 5/2019", FilingDate = "02-02-2019", PetitionersJson = Parties($"{word} PROJECTS LIMITED"), RespondentsJson = Parties("NHAI") },
+            // The current name in a case filed before the company took it (its last change, 19 Jun 2014).
+            ["early-current"] = new() { CaseNumber = "OS 6/2012", FilingDate = "01-01-2012", PetitionersJson = Parties($"{word} PROJECTS LIMITED"), RespondentsJson = Parties("CANARA BANK") },
         };
         foreach (var c in cases.Values)
         {
@@ -181,14 +183,23 @@ public class FormerNameAttributionTests : IAsyncLifetime
         }
         db.LitigationCases.AddRange(cases.Values);
         await db.SaveChangesAsync();
-        return new World(request.RequestId, cin, cases.ToDictionary(k => k.Key, k => k.Value.LitigationCaseId));
+        return new World(request.RequestId, cin, cases.ToDictionary(k => k.Key, k => k.Value.LitigationCaseId), word);
     }
 
-    private static LitigationAttributionService Service(AppDbContext db, ILitigationAiAnalysisClient? judge)
+    private static LitigationAttributionService Service(AppDbContext db, ILitigationAiAnalysisClient? judge, IFormerNameLookup? lookup = null)
     {
         var services = new ServiceCollection();
         if (judge is not null) services.AddSingleton(judge);
+        if (lookup is not null) services.AddSingleton(lookup);
         return new LitigationAttributionService(db, services.BuildServiceProvider(), NullLogger<LitigationAttributionService>.Instance);
+    }
+
+    /// <summary>The reference tool's search as a test gives it: the same answer for every name, or not configured at all.</summary>
+    private sealed class StubLookup(FormerNameLookup result, bool configured = true) : IFormerNameLookup
+    {
+        public int Searches { get; private set; }
+        public bool IsConfigured => configured;
+        public Task<FormerNameLookup> FindAsync(string name, CancellationToken ct) { Searches++; return Task.FromResult(result); }
     }
 
     private static async Task<Dictionary<string, LitigationCase>> CasesAsync(World w)
@@ -206,7 +217,7 @@ public class FormerNameAttributionTests : IAsyncLifetime
         await using (var db = Ctx())
         {
             var result = await Service(db, judge).AttributeRequestAsync(w.RequestId, default);
-            Assert.Equal((5, 0), (result.Assessed, result.Pending));
+            Assert.Equal((6, 0), (result.Assessed, result.Pending));
             Assert.Equal(2, result.Judged);
         }
         Assert.Equal(1, judge.Calls);   // the two held cases, one batch
@@ -218,6 +229,95 @@ public class FormerNameAttributionTests : IAsyncLifetime
         Assert.Equal((LitigationAttributionOutcome.Attributed, "judged-shared-name-company"), (cases["undated-mine"].AttributionOutcome!.Value, cases["undated-mine"].AttributionRule));
         Assert.Equal((LitigationAttributionOutcome.Attributed, "exact-former-name-carried-on"), (cases["carried-on"].AttributionOutcome!.Value, cases["carried-on"].AttributionRule));
         Assert.Equal((LitigationAttributionOutcome.Attributed, "exact"), (cases["current"].AttributionOutcome!.Value, cases["current"].AttributionRule));
+        Assert.Equal((LitigationAttributionOutcome.Attributed, "exact"), (cases["early-current"].AttributionOutcome!.Value, cases["early-current"].AttributionRule));   // nobody had the name before
+    }
+
+    // ---- review of #536 -------------------------------------------------------------------------------------------------------------------------
+
+    /// <summary>[P1] The search for other holders was made but not read to its end (its paging repeated, or hit the cap), and found nobody: a holder may
+    /// be on a page not read, so "no other company has the name" is not said. The case filed after the change is held out, on every pass (the stored
+    /// search is the same), until judged; once judged, a repeat pass uses the stored judgement.</summary>
+    [Fact]
+    public async Task An_incomplete_search_that_found_nobody_is_not_taken_as_nobody_having_the_name()
+    {
+        var w = await SeedAsync();
+        var incomplete = new StubLookup(new FormerNameLookup(true, false, [], []));
+        await using (var db = Ctx()) await Service(db, null, incomplete).AttributeRequestAsync(w.RequestId, default);
+        var first = (await CasesAsync(w))["carried-on"];
+        Assert.Equal(LitigationAttributionOutcome.Pending, first.AttributionOutcome);
+        Assert.False(LitigationAttribution.Shown(first.AttributionOutcome));
+        Assert.Contains("whether another company has it could not be fully checked", first.AttributionReason);
+
+        await using (var db = Ctx()) await Service(db, null, incomplete).AttributeRequestAsync(w.RequestId, default);
+        Assert.Equal(LitigationAttributionOutcome.Pending, (await CasesAsync(w))["carried-on"].AttributionOutcome);   // the next pass: still held
+
+        // The current name before the company took it is held the same way: an incomplete search cannot say nobody had it before.
+        Assert.Equal(LitigationAttributionOutcome.Pending, (await CasesAsync(w))["early-current"].AttributionOutcome);
+
+        var judge = new ScriptedJudge();
+        await using (var db = Ctx()) await Service(db, judge, incomplete).AttributeRequestAsync(w.RequestId, default);
+        Assert.Equal(1, judge.Calls);
+        var judged = (await CasesAsync(w))["carried-on"];
+        Assert.Equal(LitigationAttributionOutcome.Ambiguous, judged.AttributionOutcome);   // the scripted judgement is unsure for it: still not counted
+        Assert.Equal("judged-shared-name-unsure", judged.AttributionRule);
+
+        await using (var db = Ctx())
+        {
+            await db.LitigationCases.Where(c => c.RequestId == w.RequestId).ExecuteUpdateAsync(s => s.SetProperty(c => c.AttributionOutcome, LitigationAttributionOutcome.Pending));
+            var again = new ScriptedJudge();
+            await Service(db, again, incomplete).AttributeRequestAsync(w.RequestId, default);
+            Assert.Equal(0, again.Calls);
+        }
+        Assert.Equal(LitigationAttributionOutcome.Ambiguous, (await CasesAsync(w))["carried-on"].AttributionOutcome);
+    }
+
+    [Fact]
+    public async Task A_search_that_failed_leaves_it_unknown_and_a_search_not_configured_leaves_it_to_the_master()
+    {
+        var failed = await SeedAsync();
+        await using (var db = Ctx()) await Service(db, null, new StubLookup(FormerNameLookup.NotSearched)).AttributeRequestAsync(failed.RequestId, default);
+        Assert.Equal(LitigationAttributionOutcome.Pending, (await CasesAsync(failed))["carried-on"].AttributionOutcome);
+
+        var unconfigured = await SeedAsync();
+        var lookup = new StubLookup(FormerNameLookup.NotSearched, configured: false);
+        await using (var db = Ctx()) await Service(db, null, lookup).AttributeRequestAsync(unconfigured.RequestId, default);
+        var cases = await CasesAsync(unconfigured);
+        Assert.Equal((LitigationAttributionOutcome.Attributed, "exact-former-name-carried-on"), (cases["carried-on"].AttributionOutcome!.Value, cases["carried-on"].AttributionRule));
+        Assert.Equal(0, lookup.Searches);
+    }
+
+    /// <summary>[P2] The search returns every hit it saw. A company whose former name is only like the company's ("… PROJECTS TRADING LIMITED") did not
+    /// have its name: the case is not held. One whose former name is exactly the company's current name did: held (the control).</summary>
+    [Fact]
+    public async Task Only_a_hit_with_exactly_the_name_makes_another_company_a_holder()
+    {
+        var near = await SeedAsync();
+        var nearHit = new FormerNameHit("U74999MH2005PTC000123", $"{near.Word} PROJECTS TRADING LIMITED", "SOMETHING ELSE LIMITED", "Active", "Maharashtra", null, null);
+        await using (var db = Ctx()) await Service(db, null, new StubLookup(new FormerNameLookup(true, true, [nearHit], []))).AttributeRequestAsync(near.RequestId, default);
+        var nearCase = (await CasesAsync(near))["early-current"];
+        Assert.Equal((LitigationAttributionOutcome.Attributed, "exact"), (nearCase.AttributionOutcome!.Value, nearCase.AttributionRule));
+        // Nor is a current holder with another name taken for the former name's holder.
+        Assert.Equal(LitigationAttributionOutcome.Attributed, (await CasesAsync(near))["carried-on"].AttributionOutcome);
+
+        var exact = await SeedAsync();
+        var exactHit = new FormerNameHit("U74999MH2005PTC000124", $"{exact.Word} PROJECTS LIMITED", "SOMETHING ELSE LIMITED", "Active", "Maharashtra", null, null);
+        await using (var db = Ctx()) await Service(db, null, new StubLookup(new FormerNameLookup(true, true, [exactHit], []))).AttributeRequestAsync(exact.RequestId, default);
+        var held = (await CasesAsync(exact))["early-current"];
+        Assert.Equal(LitigationAttributionOutcome.Pending, held.AttributionOutcome);
+        Assert.Contains("another company had it before (SOMETHING ELSE LIMITED (U74999MH2005PTC000124))", held.AttributionReason);
+    }
+
+    [Fact]
+    public void An_incomplete_search_is_said_in_the_judgement_and_never_settles_a_case_alone()
+    {
+        var unknown = Former() with { OthersKnown = false };
+        Assert.Equal(FormerNameCaseDecision.NeedsJudgement, FormerNameCaseRules.Check(unknown, new DateOnly(2016, 5, 5)).Decision);
+        Assert.Equal(FormerNameCaseDecision.NeedsJudgement, FormerNameCaseRules.Check(unknown, null).Decision);
+        Assert.Equal(FormerNameCaseDecision.Keep, FormerNameCaseRules.Check(unknown, new DateOnly(2012, 1, 1)).Decision);   // filed while it had the name
+
+        var prompt = FormerNameCaseJudge.BuildPrompt(new AttributionSubject("A LIMITED", [], "U1", null), [],
+            [new FormerNameCaseQuestion(1, "EAST COAST CARRIERS PVT LTD", unknown, "High Court", "WP 1", "05-05-2016", null, ["EAST COAST CARRIERS PVT LTD"], ["STATE"])]);
+        Assert.Contains("The name now belongs to: possibly a company not found, as the search for companies with this name could not be completed.", prompt);
     }
 
     [Fact]
