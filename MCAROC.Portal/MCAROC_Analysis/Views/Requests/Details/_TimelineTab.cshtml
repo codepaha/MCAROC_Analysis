@@ -69,6 +69,10 @@
                         <small>Source: @e.Provenance.SourceSheetName@(e.Provenance.SourceRowNumber is { } row ? $", row {row}" : "")</small>
                     </div>
                 }
+                @if (e.LinkUrl is { } link)
+                {
+                    <div class="mt-1"><small><a href="@link" target="_blank" rel="noopener">@e.LinkText</a></small></div>
+                }
             </li>
         }
         </ul>

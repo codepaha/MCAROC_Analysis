@@ -1,6 +1,7 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models.Dossier;
+using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.EntityFrameworkCore;
 
 namespace MCAROC_Analysis.Services.Dossier;
@@ -48,7 +49,7 @@ public class CorporateTimelineBuilder(AppDbContext db)
 
         var nameHistory = await db.CompanyNameHistories.Where(x => x.IngestionRunId == runId)
             .OrderBy(x => x.DisplayOrder).ToListAsync(ct);
-        events.AddRange(NameChangeEvents(nameHistory, companyName));
+        events.AddRange(NameChangeEvents(NameChanges.Merge(nameHistory, companyName, []), requestId));
 
         var directors = await db.Directors.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
         var assignmentHistory = await db.DirectorAssignmentHistories.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
@@ -90,7 +91,7 @@ public class CorporateTimelineBuilder(AppDbContext db)
         if (vm.LatestRun is null) return [];
         var events = new List<CorporateTimelineEvent>();
         if (vm.CompanyProfile is { } profile) events.AddRange(IncorporationEvents(profile));
-        events.AddRange(NameChangeEvents(vm.NameHistory, vm.CompanyProfile?.CompanyName ?? vm.Request.CompanyName));
+        events.AddRange(NameChangeEvents(vm.NameChanges, vm.Request.RequestId));
         events.AddRange(DirectorEvents(vm.Directors, vm.DirectorAssignmentHistories));
         events.AddRange(ChargeEvents(vm.Charges.SelectMany(c => c.Events).ToList()));
         events.AddRange(CapitalEvents(vm.SecurityAllotments));
@@ -116,19 +117,29 @@ public class CorporateTimelineBuilder(AppDbContext db)
         }
     }
 
-    /// <summary>Renamed FROM <see cref="CompanyNameHistory.PreviousName"/> TO whichever name took over —
-    /// the next row's <see cref="CompanyNameHistory.PreviousName"/> in <see cref="CompanyNameHistory.DisplayOrder"/>
-    /// sequence, or <paramref name="currentCompanyName"/> for the most recent row.</summary>
-    private static IEnumerable<CorporateTimelineEvent> NameChangeEvents(List<CompanyNameHistory> history, string currentCompanyName)
+    /// <summary>One event per dated change of name (<see cref="NameChanges.Merge"/>): from the name history — renamed FROM
+    /// <see cref="CompanyNameHistory.PreviousName"/> TO the next row's name, or the current name for the most recent row — checked
+    /// against the Registrar's certificates of change of name (#497). A change a certificate states is dated by it and links its page;
+    /// where the history's date differs, or the history lacks the change, the event says so.</summary>
+    private static IEnumerable<CorporateTimelineEvent> NameChangeEvents(IReadOnlyList<NameChange> changes, long requestId)
     {
-        for (var i = 0; i < history.Count; i++)
+        foreach (var change in changes)
         {
-            var row = history[i];
-            if (row.TillDate is not { } date) continue;
-            var newName = i + 1 < history.Count ? history[i + 1].PreviousName : currentCompanyName;
+            if (change.Date is not { } date) continue;
+            var provenance = change.HistoryRow is { } row
+                ? Provenance(row, nameof(CompanyNameHistory), row.CompanyNameHistoryId)
+                : new TimelineEventProvenance(nameof(McaFilingDocument), change.Certificate!.FilingDocumentId, null, null, null);
+            var detail = change.Check switch
+            {
+                NameChangeCheck.DatesDiffer => $"The certificate of change of name is dated {date:d MMM yyyy}; the name history gives {change.HistoryDate:d MMM yyyy}.",
+                NameChangeCheck.CertificateOnly => "From the certificate of change of name; the name history does not list this change.",
+                _ => null,
+            };
+            var cert = change.Certificate;
             yield return new CorporateTimelineEvent(date, TimelineEventCategory.Corporate,
-                $"Renamed from \"{row.PreviousName}\" to \"{newName}\"", null,
-                Provenance(row, nameof(CompanyNameHistory), row.CompanyNameHistoryId));
+                $"Renamed from \"{change.FromName}\" to \"{change.ToName}\"", detail, provenance,
+                cert is null ? null : $"Certificate of change of name, page {cert.Page}",
+                cert is null ? null : $"/Requests/{requestId}/documents/{cert.FilingDocumentId}/view#page={cert.Page}");
         }
     }
 

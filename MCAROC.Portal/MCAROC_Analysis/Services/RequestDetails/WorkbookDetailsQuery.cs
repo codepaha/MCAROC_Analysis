@@ -83,6 +83,16 @@ public sealed class WorkbookDetailsQuery(AppDbContext db, ILogger? logger = null
                 .OrderBy(x => x.HolderClass).ThenBy(x => x.DisplayOrder).ToListAsync(ct);
             vm.NameHistory = await db.CompanyNameHistories.AsNoTracking().Where(x => x.IngestionRunId == runId)
                 .OrderBy(x => x.DisplayOrder).ToListAsync(ct);
+            // A certificate that cannot be read leaves the name history as it is; it never takes the page down.
+            try
+            {
+                vm.NameChangeCertificates = await NameChangeCertificateLoader.LoadAsync(db, id, ct,
+                    services?.GetService<Microsoft.Extensions.Caching.Memory.IMemoryCache>());
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger?.LogWarning(ex, "Reading the change-of-name certificates failed for request {RequestId}", id);
+            }
             vm.PrincipalBusinessActivities = await db.PrincipalBusinessActivities.AsNoTracking().Where(x => x.IngestionRunId == runId)
                 .OrderBy(x => x.DisplayOrder).ToListAsync(ct);
             vm.RelatedCorporates = await db.RelatedCorporates.AsNoTracking().Where(x => x.IngestionRunId == runId)
