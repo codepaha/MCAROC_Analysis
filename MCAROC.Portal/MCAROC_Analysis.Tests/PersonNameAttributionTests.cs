@@ -355,4 +355,45 @@ public class PersonNameAttributionTests
         Assert.Equal(PersonAttributionGrade.Probable, recoveryAssessment.Grade);
         Assert.Equal("probable-lender-link", recoveryAssessment.Rule);
     }
+
+    [Fact]
+    public void Verified_personal_address_corroborates_and_conflicts_correctly()
+    {
+        // Verified person address is known (e.g. Surat, Gujarat)
+        var targetWithPersonalAddress = new PersonTargetProfile(
+            "DINESH SHAH",
+            District: "SURAT",
+            State: "GUJARAT");
+
+        // Case in same district -> Probable
+        var sameDistAssessment = PersonAttributionRules.Assess(
+            ["DINESH SHAH", "STATE OF GUJARAT"], targetWithPersonalAddress, caseDistrict: "SURAT", caseState: "GUJARAT");
+        Assert.Equal(PersonAttributionGrade.Probable, sameDistAssessment.Grade);
+        Assert.Equal("probable-district-match", sameDistAssessment.Rule);
+
+        // Case in different state -> Excluded (district-conflict) because verified personal residence contradicts
+        var conflictAssessment = PersonAttributionRules.Assess(
+            ["DINESH SHAH", "SOME OTHER PARTY"], targetWithPersonalAddress, caseDistrict: "KOLKATA", caseState: "WEST BENGAL");
+        Assert.Equal(PersonAttributionGrade.Excluded, conflictAssessment.Grade);
+        Assert.Equal(LitigationAttributionOutcome.NotTheCompany, conflictAssessment.Outcome);
+        Assert.Equal("district-conflict", conflictAssessment.Rule);
+    }
+
+    [Fact]
+    public void Unverified_personal_address_never_triggers_district_conflict_even_across_states()
+    {
+        // Target without verified personal address (only associated company known)
+        var targetWithoutPersonalAddress = new PersonTargetProfile(
+            "RAMESH KUMAR",
+            AssociatedCompanyName: "ACME LIMITED",
+            District: null,
+            State: null);
+
+        // Case in Delhi when company might be Mumbai: must NOT conflict
+        var assessment = PersonAttributionRules.Assess(
+            ["RAMESH KUMAR", "STATE OF TEST"], targetWithoutPersonalAddress, caseDistrict: "DELHI", caseState: "DELHI");
+        Assert.Equal(PersonAttributionGrade.Possible, assessment.Grade);
+        Assert.Equal(LitigationAttributionOutcome.Ambiguous, assessment.Outcome);
+        Assert.Equal("possible-name-only", assessment.Rule);
+    }
 }

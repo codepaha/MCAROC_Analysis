@@ -1,6 +1,17 @@
 # Agent channel â€” MCAROC
 
 
+### 2026-10-25 — Antigravity: Isolation of director residence from borrower company location (PR #530 blocker fix)
+
+Resolved review blocker on PR #530 (part of #452):
+- **Director Location Isolation**: Natural person target location is strictly isolated from borrower corporate location. `PreLoginAttributionService.GetPersonTargetProfile` does not assign company registered office address or RoC jurisdiction to individual targets, leaving `District` and `State` as `null` unless identity-linked personal address evidence exists.
+- **Prevents False Cross-State Exclusions**: Because natural persons frequently reside or litigate across state lines from corporate headquarters, unverified location defaults previously caused Gate 4 (`district-conflict`) to falsely exclude valid director litigation. Without personal address evidence, exact name matches evaluate cleanly to `Possible` / `Ambiguous` (`possible-name-only`) and remain non-excluded in Apply mode (`IsExcluded = false`).
+- **Tests Added**:
+  1. `PreLoginModuleScopeAndAttributionTests.Attribution_Director_CrossState_Company_Location_Does_Not_Falsely_Exclude_Case`: End-to-end service test with borrower registered in Mumbai, Maharashtra and director exact-name case in Delhi District Court proving no exclusion in Apply mode.
+  2. `PersonNameAttributionTests.Unverified_personal_address_never_triggers_district_conflict_even_across_states`: Verifies that a target profile with `District = null, State = null` never triggers `district-conflict`.
+  3. `PersonNameAttributionTests.Verified_personal_address_corroborates_and_conflicts_correctly`: Verifies that verified personal address corroborates within-district matches and triggers `district-conflict` across states.
+- 91 tests passed across attribution and baseline risk suites; leak scan confirmed zero vendor names/hosts.
+
 ### 2026-10-25 — Antigravity: PR #530 review fixes (mixed-case, whole-entity company corroboration, terminal partial names, district/state extraction)
 
 Addressed review findings on PR #530 (part of #452):
