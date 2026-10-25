@@ -1278,7 +1278,7 @@ public partial class RequestsController(
                                 ? dVal : null;
 
                             string? viewerUrl = null;
-                            if (sourceType == "DocumentChunk" && docId.HasValue && validDocIds.Contains(docId.Value))
+                            if (sourceType is "DocumentChunk" or "StructuredFact" && docId.HasValue && validDocIds.Contains(docId.Value))
                             {
                                 var p = pageNumber.GetValueOrDefault(1);
                                 viewerUrl = $"/Requests/{requestId}/documents/{docId.Value}/view#page={p}";

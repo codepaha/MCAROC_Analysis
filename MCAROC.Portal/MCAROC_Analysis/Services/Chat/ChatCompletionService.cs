@@ -223,7 +223,8 @@ public class ChatCompletionService
                     new ResolvedCitation("LitigationCase", null, null, null, s.EntityType, s.EntityId, s.DisplayLabel, null, s.LitigationCaseId),
                 SourceType.SearchCoverage =>
                     new ResolvedCitation("SearchCoverage", null, null, null, s.EntityType, null, s.DisplayLabel),
-                _ => new ResolvedCitation("StructuredFact", null, null, null, s.EntityType, s.EntityId, s.DisplayLabel)
+                // A fact read from a document page (a certificate of change of name) keeps that page, so its citation opens it.
+                _ => new ResolvedCitation("StructuredFact", null, s.DocumentName, s.PageNumber, s.EntityType, s.EntityId, s.DisplayLabel, s.DocumentId)
             };
         }).ToList();
 

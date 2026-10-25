@@ -2,11 +2,16 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.LitigationData;
+using MCAROC_Analysis.Services.McaFilings;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace MCAROC_Analysis.Services.Chat;
 
-public record StructuredFact(string DomainKey, string Text, string? EntityType, long? EntityId, long? IngestionRunId = null);
+/// <summary>One fact for the prompt. <see cref="DocumentId"/> and <see cref="PageNumber"/> name the filing document page it is read from, when it
+/// is read from one (a certificate of change of name), so its citation opens that page.</summary>
+public record StructuredFact(string DomainKey, string Text, string? EntityType, long? EntityId, long? IngestionRunId = null,
+    long? DocumentId = null, int? PageNumber = null, string? DocumentName = null);
 
 /// <summary>Builds a source-traceable structured-facts digest from Phase 1 entities for one request.
 /// Broadened beyond a single "latest 2 years, current directors" snapshot — includes current AND historical
@@ -15,7 +20,7 @@ public record StructuredFact(string DomainKey, string Text, string? EntityType, 
 /// newest state. Reuses QuestionHintExtractor's output to decide *emphasis*, not exclusion: a domain the
 /// hints flag as relevant gets full per-row detail; every other domain still gets at least a one-line
 /// headline (never dropped entirely) so the digest never goes silent on a domain the hints didn't catch.</summary>
-public class StructuredFactsProvider(AppDbContext db)
+public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null)
 {
     private static readonly string[] AllDomains = ["Directors", "Financial", "Charges", "Gst", "Epfo", "Litigation"];
 
@@ -42,6 +47,8 @@ public class StructuredFactsProvider(AppDbContext db)
             facts.Add(new StructuredFact("CompanyProfile",
                 $"{profile.CompanyName} | CIN: {profile.Cin} | Status: {profile.CompanyStatus} | Compliance: {profile.ComplianceStatus} | Incorporated: {profile.IncorporationDate}",
                 "CompanyProfile", profile.CompanyProfileId));
+
+        facts.AddRange(await NameChangeFactsAsync(requestId, profile?.CompanyName ?? request.CompanyName, ingestionRunId, ct));
 
         var directors = await db.Directors.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         if (directors.Count > 0)
@@ -266,6 +273,48 @@ public class StructuredFactsProvider(AppDbContext db)
                 + (total == 0 ? " None match." : total > listed.Count
                     ? $" The first {listed.Count} are given as litigation case records (pending first, then by forum seniority, cases against the company first, newest filing first); the rest are not listed."
                     : " All of them are given as litigation case records."), null, null));
+        }
+        return facts;
+    }
+
+    /// <summary>#497: every change of the company's name, oldest first, as the name history and the certificates of change of name in its filings state
+    /// it (the Name History table's rows). A change a certificate states is dated by it and cites its page; a date the two disagree on, or one only
+    /// one of them gives, is said. Always given, whatever the question: a few lines, and the names decide whose a case or a document is.</summary>
+    internal async Task<List<StructuredFact>> NameChangeFactsAsync(long requestId, string companyName, long ingestionRunId, CancellationToken ct)
+    {
+        var history = await db.CompanyNameHistories.AsNoTracking().Where(h => h.RequestId == requestId && h.IngestionRunId == ingestionRunId)
+            .OrderBy(h => h.DisplayOrder).ToListAsync(ct);
+        IReadOnlyList<CertificateNameChange> certificates = [];
+        try { certificates = await NameChangeCertificateLoader.LoadAsync(db, requestId, ct, cache); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { }   // the name history alone, as the page shows it then
+        var changes = NameChanges.Merge(history, companyName, certificates);
+        if (changes.Count == 0) return [];
+
+        var documents = certificates.Count == 0 ? new Dictionary<long, string>()
+            : await db.McaFilingDocuments.AsNoTracking().Where(d => certificates.Select(c => c.FilingDocumentId).Contains(d.FilingDocumentId))
+                .ToDictionaryAsync(d => d.FilingDocumentId, d => d.OriginalFileName, ct);
+        var facts = new List<StructuredFact>
+        {
+            new("CompanyProfile", $"The company has changed its name {changes.Count} time(s); its current name is {companyName}. Former names, oldest first: "
+                + string.Join("; ", changes.Select(c => c.FromName)) + ".", null, null)
+        };
+        foreach (var c in changes)
+        {
+            var when = c.Date is { } d ? $" on {d:d MMM yyyy}" : " (date not known)";
+            var source = c.Check switch
+            {
+                NameChangeCheck.Confirmed => $"the name history and the certificate of change of name (page {c.Certificate!.Page}) agree",
+                NameChangeCheck.DatesDiffer => $"the date is the certificate of change of name's (page {c.Certificate!.Page}); the name history gives {c.HistoryDate:d MMM yyyy}",
+                NameChangeCheck.CertificateUndated => $"the certificate of change of name (page {c.Certificate!.Page}) states the change but its date could not be read; the date is the name history's",
+                NameChangeCheck.HistoryUndated => $"the date is the certificate of change of name's (page {c.Certificate!.Page}); the name history gives no date",
+                NameChangeCheck.CertificateOnly => $"from the certificate of change of name (page {c.Certificate!.Page}); the name history does not list it",
+                _ => "from the name history; no certificate of change of name was read for it",
+            };
+            var text = $"Name change: renamed from \"{c.FromName}\" to \"{c.ToName}\"{when} ({source}).";
+            facts.Add(c.Certificate is { } cert
+                ? new StructuredFact("CompanyProfile", text, nameof(McaFilingDocument), cert.FilingDocumentId, ingestionRunId, cert.FilingDocumentId, cert.Page,
+                    documents.TryGetValue(cert.FilingDocumentId, out var file) ? file : null)
+                : new StructuredFact("CompanyProfile", text, nameof(CompanyNameHistory), c.HistoryRow?.CompanyNameHistoryId, ingestionRunId));
         }
         return facts;
     }
