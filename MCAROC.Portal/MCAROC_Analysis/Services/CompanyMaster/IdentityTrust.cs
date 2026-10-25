@@ -55,6 +55,9 @@ public static class IdentityTrust
             ResolutionMethod.HumanSelected => new SpendTrust(true, applied.ReasonCode, "A person selected the company."),
             ResolutionMethod.AutoSelected when applied.ReasonCode == ResolutionReasonCodes.UniqueExact =>
                 new SpendTrust(true, applied.ReasonCode, "The legal name matched exactly and no other active company has it."),
+            // #497: as strict as the unique-exact rule (one company ever had the name, none has it today), and only with Resolve:AutoSelectFormerName on.
+            ResolutionMethod.AutoSelected when applied.ReasonCode == ResolutionReasonCodes.FormerName =>
+                new SpendTrust(true, applied.ReasonCode, "The name is the former name of exactly one company, and no company has it today."),
             ResolutionMethod.AutoSelected when applied.TopScore is { } score && score >= spendThreshold =>
                 new SpendTrust(true, applied.ReasonCode, $"Auto-selected with score {score:0.000}, at or above the spend threshold {spendThreshold:0.000}."),
             ResolutionMethod.AutoSelected => new SpendTrust(false, BelowSpendThreshold,

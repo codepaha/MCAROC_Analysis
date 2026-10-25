@@ -20,7 +20,7 @@ public sealed record IdentityResolutionResult(
 /// request's <c>Cin</c>/<c>Llpin</c>/<c>AutoFetchCompanyIdentifier</c>/<c>EntityType</c>, all in one
 /// transaction. Nothing calls this automatically yet: the intake search screen and the coordinator's
 /// <c>Resolve</c> stage (#295) are its consumers.</summary>
-public sealed class IdentityResolutionService(AppDbContext db, IOptions<ResolverOptions> options)
+public sealed class IdentityResolutionService(AppDbContext db, IOptions<ResolverOptions> options, IFormerNameLookup? formerNames = null)
 {
     public const string DuplicateRequestReason = ResolutionReasonCodes.DuplicateRequest;
     public const string IdentifierConflictReason = ResolutionReasonCodes.RequestAlreadyIdentified;
@@ -33,7 +33,7 @@ public sealed class IdentityResolutionService(AppDbContext db, IOptions<Resolver
     public async Task<ResolutionDecision> SuggestAsync(string? name, string? identifier, ResolutionHints hints, CancellationToken ct = default)
     {
         var connection = await OpenAsync(ct);
-        try { return await DecideAsync(connection, name, identifier, hints, ct); }
+        try { return await DecideAsync(connection, name, identifier, hints, useFormerNames: false, ct); }
         finally { await db.Database.CloseConnectionAsync(); }
     }
 
@@ -44,7 +44,7 @@ public sealed class IdentityResolutionService(AppDbContext db, IOptions<Resolver
     {
         ResolutionDecision decision;
         var connection = await OpenAsync(ct);
-        try { decision = await DecideAsync(connection, name, identifier, hints, ct); }
+        try { decision = await DecideAsync(connection, name, identifier, hints, useFormerNames: true, ct); }
         finally { await db.Database.CloseConnectionAsync(); }
 
         return await RecordAsync(requestId, name, identifier, hints, decision, actor, ct);
@@ -67,7 +67,10 @@ public sealed class IdentityResolutionService(AppDbContext db, IOptions<Resolver
         return await RecordAsync(requestId, inputName, chosenIdentifier, hints, decision, actor, ct);
     }
 
-    private async Task<ResolutionDecision> DecideAsync(SqlConnection connection, string? name, string? identifier, ResolutionHints hints, CancellationToken ct)
+    /// <param name="useFormerNames">Whether to look the name up as a former name too (#497): when resolving a request, not for the interactive search
+    /// box, which would otherwise call the reference tool on every keystroke.</param>
+    private async Task<ResolutionDecision> DecideAsync(SqlConnection connection, string? name, string? identifier, ResolutionHints hints,
+        bool useFormerNames, CancellationToken ct)
     {
         if (!string.IsNullOrWhiteSpace(identifier))
             return CompanyNameResolver.ForProvidedIdentifier(identifier,
@@ -75,7 +78,17 @@ public sealed class IdentityResolutionService(AppDbContext db, IOptions<Resolver
 
         var candidates = await CompanyNameCandidateRetriever.RetrieveAsync(connection, name ?? "", ct);
         var ranked = CompanyNameResolver.Rank(name ?? "", hints, candidates);
-        return CompanyNameResolver.Decide(name ?? "", ranked, options.Value);
+        var decision = CompanyNameResolver.Decide(name ?? "", ranked, options.Value);
+        if (!useFormerNames || formerNames is null || decision.Status == ResolutionStatus.InvalidInput) return decision;
+
+        // Our master holds current names only: a client asking by a name the company no longer has would find nothing, or the company holding that
+        // name today. The former-name lookup decides again (FormerNameResolver); when it finds nothing, or cannot search, the decision stands.
+        var lookup = await formerNames.FindAsync(name!, ct);
+        if (!lookup.Searched || lookup.FormerNames.Count == 0) return decision;
+        var rows = new Dictionary<string, MasterCandidate>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in lookup.FormerNames.Select(f => f.Identifier.Trim().ToUpperInvariant()).Distinct())
+            if (await CompanyNameCandidateRetriever.GetByIdentifierAsync(connection, id, ct) is { } row) rows[id] = row;
+        return FormerNameResolver.Decide(name!, hints, decision, lookup, rows, options.Value);
     }
 
     private async Task<IdentityResolutionResult> RecordAsync(

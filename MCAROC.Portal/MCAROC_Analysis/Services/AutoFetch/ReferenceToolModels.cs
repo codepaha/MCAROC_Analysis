@@ -48,7 +48,16 @@ public sealed class ReferenceToolException : Exception
 }
 
 /// <summary>One auto-complete hit from the reference tool's company search.</summary>
-public sealed record ReferenceCompanyHint(string LegalName, string Cin, string? Bid, string? Status, string? CompanyType);
+/// <param name="NameHint">The name the search matched, which may be a former name (<paramref name="Context"/> <c>oldName</c>) rather than the
+/// current legal name.</param>
+/// <param name="Context">What <paramref name="NameHint"/> is: <c>legalName</c> (the current name), <c>oldName</c> (a former name), or another
+/// match kind the tool reports (e.g. <c>partProp</c>).</param>
+public sealed record ReferenceCompanyHint(string LegalName, string Cin, string? Bid, string? Status, string? CompanyType,
+    string? NameHint = null, string? Context = null, string? State = null, string? PinCode = null, DateOnly? IncorporationDate = null)
+{
+    public const string FormerNameContext = "oldName";
+    public bool IsFormerNameMatch => string.Equals(Context, FormerNameContext, StringComparison.OrdinalIgnoreCase);
+}
 
 /// <summary>Result of the session check: whether the configured cookie is still a logged-in session,
 /// and the tool's numeric user id when the response carried one. <see cref="Kind"/> is only meaningful

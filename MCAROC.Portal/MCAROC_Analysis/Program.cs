@@ -144,6 +144,8 @@ builder.Services.AddOptions<MCAROC_Analysis.Services.CompanyMaster.ResolverOptio
     .Bind(builder.Configuration.GetSection(MCAROC_Analysis.Services.CompanyMaster.ResolverOptions.SectionName))
     .PostConfigure(o => o.AutoSelectEnabled = builder.Configuration.GetValue("Resolve:AutoSelect:Enabled", o.AutoSelectEnabled));
 builder.Services.AddScoped<MCAROC_Analysis.Services.CompanyMaster.IdentityResolutionService>();
+// #497: a company requested by a name it no longer has is found through the reference tool's search (former names, stored once seen).
+builder.Services.AddScoped<MCAROC_Analysis.Services.CompanyMaster.IFormerNameLookup, MCAROC_Analysis.Services.CompanyMaster.FormerNameLookupService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<IPaidCallAdmission, PaidCallAdmissionService>();
 builder.Services.AddScoped<LitigationReuseService>();

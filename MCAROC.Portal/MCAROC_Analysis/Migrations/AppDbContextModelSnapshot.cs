@@ -1571,6 +1571,52 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("CompanyEmails");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.CompanyFormerName", b =>
+                {
+                    b.Property<long>("CompanyFormerNameId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("CompanyFormerNameId"));
+
+                    b.Property<string>("CurrentNameWhenSeen")
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<DateTime>("FirstSeenUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("FormerName")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<string>("FormerNameNormalized")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Identifier")
+                        .IsRequired()
+                        .HasMaxLength(25)
+                        .HasColumnType("nvarchar(25)");
+
+                    b.Property<DateTime>("LastSeenUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.HasKey("CompanyFormerNameId");
+
+                    b.HasIndex("FormerNameNormalized", "Identifier")
+                        .IsUnique();
+
+                    b.ToTable("CompanyFormerNames");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.CompanyMasterRecord", b =>
                 {
                     b.Property<string>("Identifier")

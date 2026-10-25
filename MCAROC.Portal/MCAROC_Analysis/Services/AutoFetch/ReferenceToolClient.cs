@@ -333,7 +333,15 @@ public sealed class ReferenceToolClient(HttpClient http, IOptions<ReferenceToolO
                 var cin = Text(item, "cin");
                 var name = Text(item, "legal_name") ?? Text(item, "name");
                 if (string.IsNullOrWhiteSpace(cin) || string.IsNullOrWhiteSpace(name)) continue;
-                hits.Add(new ReferenceCompanyHint(name, cin.ToUpperInvariant(), Text(item, "bid"), Text(item, "status"), Text(item, "company_type")));
+                // Field names as the tool sends them (a recorded reply, 2026-10-24); the older status/company_type names are kept as fallbacks.
+                var address = item.TryGetProperty("registered_address", out var a) && a.ValueKind == JsonValueKind.Object ? a : default;
+                DateOnly? incorporated = DateOnly.TryParseExact(Text(item, "incorporation_date"), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null;
+                hits.Add(new ReferenceCompanyHint(name, cin.ToUpperInvariant(), Text(item, "bid"),
+                    Text(item, "company_llp_status") ?? Text(item, "status"), Text(item, "entity_type") ?? Text(item, "company_type"),
+                    Text(item, "name_hint"), Text(item, "context"),
+                    address.ValueKind == JsonValueKind.Object ? Text(address, "state") : null,
+                    address.ValueKind == JsonValueKind.Object ? Text(address, "pinCode") : null,
+                    incorporated));
             }
         }
         return hits;
