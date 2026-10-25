@@ -34,6 +34,18 @@ public sealed class RequestDetailsQuery(AppDbContext db, DossierCache dossierCac
         var vm = new RequestDetailsViewModel { Request = request, Documents = documents, FocusChargeId = charge, FocusCaseId = focusCase };
         vm.HasFullAccess = hasFullAccess;
         vm.AutoFetchJob = await db.AutoFetchJobs.AsNoTracking().FirstOrDefaultAsync(j => j.RequestId == id, ct);
+        // #497: the name the request was resolved from, shown when the company is now registered under a different one.
+        var applied = await db.IdentityResolutions.AsNoTracking()
+            .Where(r => r.RequestId == id && r.ChosenIdentifier != null && r.InputName != null)
+            .OrderByDescending(r => r.IdentityResolutionId).Select(r => new { r.InputName, r.ChosenIdentifier }).FirstOrDefaultAsync(ct);
+        var askedKey = applied?.InputName is { } a ? Services.CompanyMaster.CompanyNameNormalizer.Normalize(a).NameNormalized : "";
+        if (askedKey.Length > 0 && askedKey != Services.CompanyMaster.CompanyNameNormalizer.Normalize(request.CompanyName).NameNormalized)
+        {
+            vm.RequestedAsName = applied!.InputName;
+            // Whoever chose the company (automatically, or a person confirming the suggestion), the name is a former one if it is stored as such.
+            vm.RequestedAsFormerName = await db.CompanyFormerNames.AsNoTracking()
+                .AnyAsync(f => f.FormerNameNormalized == askedKey && f.Identifier == applied.ChosenIdentifier, ct);
+        }
 
         await new WorkbookDetailsQuery(db, logger).LoadAsync(vm, services, ct);
 

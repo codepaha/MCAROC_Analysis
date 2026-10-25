@@ -131,6 +131,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<CompanyMasterRecord> CompanyMasterRecords => Set<CompanyMasterRecord>();
     public DbSet<CompanyNameToken> CompanyNameTokens => Set<CompanyNameToken>();
     public DbSet<IdentityResolution> IdentityResolutions => Set<IdentityResolution>();
+    public DbSet<CompanyFormerName> CompanyFormerNames => Set<CompanyFormerName>();
+    public DbSet<CompanyNameSearch> CompanyNameSearches => Set<CompanyNameSearch>();
 
     // Company master automated sync pipeline & observability
     public DbSet<CompanyMasterSyncJob> CompanyMasterSyncJobs => Set<CompanyMasterSyncJob>();
@@ -1408,6 +1410,26 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.RecommendedIdentifier).HasMaxLength(25);
             e.Property(x => x.ReasonCode).HasMaxLength(60);
             e.Property(x => x.CreatedBy).HasMaxLength(200);
+        });
+
+        modelBuilder.Entity<CompanyFormerName>(e =>
+        {
+            e.HasKey(x => x.CompanyFormerNameId);
+            e.Property(x => x.Identifier).HasMaxLength(25).IsRequired();
+            e.Property(x => x.FormerName).HasMaxLength(400).IsRequired();
+            e.Property(x => x.FormerNameNormalized).HasMaxLength(450).IsRequired();
+            e.Property(x => x.CurrentNameWhenSeen).HasMaxLength(400);
+            e.Property(x => x.Source).HasMaxLength(40).IsRequired();
+            // One row per (former name, company); looked up by the normalised former name.
+            e.HasIndex(x => new { x.FormerNameNormalized, x.Identifier }).IsUnique();
+        });
+
+        modelBuilder.Entity<CompanyNameSearch>(e =>
+        {
+            e.HasKey(x => x.CompanyNameSearchId);
+            e.Property(x => x.NameNormalized).HasMaxLength(450).IsRequired();
+            e.Property(x => x.ResultJson).IsRequired();
+            e.HasIndex(x => x.NameNormalized).IsUnique(); // the latest search for a name
         });
 
         modelBuilder.Entity<StagingCompanyMasterRecord>(e =>

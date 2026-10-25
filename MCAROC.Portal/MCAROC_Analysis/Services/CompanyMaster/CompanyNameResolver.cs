@@ -67,6 +67,10 @@ public sealed class ResolverOptions
     /// <summary><c>Resolve:AutoSelectUniqueExact</c>: select an exact, unique, Active legal-name match whatever its score (with auto-select on).
     /// The score weighs hints a name-only intake never has, so an exact unique match could otherwise never be selected unattended.</summary>
     public bool AutoSelectUniqueExact { get; set; } = true;
+    /// <summary><c>Resolve:AutoSelectFormerName</c> (#497): select a company found by its former name (no company holds the name today, exactly one held
+    /// it before, Active, no hint disagreeing) with auto-select on. Off by default: until the owner switches it on, such a match is offered for
+    /// confirmation, filled in (trust before automation).</summary>
+    public bool AutoSelectFormerName { get; set; }
 }
 
 public sealed record ResolutionDecision(
@@ -105,6 +109,17 @@ public static class ResolutionReasonCodes
     /// <summary>The reference tool's free preview named a different company than an <c>AutoSelected</c>
     /// resolution (issue #295): recorded as a false accept, and the identity goes back to a human.</summary>
     public const string FalseAccept = "IDENTITY_FALSE_ACCEPT";
+    /// <summary>#497: no company holds the requested name today, and exactly one company was registered under it before.</summary>
+    public const string FormerName = "RESOLVED_FORMER_NAME";
+    /// <summary>#497: the requested name is a former name of one company; offered for confirmation (automatic selection off, or not trustworthy).</summary>
+    public const string FormerNameNeedsConfirmation = "FORMER_NAME_NEEDS_CONFIRMATION";
+    /// <summary>#497: one company holds the requested name today and a different one held it before; the client may mean either.</summary>
+    public const string FormerNameConflict = "FORMER_NAME_CONFLICT";
+    /// <summary>#497: several companies were registered under the requested name before.</summary>
+    public const string FormerNameAmbiguous = "FORMER_NAME_AMBIGUOUS";
+    /// <summary>#497: the company would have been chosen automatically, but the former-name search could not be read to its end, so a company that had
+    /// the name before cannot be ruled out. Offered for confirmation, filled in.</summary>
+    public const string FormerNameCheckIncomplete = "FORMER_NAME_CHECK_INCOMPLETE";
 }
 
 /// <summary>Name → CIN/LLPIN resolution, pure part (issue #294, plan §5A.2 steps 3–4): rank retrieved master

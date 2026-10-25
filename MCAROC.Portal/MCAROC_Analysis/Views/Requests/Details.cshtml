@@ -30,6 +30,10 @@
     <div class="mca-company-head">
         <div class="mca-company-id">
             <h1>@r.CompanyName</h1>
+            @if (Model.RequestedAsName is { } askedFor)
+            {
+                <div class="small text-muted" id="mcaRequestedAs">Requested as “@askedFor”@(Model.RequestedAsFormerName ? ", its former name" : "")</div>
+            }
             <div class="mca-ids">
                 <span><b>@(r.EntityType == EntityType.LLP ? "LLPIN:" : "CIN:")</b> @(Model.CompanyProfile?.Cin ?? r.Cin ?? r.Llpin ?? "—")</span>
                 @if (!string.IsNullOrEmpty(Model.CompanyProfile?.CompanyStatus))

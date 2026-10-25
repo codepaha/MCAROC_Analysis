@@ -112,6 +112,11 @@ public class RequestDetailsViewModel
     /// <summary>The auto-fetch job that created this request from a bare CIN, if any — the Details page
     /// shows its progress panel (polling) until it reaches a terminal state.</summary>
     public AutoFetchJob? AutoFetchJob { get; set; }
+    /// <summary>The name the request asked for when it differs from the company's registered name (#497): a former name, or a name a person
+    /// resolved to a different-looking company. Null when they agree, or the request was identified by CIN/LLPIN.</summary>
+    public string? RequestedAsName { get; set; }
+    /// <summary>Whether <see cref="RequestedAsName"/> is a former name of the company (the resolution found it that way).</summary>
+    public bool RequestedAsFormerName { get; set; }
     public bool HasFullAccess { get; set; }
 
     // MCA Filings (PDF) pipeline
