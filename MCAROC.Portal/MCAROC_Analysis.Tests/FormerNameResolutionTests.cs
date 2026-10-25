@@ -338,7 +338,8 @@ public sealed class FormerNameResolutionTests : IAsyncLifetime
     }
 
     /// <summary>Review of #533 (a0104fd), end to end: the master has an exact, unique, Active holder of the name (which #495 alone would choose), and the
-    /// tool returns the same full page for every offset with no former holder in it. The search is incomplete, so the request is not applied.</summary>
+    /// tool returns the same full page for every offset with no former holder in it. The page is not ranked past the exact matches (the exact
+    /// holder comes after near names), so the search is incomplete and the request is not applied.</summary>
     [Fact]
     public async Task A_unique_current_name_is_not_chosen_when_the_former_name_search_could_not_be_completed()
     {
@@ -353,7 +354,8 @@ public sealed class FormerNameResolutionTests : IAsyncLifetime
             await CompanyMasterNameBackfill.RunAsync(connection, onlyMissing: true);
             await CompanyNameTokenIndex.RebuildAsync(connection);
         }
-        var fullPage = Enumerable.Range(10, 25).Select(n => Company(Cin(n), $"{_word} UNRELATED {n} LIMITED", "legalName")).ToList();
+        var fullPage = Enumerable.Range(10, 24).Select(n => Company(Cin(n), $"{_word} UNRELATED {n} LIMITED", "legalName"))
+            .Append(Company(Cin(3), holderName, "legalName")).ToList();
         var tool = new FixtureReferenceTool("unlocked-stale-coastal-20260922").With("getNameHints", 200, new { data = fullPage });
 
         var (result, audit, request) = await ResolveTwiceAsync(tool, holderName, 1);
@@ -363,6 +365,77 @@ public sealed class FormerNameResolutionTests : IAsyncLifetime
         Assert.False(result.AppliedToRequest);
         Assert.Null(request.Cin);
     }
+
+    /// <summary>The #514 round (2026-10-25): "TATA SERVICES LIMITED", name only. The tool returned its 25 best matches with the exact name first and near names
+    /// after ("TATA INDUSTRIES LIMITED", the company's own former name "TATA SERVICES PRIVATE LIMITED", ...), and the same 25 again for the next page.
+    /// Ranked past the exact matches, the page holds every exact match there is: the check is complete, nothing conflicts, and the master's unique exact
+    /// match is chosen, with one search call (no second page).</summary>
+    [Fact]
+    public async Task A_page_ranked_past_the_exact_matches_completes_the_check_and_the_unique_name_is_chosen()
+    {
+        var holderName = $"{_word} SERVICES LIMITED";
+        await using (var seed = CreateContext())
+        {
+            seed.CompanyMasterRecords.Add(new CompanyMasterRecord { Identifier = Cin(3), RecordType = CompanyMasterRecordType.Company, Name = holderName, Status = "Active" });
+            await seed.SaveChangesAsync();
+        }
+        await using (var connection = new SqlConnection(TestDatabase.ConnectionString))
+        {
+            await CompanyMasterNameBackfill.RunAsync(connection, onlyMissing: true);
+            await CompanyNameTokenIndex.RebuildAsync(connection);
+        }
+        var ranked = new List<Dictionary<string, object?>> { Company(Cin(3), holderName, "legalName"), Company(Cin(11), $"{_word} INDUSTRIES LIMITED", "legalName"),
+                Company(Cin(3), holderName, "oldName", $"{_word} SERVICES PRIVATE LIMITED") }
+            .Concat(Enumerable.Range(12, 19).Select(n => Company(Cin(n), $"{_word} UNRELATED {n} SERVICES LIMITED", "legalName")))
+            .Concat(Enumerable.Range(1, 3).Select(Proprietorship)).ToList();
+        Assert.Equal(25, ranked.Count);
+        var tool = new FixtureReferenceTool("unlocked-stale-coastal-20260922").With("getNameHints", 200, new { data = ranked });
+
+        var (result, audit, request) = await ResolveTwiceAsync(tool, holderName, 1);
+
+        Assert.Equal((ResolutionStatus.Resolved, ResolutionReasonCodes.UniqueExact, Cin(3)), (audit.Status, audit.ReasonCode, audit.ChosenIdentifier));
+        Assert.True(result.AppliedToRequest);
+        Assert.Equal(Cin(3), request.Cin);
+        Assert.Equal(1, tool.Count("getNameHints"));
+    }
+
+    /// <summary>A search stored as incomplete is not reused: the next request searches again (free), so a search whose page is now read as ranked, or that
+    /// the tool now answers in full, settles it.</summary>
+    [Fact]
+    public async Task A_stored_incomplete_search_is_searched_again()
+    {
+        var name = $"{_word} RETRY LIMITED";
+        var mixed = Enumerable.Range(10, 24).Select(n => Company(Cin(n), $"{_word} UNRELATED {n} LIMITED", "legalName"))
+            .Append(Company(Cin(4), name, "legalName")).ToList();
+        var first = new FixtureReferenceTool("unlocked-stale-coastal-20260922").With("getNameHints", 200, new { data = mixed });
+        await using (var db = CreateContext())
+            Assert.False((await new FormerNameLookupService(db, FakeReferenceTool.NewClient(first), new Clock(), NullLogger<FormerNameLookupService>.Instance)
+                .FindAsync(name, CancellationToken.None)).Complete);
+
+        var ranked = new[] { Company(Cin(4), name, "legalName") }.Concat(Enumerable.Range(10, 24).Select(n => Company(Cin(n), $"{_word} UNRELATED {n} LIMITED", "legalName"))).ToList();
+        var second = new FixtureReferenceTool("unlocked-stale-coastal-20260922").With("getNameHints", 200, new { data = ranked });
+        await using (var db = CreateContext())
+            Assert.True((await new FormerNameLookupService(db, FakeReferenceTool.NewClient(second), new Clock(), NullLogger<FormerNameLookupService>.Instance)
+                .FindAsync(name, CancellationToken.None)).Complete);
+        Assert.Equal(1, second.Count("getNameHints"));
+
+        // Complete now, it is reused: no further call.
+        var third = new FixtureReferenceTool("unlocked-stale-coastal-20260922").With("getNameHints", 200, new { data = mixed });
+        await using (var db = CreateContext())
+            Assert.True((await new FormerNameLookupService(db, FakeReferenceTool.NewClient(third), new Clock(), NullLogger<FormerNameLookupService>.Instance)
+                .FindAsync(name, CancellationToken.None)).Complete);
+        Assert.Equal(0, third.Count("getNameHints"));
+    }
+
+    [Theory]
+    [InlineData("TATA SERVICES LIMITED", new[] { "TATA SERVICES LIMITED", "TATA INDUSTRIES LIMITED", "TATA SERVICES PRIVATE LIMITED" }, true)]   // exact first, then near
+    [InlineData("TATA SERVICES LTD", new[] { "Tata Services Limited", "TATA SERVICES LIMITED", "TATA SONS PRIVATE LIMITED" }, true)]          // several exact, spelt differently
+    [InlineData("HDFC LIMITED", new[] { "HDFC BANK LIMITED", "HDFC CREDILA FINANCIAL SERVICES LIMITED" }, true)]                              // no exact match at all
+    [InlineData("ALPHA LIMITED", new[] { "ALPHA TRADING LIMITED", "ALPHA LIMITED" }, false)]                                                 // an exact match below a near name
+    [InlineData("ALPHA LIMITED", new[] { "ALPHA LIMITED", "ALPHA LTD" }, false)]                                                              // nothing but exact matches
+    [InlineData("ALPHA LIMITED", new string[0], false)]
+    public void A_page_is_ranked_past_the_exact_matches_only_when_they_all_come_first_and_a_near_name_follows(string query, string[] rows, bool ranked) =>
+        Assert.Equal(ranked, MCAROC_Analysis.Services.AutoFetch.ReferenceToolClient.RankedPastExactMatches(query, rows));
 
     [Fact]
     public async Task A_search_that_fails_leaves_resolution_to_the_master_as_before()
