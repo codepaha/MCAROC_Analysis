@@ -16,6 +16,7 @@ public static class HighlightsParser
     {
         var result = new ParseResult<PrincipalBusinessActivity>();
         var inBlock = false;
+        var llpLayout = false;
         DateOnly? asOn = null;
         var order = 0;
 
@@ -27,6 +28,7 @@ public static class HighlightsParser
             if (c0.StartsWith("PRINCIPAL BUSINESS ACTIVITIES", StringComparison.OrdinalIgnoreCase))
             {
                 inBlock = true;
+                llpLayout = false;
                 asOn = TrailingDate(c0);
                 order = 0;
                 continue;
@@ -35,8 +37,31 @@ public static class HighlightsParser
             if (!inBlock) continue;
 
             if (c0.StartsWith("Main Activity Group Code", StringComparison.OrdinalIgnoreCase)) continue; // header
+            // An LLP's block (#539) has two columns, "Business Classification | Description of Business Activity", the second holding the
+            // activity's code (NIC "43") or its wording.
+            if (c0.StartsWith("Business Classification", StringComparison.OrdinalIgnoreCase)) { llpLayout = true; continue; }
             if (c0.StartsWith("See Annexure", StringComparison.OrdinalIgnoreCase)) continue;
             if (c0.Contains("did not find this data", StringComparison.OrdinalIgnoreCase)) continue; // empty-state note
+
+            if (llpLayout)
+            {
+                var activity = CleanCode(Cell(sheet, r, 1));
+                var isCode = activity is not null && activity.All(char.IsLetterOrDigit) && activity.Length <= 10;
+                result.Items.Add(new PrincipalBusinessActivity
+                {
+                    RequestId = requestId,
+                    IngestionRunId = ingestionRunId,
+                    SourceDocumentId = sourceDocumentId,
+                    SourceSheetName = sheet.Name,
+                    SourceRowNumber = r + 1,
+                    AsOnDate = asOn,
+                    MainActivityGroupDescription = Nullify(c0),
+                    BusinessActivityCode = isCode ? activity : null,
+                    BusinessActivityDescription = isCode ? null : activity,
+                    DisplayOrder = ++order
+                });
+                continue;
+            }
 
             var groupDesc = Cell(sheet, r, 1);
             var activityCode = Cell(sheet, r, 2);

@@ -6,7 +6,10 @@ namespace MCAROC_Analysis.Services.Excel.Parsers;
 /// ADDRESS:") that repeat labels like "Address Line 1" for different address blocks, so this tracks the
 /// current section while scanning rather than treating it as a simple dictionary. The Email block is
 /// special: the first address sits on the "Email" row, further addresses on their own label-less rows,
-/// and a "* Our attempt to reach this email was not successful." footnote marks the "*"-suffixed one.</summary>
+/// and a "* Our attempt to reach this email was not successful." footnote marks the "*"-suffixed one. The Phone block runs on the same way.
+/// <para>An LLP's export (#539) has the same sheet as "About the LLP": "LLPIN" for "CIN", "LLP Status" for "Company Status", and its narrative
+/// under "About the LLP". Its "Total Obligation of Contribution" and "Total Contribution Received" rows stay in the verbatim source rows until
+/// the LLP figures have their own fields (#539 PR 2).</para></summary>
 public static class CompanyProfileParser
 {
     private const string ParserName = nameof(CompanyProfileParser);
@@ -40,6 +43,8 @@ public static class CompanyProfileParser
         var rawEmails = new List<(string Raw, int SourceRow)>();
         var anyEmailUnreachable = false;
         var inEmailBlock = false;
+        var phones = new List<string>();
+        var inPhoneBlock = false;
 
         var printedAtCount = 0;
         DateTime? parsedSnapshotDate = null;
@@ -55,6 +60,13 @@ public static class CompanyProfileParser
             // The Email block runs on for a few label-less rows: each further address, then a
             // "* Our attempt to reach this email was not successful." footnote — the address may be
             // in column 0 (older exports) or column 1 (current).
+            if (string.IsNullOrEmpty(label) && inPhoneBlock)
+            {
+                if (Nullify(valueText) is { } phone) phones.Add(phone);
+                else inPhoneBlock = false;
+                continue;
+            }
+
             if (string.IsNullOrEmpty(label) && inEmailBlock)
             {
                 if (!string.IsNullOrWhiteSpace(valueText))
@@ -72,6 +84,7 @@ public static class CompanyProfileParser
                 continue;
             }
             inEmailBlock = false;
+            inPhoneBlock = false;
 
             if (label.EndsWith(':') && string.IsNullOrEmpty(valueText))
             {
@@ -133,6 +146,7 @@ public static class CompanyProfileParser
             {
                 case "Legal Name": profile.CompanyName = valueText ?? string.Empty; break;
                 case "CIN": profile.Cin = valueText; break;
+                case "LLPIN": profile.Llpin = Nullify(valueText); break;
                 case "PAN": profile.Pan = valueText; break;
 
                 // The About sheet's header carries source-export timestamp rows (report generated,
@@ -150,6 +164,7 @@ public static class CompanyProfileParser
                     break;
 
                 case "Company Status": profile.CompanyStatus = valueText; break;
+                case "LLP Status": profile.CompanyStatus = valueText; break;
                 case "Active Compliance": profile.ComplianceStatus = valueText; break;
 
                 case "Date of Incorporation":
@@ -162,7 +177,10 @@ public static class CompanyProfileParser
                     break;
 
                 case "Website": profile.Website = Nullify(valueText); break;
-                case "Phone": profile.Phone = Nullify(valueText); break;
+                case "Phone":
+                    if (Nullify(valueText) is { } firstPhone) phones.Add(firstPhone);
+                    inPhoneBlock = true;
+                    break;
                 case "Email":
                     if (!string.IsNullOrWhiteSpace(valueText)) rawEmails.Add((valueText, r + 1));
                     inEmailBlock = true;
@@ -176,7 +194,8 @@ public static class CompanyProfileParser
 
                 case "Industry": profile.Industry = Nullify(valueText); break;
                 case "Segment(s)": profile.Segment = Nullify(valueText); break;
-                case "About the Company": profile.NarrativeDescription = Nullify(valueText); break;
+                case "About the Company":
+                case "About the LLP": profile.NarrativeDescription = Nullify(valueText); break;
 
                 case "Address Line 1" when currentSection == "REGISTERED ADDRESS": regLine1 = valueText; break;
                 case "Address Line 2" when currentSection == "REGISTERED ADDRESS": regLine2 = valueText; break;
@@ -192,6 +211,7 @@ public static class CompanyProfileParser
             }
         }
 
+        profile.Phone = phones.Count == 0 ? null : string.Join(", ", phones.Distinct(StringComparer.Ordinal));
         profile.RegisteredAddress = Join(regLine1, regLine2, profile.RegisteredAddressCity, profile.RegisteredAddressState, profile.RegisteredAddressPinCode);
         profile.BusinessAddress = Join(bizLine1, bizLine2, bizCity, bizState, bizPin);
 
@@ -224,7 +244,7 @@ public static class CompanyProfileParser
         if (printedAtCount == 0)
         {
             result.AddWarning(new ParseIssue(IssueSeverity.Warning, ParserName, "SourceSnapshotDate",
-                null, "MISSING_PRINTED_AT", "'Printed at' timestamp row is absent from About the Company sheet"));
+                null, "MISSING_PRINTED_AT", $"'Printed at' timestamp row is absent from the {sheet.Name} sheet"));
             sourceSnapshotDate = null;
         }
         else if (hasConflictingPrintedAt)
@@ -236,10 +256,11 @@ public static class CompanyProfileParser
             sourceSnapshotDate = parsedSnapshotDate;
         }
 
-        if (string.IsNullOrEmpty(profile.CompanyName) || string.IsNullOrEmpty(profile.Cin))
+        // A company has a CIN, an LLP an LLPIN; either identifies the entity.
+        if (string.IsNullOrEmpty(profile.CompanyName) || (string.IsNullOrEmpty(profile.Cin) && string.IsNullOrEmpty(profile.Llpin)))
         {
             result.AddError(new ParseIssue(IssueSeverity.Error, ParserName, null, null,
-                "MISSING_REQUIRED_FIELD", "Company Name or CIN missing from About the Company sheet"));
+                "MISSING_REQUIRED_FIELD", $"Legal name, or the CIN or LLPIN, missing from the {sheet.Name} sheet"));
         }
 
         result.Items.Add(profile);
