@@ -23,6 +23,19 @@ public class ArchiveSafetyValidatorTests : IDisposable
         return path;
     }
 
+    /// <summary>The #514 round: Infosys's 2,303 filings packaged to 2.45 GB and were refused at "Archive exceeds the 2000 MB limit", though the same archive
+    /// uploaded would pass. Every filings archive is now held to the large-archive upload's limits.</summary>
+    [Fact]
+    public void The_default_limits_are_the_large_archive_uploads_so_a_large_companys_filings_fit()
+    {
+        var upload = new LargeArchiveUploadOptions();
+        Assert.Equal(ArchiveSafetyLimits.FromOptions(upload), ArchiveSafetyLimits.Default);
+        Assert.Equal((5_368_709_120L, 21_474_836_480L, 10_000, 250_000_000L, 2),
+            (ArchiveSafetyLimits.Default.MaxArchiveSizeBytes, ArchiveSafetyLimits.Default.MaxUncompressedSizeBytes, ArchiveSafetyLimits.Default.MaxPdfCount,
+                ArchiveSafetyLimits.Default.MaxIndividualPdfSizeBytes, ArchiveSafetyLimits.Default.MaxNestedDepth));
+        Assert.True(2_452_937_858L < ArchiveSafetyLimits.Default.MaxArchiveSizeBytes);   // Infosys's
+    }
+
     [Fact]
     public void RejectsZipSlipEntry()
     {

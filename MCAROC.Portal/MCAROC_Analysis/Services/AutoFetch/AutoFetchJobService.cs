@@ -595,7 +595,9 @@ public sealed class AutoFetchJobService(
         if (registry.ListedCount < registry.TotalCount)
             warnings.Add($"The reference tool reports {registry.TotalCount:N0} filing documents but listed {registry.ListedCount:N0}; only the listed ones were fetched.");
 
-        var aggregateCap = _opts.MaxAggregateDownloadBytes;
+        // No more is downloaded than the packaged archive may hold (PDFs barely compress; 5% is left for the zips' own overhead): past it the
+        // archive check would refuse every filing, where stopping here keeps those that fit and says the list was cut.
+        var aggregateCap = Math.Min(_opts.MaxAggregateDownloadBytes, ArchiveSafetyLimits.Default.MaxArchiveSizeBytes / 100 * 95);
         var (plan, estimatedBytes) = BuildDownloadPlan(registry, job.MaxDocumentsPerSection, aggregateCap, stagingDir, warnings);
         job.FilesTotal = plan.Sum(f => f.Files.Count);
         job.FilesDownloaded = plan.Sum(f => f.Files.Count(x => IsStaged(x.LocalPath)));
