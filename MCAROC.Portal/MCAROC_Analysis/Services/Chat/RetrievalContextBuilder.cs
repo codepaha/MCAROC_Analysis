@@ -92,10 +92,12 @@ public class RetrievalContextBuilder
         var factTag = 1;
         foreach (var f in facts)
             sources.Add(new RetrievedSource($"F{factTag++}", SourceType.StructuredFact, f.Text,
-                f.EntityType is null
+                f.DocumentId is not null
+                    ? $"Read from {f.DocumentName ?? "a filing document"}, page {f.PageNumber ?? 1}"
+                    : f.EntityType is null
                     ? $"Computed from parsed data · Ingestion run {f.IngestionRunId} · {f.DomainKey}"
                     : $"Computed from parsed data · Ingestion run {f.IngestionRunId} · {f.EntityType} #{f.EntityId}",
-                EntityType: f.EntityType, EntityId: f.EntityId));
+                EntityType: f.EntityType, EntityId: f.EntityId, DocumentId: f.DocumentId, PageNumber: f.PageNumber, DocumentName: f.DocumentName));
 
         var chunkTag = 1;
         foreach (var m in chunkMatches)

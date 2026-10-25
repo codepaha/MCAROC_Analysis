@@ -155,7 +155,7 @@
                                             else
                                             {
                                                 string display;
-                                                if (sourceType == "DocumentChunk" && !string.IsNullOrEmpty(docName) && pageNumber.HasValue)
+                                                if (sourceType is "DocumentChunk" or "StructuredFact" && !string.IsNullOrEmpty(docName) && pageNumber.HasValue)
                                                 {
                                                     display = $"Source: {docName}, page {pageNumber.Value}";
                                                 }
@@ -168,7 +168,7 @@
                                                     display = label ?? "Source not recorded";
                                                 }
 
-                                                if (sourceType == "DocumentChunk" && docId.HasValue && validDocIds.Contains(docId.Value))
+                                                if (sourceType is "DocumentChunk" or "StructuredFact" && docId.HasValue && validDocIds.Contains(docId.Value))
                                                 {
                                                     var p = pageNumber.GetValueOrDefault(1);
                                                     <a class="mca-citation" href="/Requests/@r.RequestId/documents/@docId.Value/view#page=@p" target="_blank" rel="noopener">

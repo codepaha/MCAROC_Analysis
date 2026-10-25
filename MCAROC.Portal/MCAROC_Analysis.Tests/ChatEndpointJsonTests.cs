@@ -772,7 +772,10 @@ public class ChatEndpointJsonTests : IAsyncLifetime
             // 3. DocumentChunk with no DocumentId (legacy shape): should get viewerUrl = null
             new("DocumentChunk", 3, "unlinked.pdf", 1, null, null, "unlinked.pdf · Page 1", null),
             // 4. Structured fact: should get viewerUrl = null
-            new("StructuredFact", null, null, null, "RocCharge", 42, "Charge: State Bank of India", null)
+            new("StructuredFact", null, null, null, "RocCharge", 42, "Charge: State Bank of India", null),
+            // 5. #497: a fact read from a document page (a certificate of change of name) links that page, in the authoritative batch only
+            new("StructuredFact", null, "auth_doc.pdf", 2, "McaFilingDocument", authDoc.FilingDocumentId, "Read from auth_doc.pdf, page 2", authDoc.FilingDocumentId),
+            new("StructuredFact", null, "old_doc.pdf", 1, "McaFilingDocument", oldDoc.FilingDocumentId, "Read from old_doc.pdf, page 1", oldDoc.FilingDocumentId)
         };
 
         var controller = NewController(db);
@@ -784,7 +787,7 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         var apiRes = Assert.IsType<ChatApiResponse>(okResult.Value);
         Assert.True(apiRes.Success);
         Assert.NotNull(apiRes.Message);
-        Assert.Equal(4, apiRes.Message.Citations.Count);
+        Assert.Equal(6, apiRes.Message.Citations.Count);
 
         // 1. Verified citation
         var c1 = apiRes.Message.Citations[0];
@@ -804,6 +807,10 @@ public class ChatEndpointJsonTests : IAsyncLifetime
         // 4. Structured fact
         var c4 = apiRes.Message.Citations[3];
         Assert.Null(c4.ViewerUrl);
+
+        // 5. A fact read from a page of the authoritative batch's document links that page; one from an older batch does not.
+        Assert.Equal($"/Requests/{requestId}/documents/{authDoc.FilingDocumentId}/view#page=2", apiRes.Message.Citations[4].ViewerUrl);
+        Assert.Null(apiRes.Message.Citations[5].ViewerUrl);
     }
 
     /// <summary>#195: litigation citations (order outcomes and order chunks) link to the order PDF's download route,
