@@ -47,6 +47,10 @@ public static partial class NameChangeCertificateReader
     [GeneratedRegex(@"I\s*hereby\s*certify", RegexOptions.IgnoreCase)]
     private static partial Regex HerebyCertify();
 
+    // Where the next certificate begins: its heading, its certification, or its own change of name.
+    [GeneratedRegex(@"I\s*hereby\s*certify|In\s*the\s*matter\s*of|Certificate\s*of\s*Incorporation|GOVERNMENT\s*OF\s*INDIA|has\s*been\s*changed\s*from|is\s*this\s*day\s*changed", RegexOptions.IgnoreCase)]
+    private static partial Regex NextCertificate();
+
     public static IReadOnlyList<CertificateNameChange> Read(string? text, long filingDocumentId)
     {
         if (string.IsNullOrWhiteSpace(text)) return [];
@@ -73,8 +77,11 @@ public static partial class NameChangeCertificateReader
             from = Clean(from);
             to = Clean(to);
             if (from.Length < 3 || to.Length < 3 || NameChanges.Key(from) == NameChanges.Key(to)) return;
-            // The certificate's own closing line, not one further on (another certificate on the same page).
-            var given = GivenUnderMyHand().Match(flat[after..Math.Min(flat.Length, after + 1500)]);
+            // The certificate's own closing line, never one past the start of the next certificate on the page: an unreadable
+            // closing leaves the date unknown rather than borrowing the next certificate's.
+            var next = NextCertificate().Match(flat, after);
+            var end = Math.Min(next.Success ? next.Index : flat.Length, after + 1500);
+            var given = GivenUnderMyHand().Match(flat[after..end]);
             var date = given.Success ? ParseDate(given.Groups["date"].Value) : null;
             if (found.Any(f => NameChanges.Key(f.FromName) == NameChanges.Key(from) && NameChanges.Key(f.ToName) == NameChanges.Key(to) && f.EffectiveDate == date)) return;
             found.Add(new CertificateNameChange(from, to, date, filingDocumentId, page));
@@ -196,10 +203,14 @@ public static partial class NameChangeCertificateReader
 /// <summary>How a change of name shown on the request page is backed.</summary>
 public enum NameChangeCheck
 {
-    /// <summary>The name history and a certificate state it, and their dates agree (a day apart at most: "in use until" and "changed on").</summary>
+    /// <summary>The name history and a certificate state it, and both dates are read and agree (a day apart at most: "in use until" and "changed on").</summary>
     Confirmed,
     /// <summary>The name history and a certificate state it, with different dates; the certificate's is the official one.</summary>
     DatesDiffer,
+    /// <summary>A certificate states the change but its date could not be read; the date shown is the name history's, not confirmed.</summary>
+    CertificateUndated,
+    /// <summary>The name history states the change without a date; the date shown is the certificate's.</summary>
+    HistoryUndated,
     /// <summary>A certificate states it; the name history does not.</summary>
     CertificateOnly,
     /// <summary>The name history states it; no certificate for it was read in the filings.</summary>
@@ -240,9 +251,16 @@ public static class NameChanges
             if (match is { } h)
             {
                 used.Add(h.Index);
-                var agree = cert.EffectiveDate is not { } c || h.Row.TillDate is not { } t || Math.Abs(c.DayNumber - t.DayNumber) <= 1;
+                // A date is confirmed only by two readable dates; a missing one is said, never taken as agreement.
+                var check = (cert.EffectiveDate, h.Row.TillDate) switch
+                {
+                    (null, _) => NameChangeCheck.CertificateUndated,
+                    (_, null) => NameChangeCheck.HistoryUndated,
+                    ({ } c, { } t) when Math.Abs(c.DayNumber - t.DayNumber) <= 1 => NameChangeCheck.Confirmed,
+                    _ => NameChangeCheck.DatesDiffer,
+                };
                 changes.Add(new NameChange(h.Row.PreviousName, Key(h.To) == Key(cert.ToName) ? h.To : to, cert.EffectiveDate ?? h.Row.TillDate,
-                    agree ? NameChangeCheck.Confirmed : NameChangeCheck.DatesDiffer, h.Row, h.Row.TillDate, cert));
+                    check, h.Row, h.Row.TillDate, cert));
             }
             else
             {

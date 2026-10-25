@@ -100,6 +100,25 @@ public class NameChangeCertificateTests : IAsyncLifetime
     [InlineData("31/02/2020")]
     public void A_date_that_is_not_one_is_not_read(string text) => Assert.Null(NameChangeCertificateReader.ParseDate(text));
 
+    /// <summary>Review of #535: two certificates on one page, the first one's closing date unreadable (an image). The first is left undated;
+    /// it never takes the second certificate's date. With a heading between them, and with the second change straight after the first.</summary>
+    [Theory]
+    [InlineData("GOVERNMENT OF INDIA MINISTRY OF CORPORATE AFFAIRS Certificate of Incorporation pursuant to change of name I hereby certify that")]
+    [InlineData("")]
+    public void A_certificate_whose_date_is_unreadable_does_not_take_the_next_certificates_date(string between)
+    {
+        var page = "--- Page 1 (native) ---\nI hereby certify that the name of the company has been changed from ALPHA PRIVATE LIMITED to BETA PRIVATE LIMITED "
+                   + "with effect from the date of this certificate. Given under my hand at Delhi this " + between
+                   + " the name of the company has been changed from BETA PRIVATE LIMITED to GAMMA PRIVATE LIMITED with effect from the date of this "
+                   + "certificate. Given under my hand at Delhi this 11/04/2025";
+
+        var changes = NameChangeCertificateReader.Read(page, 1);
+
+        Assert.Equal(2, changes.Count);
+        Assert.Equal(("ALPHA PRIVATE LIMITED", "BETA PRIVATE LIMITED", (DateOnly?)null), (changes[0].FromName, changes[0].ToName, changes[0].EffectiveDate));
+        Assert.Equal(("BETA PRIVATE LIMITED", "GAMMA PRIVATE LIMITED", (DateOnly?)new DateOnly(2025, 4, 11)), (changes[1].FromName, changes[1].ToName, changes[1].EffectiveDate));
+    }
+
     // ── Checked against the name history ──
 
     private static CompanyNameHistory History(int order, string name, DateOnly? till) =>
@@ -157,6 +176,38 @@ public class NameChangeCertificateTests : IAsyncLifetime
         var plain = NameChanges.Merge(history, "PRUKSA INDIA HOUSING PRIVATE LIMITED", []);
         Assert.Equal(("PRUKSA HOMES PRIVATE LIMITED", "PRUKSA INDIA HOUSING PRIVATE LIMITED", new DateOnly(2015, 3, 2), NameChangeCheck.HistoryOnly),
             (plain.Single().FromName, plain.Single().ToName, plain.Single().Date, plain.Single().Check));
+    }
+
+    /// <summary>Review of #535: a certificate whose names are read but whose date is not cannot confirm the history's date. The change is
+    /// shown with the history's date, marked as such, and the timeline says the date is the name history's.</summary>
+    [Fact]
+    public void A_certificate_with_no_readable_date_does_not_confirm_the_history_date()
+    {
+        var history = new List<CompanyNameHistory> { History(1, "COASTAL PROJECTS PRIVATE LIMITED", new DateOnly(1995, 5, 1)) };
+        var undated = new CertificateNameChange("COASTAL PROJECTS PRIVATE LIMITED", "COASTALPROJECTS LIMITED", null, 135, 1);
+
+        var change = Assert.Single(NameChanges.Merge(history, "Coastal Projects Limited", [undated]));
+        Assert.Equal((NameChangeCheck.CertificateUndated, (DateOnly?)new DateOnly(1995, 5, 1), (DateOnly?)new DateOnly(1995, 5, 1)),
+            (change.Check, change.Date, change.HistoryDate));
+        Assert.NotEqual(NameChangeCheck.Confirmed, change.Check);
+
+        var vm = new RequestDetailsViewModel
+        {
+            Request = new McaRequest { RequestId = 4, CompanyName = "Coastal Projects Limited" },
+            Documents = [],
+            LatestRun = new IngestionRun(),
+            NameHistory = history,
+            NameChangeCertificates = [undated],
+        };
+        var renamed = Assert.Single(CorporateTimelineBuilder.BuildFrom(vm));
+        Assert.Equal(new DateOnly(1995, 5, 1), renamed.Date);
+        Assert.Equal("The certificate of change of name states this change, but its date could not be read; the date is the name history's.", renamed.Detail);
+        Assert.Equal("/Requests/4/documents/135/view#page=1", renamed.LinkUrl);
+
+        // Two readable dates are needed to confirm; a history with no date is dated by the certificate and says so.
+        var noHistoryDate = Assert.Single(NameChanges.Merge([History(1, "COASTAL PROJECTS PRIVATE LIMITED", null)], "Coastal Projects Limited",
+            [undated with { EffectiveDate = new DateOnly(2010, 8, 11) }]));
+        Assert.Equal((NameChangeCheck.HistoryUndated, (DateOnly?)new DateOnly(2010, 8, 11)), (noHistoryDate.Check, noHistoryDate.Date));
     }
 
     [Fact]

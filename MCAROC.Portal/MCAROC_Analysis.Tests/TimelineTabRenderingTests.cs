@@ -170,6 +170,25 @@ public class TimelineTabRenderingTests
         Assert.Contains("Name history", table[table.IndexOf("EAST COAST CARRIERS PVT LTD", StringComparison.Ordinal)..]);
     }
 
+    /// <summary>Review of #535: a certificate whose date could not be read is linked, but the date beside it is marked as the name history's.</summary>
+    [Fact]
+    public async Task The_name_history_table_marks_a_date_the_certificate_does_not_confirm()
+    {
+        var vm = CreateViewModel();
+        vm.Request.RequestId = 4;
+        vm.Request.CompanyName = "Coastal Projects Limited";
+        vm.NameHistory = [new CompanyNameHistory { CompanyNameHistoryId = 1, DisplayOrder = 1, PreviousName = "COASTAL PROJECTS PRIVATE LIMITED", TillDate = new DateOnly(1995, 5, 1) }];
+        vm.NameChangeCertificates = [new MCAROC_Analysis.Services.McaFilings.CertificateNameChange("COASTAL PROJECTS PRIVATE LIMITED", "COASTALPROJECTS LIMITED", null, 135, 1)];
+
+        var html = await RenderAsync(vm, "Details/_CorporateTab");
+
+        var table = html[html.IndexOf("id=\"mcaNameHistory\"", StringComparison.Ordinal)..];
+        table = table[..table.IndexOf("</table>", StringComparison.Ordinal)];
+        Assert.Contains("<td>1 May 1995</td>", table);
+        Assert.Contains("href=\"/Requests/4/documents/135/view#page=1\"", table);
+        Assert.Contains("Certificate date not readable; date from the name history", table);
+    }
+
     [Fact]
     public async Task Event_renders_its_source_sheet_and_row_provenance()
     {

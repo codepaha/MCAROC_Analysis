@@ -133,6 +133,8 @@ public class CorporateTimelineBuilder(AppDbContext db)
             {
                 NameChangeCheck.DatesDiffer => $"The certificate of change of name is dated {date:d MMM yyyy}; the name history gives {change.HistoryDate:d MMM yyyy}.",
                 NameChangeCheck.CertificateOnly => "From the certificate of change of name; the name history does not list this change.",
+                NameChangeCheck.CertificateUndated => "The certificate of change of name states this change, but its date could not be read; the date is the name history's.",
+                NameChangeCheck.HistoryUndated => "Dated by the certificate of change of name; the name history gives no date.",
                 _ => null,
             };
             var cert = change.Certificate;

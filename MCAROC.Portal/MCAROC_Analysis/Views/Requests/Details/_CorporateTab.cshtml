@@ -169,6 +169,14 @@
                                     {
                                         <div class="text-muted small">Not in the name history</div>
                                     }
+                                    else if (n.Check == MCAROC_Analysis.Services.McaFilings.NameChangeCheck.CertificateUndated)
+                                    {
+                                        <div class="text-muted small">Certificate date not readable; date from the name history</div>
+                                    }
+                                    else if (n.Check == MCAROC_Analysis.Services.McaFilings.NameChangeCheck.HistoryUndated)
+                                    {
+                                        <div class="text-muted small">The name history gives no date</div>
+                                    }
                                 }
                                 else
                                 {
