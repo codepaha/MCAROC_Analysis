@@ -1,33 +1,29 @@
 # Agent channel â€” MCAROC
 
-### 2026-10-25 — Antigravity: Person attribution grade & signals persistence, suggestion-first rule, and unresolved KPI status (#452 Part 2)
+### 2026-10-25 — Antigravity: Person attribution grade persistence, suggestion-first rule & unresolved KPI status (PR #534, part of #452)
 
-Completed Part 2 of #452 in worktree `E:/MCAROC_wt_person_counts` (branch `feat/452-person-attribution-ui-counts`):
-1. **Schema & Migration**:
+Updated PR #534 in worktree `E:/MCAROC_wt_person_counts` (branch `feat/452-person-attribution-ui-counts`):
+1. **Scope & Downstream Alignment**:
+   - Scoped PR #534 as `part of #452`, implementing entity/schema persistence, suggestion-first rule, and workspace UI/KPI separation (Verified vs. Possible namesake counts and Unresolved status banner). Downstream Word report generation and AI pipeline gating remain open for subsequent work under #452.
+2. **Predicate Parity & Existing-Row Upgrade (Review Finding 1 Fix)**:
+   - Synchronized Verified and Possible eligibility predicates across `PreLoginCaseAttributionDto.IsVerified` / `IsPossible`, `AssignmentDetailViewModel.VerifiedCasesCount` / `PossibleCasesCount`, and `ViewAssignment.cshtml` table rows (`data-is-verified`, `data-is-possible`). The UI filter and KPI counts now evaluate identical logic.
+   - Provided safe upgrade policy for existing rows with `AttributionGrade = null`:
+     - Added SQL backfill in EF migration `20261025060415_AddScopeCaseAttributionGradeAndSignals.cs` populating missing grades from settled `AttributionOutcome` (`Attributed` -> `Confirmed`, `NotTheCompany` -> `Excluded`, `Ambiguous` -> `Possible`).
+     - Added in-service safe upgrade path in `PreLoginAttributionService.CheckAttributionAsync` to backfill missing grades on settled rows without modifying exclusions, rule labels, or analyst decisions.
+     - Added fallback `effectiveGrade` in `GetCaseAttributionsForJobAsync` and view badge rendering so migrated rows display the proper grade badge and match the Verified filter immediately.
+   - Added regression test `Existing_Attributed_Scope_Row_With_Null_Grade_Counts_As_Verified_And_Matches_Verified_Filter` in `PreLoginAttributionUiTests.cs`.
+3. **Schema & Migration**:
    - Added `PersonAttributionGrade? AttributionGrade` and `string? AttributionSignalsJson` to `LitigationCase` (`LitigationCase.cs`) and `ModuleScopeCase` (`ModuleEntities.cs`).
-   - Relocated `PersonAttributionGrade` enum to `MCAROC_Analysis.Data.Entities` so it is cleanly shared across entity definitions and DTOs.
+   - Relocated `PersonAttributionGrade` enum to `MCAROC_Analysis.Data.Entities`.
    - Updated entity type configurations in `AppDbContext` and `LitigationModuleModel`.
    - Created EF Core migration `20261025060415_AddScopeCaseAttributionGradeAndSignals.cs` via `migrate.sh add`. Validated model snapshot parity with `migrate.sh check` (`PASS — migration fully captures current model`).
-2. **DTO & Service Persistence**:
-   - Added `PersonAttributionGrade? Grade = null` and `string? SignalsJson = null` to `PreLoginCaseAttributionDto`.
-   - Updated `PreLoginAttributionService.ApplyOutcome` to persist `AttributionGrade` and `AttributionSignalsJson` to `ModuleScopeCase`. Individual target runs serialize corroboration signal dicts into JSON. Company targets map to `Confirmed`, `Excluded`, or `Possible`.
-   - Populated `Grade` and `SignalsJson` on `PreLoginCaseAttributionDto` in `GetCaseAttributionsForJobAsync`.
-3. **Suggestion-First Rule for Exclusions**:
-   - Per owner rule, person-match exclusions in Suggest mode are never automatically hidden or excluded (`sc.IsExcluded = false`). Instead, a `PreLoginAttributionDecision` is recorded with `Action = Suggested`, presenting the item to analysts with Accept/Reject controls and Trust Report tracking until explicitly switched to Apply mode.
-4. **Read Models & UI Separation**:
-   - Separated verified cases from namesake cases in `AssignmentDetailViewModel`:
-     - `VerifiedCasesCount`: cases with `AttributionGrade` of `Confirmed` or `Probable` (or company cases that are `Attributed`).
-     - `PossibleCasesCount`: cases with `AttributionGrade` of `Possible` (namesake cases without corroboration).
-     - `IsUnresolved`: `TotalCases > 0 && VerifiedCasesCount == 0`, alerting analysts when legal records exist but none are verified to the borrower or directors.
-   - Updated `ViewAssignment.cshtml` with an amber warning banner for Unresolved status (preventing a misleading clean zero), added separate KPI cards for Verified and Possible Cases, rendered Grade badges on table rows, and added filtering controls.
+4. **Suggestion-First Rule for Exclusions**:
+   - Person-match exclusions in Suggest mode are never automatically hidden or excluded (`sc.IsExcluded = false`). Instead, a `PreLoginAttributionDecision` is recorded with `Action = Suggested`, presenting the item to analysts with Accept/Reject controls and Trust Report tracking until explicitly switched to Apply mode.
 5. **Verification**:
-   - Added 3 integration/UI tests to `PreLoginAttributionUiTests.cs`:
-     - `Attribution_Grade_And_Signals_Are_Persisted_And_Exposed_In_Dto`
-     - `Suggest_Mode_Generates_Suggestions_For_Excluded_Director_Cases_Without_Hiding`
-     - `Possible_Cases_Remain_Unexcluded_And_Counted_Apart_From_Verified_Cases`
-   - All 22 tests in `PreLoginAttributionUiTests` pass.
+   - All 23 tests in `PreLoginAttributionUiTests` pass (including the existing-row regression).
    - All 91 tests across `PersonNameAttributionTests`, `PreLoginModuleScopeAndAttributionTests`, and `LitigationBaselineRiskTests` pass.
-   - Leak scan passed with zero vendor tokens.
+   - Full solution builds cleanly with 0 errors.
+   - Leak scan confirmed zero vendor tokens.
 
 ### 2026-10-25 - Owner: review workspace, evidence and CI rules
 

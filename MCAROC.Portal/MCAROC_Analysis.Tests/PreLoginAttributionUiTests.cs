@@ -1224,5 +1224,60 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
         // Unresolved indicator is active because records exist but none are verified
         Assert.True(vm.IsUnresolved);
     }
-}
+    [Fact]
+    public async Task Existing_Attributed_Scope_Row_With_Null_Grade_Counts_As_Verified_And_Matches_Verified_Filter()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            new("district", "City Civil Court", "CNR401", "CS/401/2023", "CS", "2023", "PENDING", "-", "2023-01-01", "Maharashtra", "Mumbai",
+                "Borrower litigation", "2023-05-01", "Pending",
+                CaseRowId: "C-401", Petitioner: "ACME LIMITED", Respondent: "VENDOR CORP")
+        };
 
+        var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "ACME LIMITED", "DINESH SHAH", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var scope = await db.Set<ModuleScope>().FirstAsync(s => s.Kind == ModuleScopeKind.Assignment && s.ExternalId == job.PreLoginReportJobId);
+        var sc = await db.Set<ModuleScopeCase>().FirstAsync(s => s.ScopeId == scope.ScopeId && s.Alias == "C-401");
+
+        // Simulate an existing row migrated from prior schema:
+        // Settled as Attributed, but AttributionGrade is null
+        sc.AttributionOutcome = LitigationAttributionOutcome.Attributed;
+        sc.AttributionRule = "company-exact-name";
+        sc.AttributionGrade = null;
+        sc.IsExcluded = false;
+        await db.SaveChangesAsync();
+
+        var opt = Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+        var attributionService = new PreLoginAttributionService(db, opt, new ServiceCollection().BuildServiceProvider());
+
+        // 1. DTO exposes effective grade and IsVerified=true even before CheckAttributionAsync runs
+        var dtos = await attributionService.GetCaseAttributionsForJobAsync(job.PreLoginReportJobId);
+        var dto = dtos["C-401"];
+        Assert.Equal(PersonAttributionGrade.Confirmed, dto.Grade);
+        Assert.True(dto.IsVerified);
+        Assert.False(dto.IsPossible);
+
+        var vm = new AssignmentDetailViewModel
+        {
+            Cases = cases,
+            CaseAttributions = dtos
+        };
+
+        Assert.Equal(1, vm.TotalCases);
+        Assert.Equal(1, vm.VerifiedCasesCount);
+        Assert.Equal(0, vm.PossibleCasesCount);
+        Assert.False(vm.IsUnresolved);
+
+        // 2. Safe upgrade policy: CheckAttributionAsync upgrades missing AttributionGrade on settled rows without overwriting exclusions
+        await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        var reloaded = await db.Set<ModuleScopeCase>().AsNoTracking().FirstAsync(s => s.ScopeCaseId == sc.ScopeCaseId);
+        Assert.Equal(PersonAttributionGrade.Confirmed, reloaded.AttributionGrade);
+        Assert.Equal(LitigationAttributionOutcome.Attributed, reloaded.AttributionOutcome);
+        Assert.False(reloaded.IsExcluded);
+    }
+}

@@ -50,6 +50,28 @@ namespace MCAROC_Analysis.Migrations
                 name: "IX_LitigationCases_RequestId_AttributionGrade",
                 table: "LitigationCases",
                 columns: new[] { "RequestId", "AttributionGrade" });
+
+            migrationBuilder.Sql(@"
+                UPDATE [litigation].[ScopeCases]
+                SET [AttributionGrade] = CASE [AttributionOutcome]
+                    WHEN 'Attributed' THEN 'Confirmed'
+                    WHEN 'NotTheCompany' THEN 'Excluded'
+                    WHEN 'Ambiguous' THEN 'Possible'
+                    ELSE [AttributionGrade]
+                END
+                WHERE [AttributionGrade] IS NULL AND [AttributionOutcome] IS NOT NULL;
+            ");
+
+            migrationBuilder.Sql(@"
+                UPDATE [LitigationCases]
+                SET [AttributionGrade] = CASE [AttributionOutcome]
+                    WHEN 'Attributed' THEN 'Confirmed'
+                    WHEN 'NotTheCompany' THEN 'Excluded'
+                    WHEN 'Ambiguous' THEN 'Possible'
+                    ELSE [AttributionGrade]
+                END
+                WHERE [AttributionGrade] IS NULL AND [AttributionOutcome] IS NOT NULL;
+            ");
         }
 
         /// <inheritdoc />

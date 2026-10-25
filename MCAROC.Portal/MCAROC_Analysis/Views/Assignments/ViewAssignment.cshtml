@@ -515,6 +515,15 @@
                                         var isSuggested = attr?.IsSuggestedExclusion == true;
                                         var isAutoExcluded = attr?.IsAutoExcluded == true;
                                         var isUnconfirmed = attr?.IsUnconfirmed == true;
+                                        var isVerified = attr?.IsVerified == true;
+                                        var isPossible = attr?.IsPossible == true;
+                                        var effectiveGrade = attr?.Grade ?? (attr?.Outcome switch
+                                        {
+                                            MCAROC_Analysis.Data.Entities.LitigationAttributionOutcome.Attributed => MCAROC_Analysis.Data.Entities.PersonAttributionGrade.Confirmed,
+                                            MCAROC_Analysis.Data.Entities.LitigationAttributionOutcome.NotTheCompany => MCAROC_Analysis.Data.Entities.PersonAttributionGrade.Excluded,
+                                            MCAROC_Analysis.Data.Entities.LitigationAttributionOutcome.Ambiguous => MCAROC_Analysis.Data.Entities.PersonAttributionGrade.Possible,
+                                            _ => (MCAROC_Analysis.Data.Entities.PersonAttributionGrade?)null
+                                        });
                                         <tr data-case-row-id="@c.CaseRowId"
                                             data-cnr="@c.CnrNumber"
                                             data-court="@c.Court"
@@ -527,7 +536,9 @@
                                             data-is-suggested="@isSuggested.ToString().ToLowerInvariant()"
                                             data-is-auto-excluded="@isAutoExcluded.ToString().ToLowerInvariant()"
                                             data-is-unconfirmed="@isUnconfirmed.ToString().ToLowerInvariant()"
-                                            data-grade="@(attr?.Grade?.ToString() ?? "")"
+                                            data-is-verified="@isVerified.ToString().ToLowerInvariant()"
+                                            data-is-possible="@isPossible.ToString().ToLowerInvariant()"
+                                            data-grade="@(effectiveGrade?.ToString() ?? "")"
                                             data-exclusion-reason="@(c.ExclusionReason ?? "")"
                                             data-analyst-note="@(c.AnalystNote ?? "")"
                                             data-parties="@c.CaseDetails">
@@ -560,21 +571,21 @@
                                                 {
                                                     <div class="small text-muted mt-1 d-flex flex-wrap gap-1 align-items-center">
                                                         <span class="badge bg-light text-dark border">Target: @attr.TargetName (@attr.TargetKind)</span>
-                                                        @if (attr.Grade != null)
+                                                        @if (effectiveGrade != null)
                                                         {
-                                                            if (attr.Grade == PersonAttributionGrade.Confirmed)
+                                                            if (effectiveGrade == PersonAttributionGrade.Confirmed)
                                                             {
                                                                 <span class="badge bg-success" title="Confirmed match"><i class="bi bi-shield-fill-check me-1"></i>Confirmed</span>
                                                             }
-                                                            else if (attr.Grade == PersonAttributionGrade.Probable)
+                                                            else if (effectiveGrade == PersonAttributionGrade.Probable)
                                                             {
                                                                 <span class="badge bg-primary-subtle text-primary border border-primary-subtle" title="Probable match"><i class="bi bi-shield-check me-1"></i>Probable</span>
                                                             }
-                                                            else if (attr.Grade == PersonAttributionGrade.Possible)
+                                                            else if (effectiveGrade == PersonAttributionGrade.Possible)
                                                             {
                                                                 <span class="badge bg-warning-subtle text-warning-emphasis border border-warning" title="Possible namesake"><i class="bi bi-question-circle me-1"></i>Possible (Namesake)</span>
                                                             }
-                                                            else if (attr.Grade == PersonAttributionGrade.Excluded)
+                                                            else if (effectiveGrade == PersonAttributionGrade.Excluded)
                                                             {
                                                                 <span class="badge bg-secondary" title="Excluded"><i class="bi bi-x-circle me-1"></i>Excluded</span>
                                                             }
@@ -943,6 +954,8 @@
             const rowIsSuggested = row.getAttribute('data-is-suggested') === 'true';
             const rowIsAutoExcluded = row.getAttribute('data-is-auto-excluded') === 'true';
             const rowIsUnconfirmed = row.getAttribute('data-is-unconfirmed') === 'true';
+            const rowIsVerified = row.getAttribute('data-is-verified') === 'true';
+            const rowIsPossible = row.getAttribute('data-is-possible') === 'true';
 
             let matchesSearch = !searchText || rowText.includes(searchText);
             let matchesCategory = category === 'all' || rowCategory.includes(category);
@@ -955,8 +968,8 @@
                                    (inclusion === 'suggested' && rowIsSuggested) ||
                                    (inclusion === 'auto-excluded' && rowIsAutoExcluded) ||
                                    (inclusion === 'unconfirmed' && rowIsUnconfirmed) ||
-                                   (inclusion === 'verified' && !rowIsExcluded && (rowGrade === 'Confirmed' || rowGrade === 'Probable')) ||
-                                   (inclusion === 'possible' && !rowIsExcluded && (rowGrade === 'Possible' || rowIsUnconfirmed));
+                                   (inclusion === 'verified' && rowIsVerified) ||
+                                   (inclusion === 'possible' && rowIsPossible);
 
             if (matchesSearch && matchesCategory && matchesDirection && matchesStatus && matchesInclusion) {
                 row.style.display = '';

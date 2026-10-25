@@ -116,6 +116,17 @@ public sealed class PreLoginAttributionService(
         {
             if (!forceAll && sc.AttributionOutcome != null && sc.AttributionOutcome != LitigationAttributionOutcome.Pending)
             {
+                // Safe upgrade policy: if AttributionGrade is missing on an already settled row, backfill it without touching decisions or exclusions
+                if (sc.AttributionGrade == null)
+                {
+                    sc.AttributionGrade = sc.AttributionOutcome switch
+                    {
+                        LitigationAttributionOutcome.Attributed => PersonAttributionGrade.Confirmed,
+                        LitigationAttributionOutcome.NotTheCompany => PersonAttributionGrade.Excluded,
+                        LitigationAttributionOutcome.Ambiguous => PersonAttributionGrade.Possible,
+                        _ => null
+                    };
+                }
                 continue;
             }
 
@@ -961,6 +972,14 @@ public sealed class PreLoginAttributionService(
 
             bool isUnconfirmed = sc.AttributionOutcome == LitigationAttributionOutcome.Ambiguous;
 
+            var effectiveGrade = sc.AttributionGrade ?? (sc.AttributionOutcome switch
+            {
+                LitigationAttributionOutcome.Attributed => PersonAttributionGrade.Confirmed,
+                LitigationAttributionOutcome.NotTheCompany => PersonAttributionGrade.Excluded,
+                LitigationAttributionOutcome.Ambiguous => PersonAttributionGrade.Possible,
+                _ => (PersonAttributionGrade?)null
+            });
+
             dict[sc.Alias] = new PreLoginCaseAttributionDto(
                 sc.ScopeCaseId,
                 sc.Alias,
@@ -976,7 +995,7 @@ public sealed class PreLoginAttributionService(
                 isSuggestedExclusion,
                 isAutoExcluded,
                 isUnconfirmed,
-                sc.AttributionGrade,
+                effectiveGrade,
                 sc.AttributionSignalsJson
             );
         }
