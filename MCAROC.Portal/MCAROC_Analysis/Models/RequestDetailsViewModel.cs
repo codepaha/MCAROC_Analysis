@@ -64,6 +64,11 @@ public class RequestDetailsViewModel
     public List<CompanyEmail> CompanyEmails { get; set; } = [];
     public List<ShareholdingPatternRow> ShareholdingPattern { get; set; } = [];
     public List<CompanyNameHistory> NameHistory { get; set; } = [];
+    /// <summary>#497: the changes of name the Registrar's certificates in the filings state (empty when none was read).</summary>
+    public IReadOnlyList<MCAROC_Analysis.Services.McaFilings.CertificateNameChange> NameChangeCertificates { get; set; } = [];
+    /// <summary>The name history checked against <see cref="NameChangeCertificates"/>: what the Name History table and the timeline show.</summary>
+    public IReadOnlyList<MCAROC_Analysis.Services.McaFilings.NameChange> NameChanges =>
+        MCAROC_Analysis.Services.McaFilings.NameChanges.Merge(NameHistory, CompanyProfile?.CompanyName ?? Request.CompanyName, NameChangeCertificates);
     public List<PrincipalBusinessActivity> PrincipalBusinessActivities { get; set; } = [];
 
     // Phase 8 Wave 4 — computed metrics (docs/analytics-catalogue.json). Populated per-tab by the

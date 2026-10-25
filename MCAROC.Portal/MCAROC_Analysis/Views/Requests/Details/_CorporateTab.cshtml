@@ -142,19 +142,47 @@
             </div>
         }
 
-        @if (Model.NameHistory.Count > 0)
+        @{ var nameChanges = Model.NameChanges; }
+        @if (nameChanges.Count > 0)
         {
-            <div class="mca-section" style="margin-top:22px;">
-                <h3>Name History <span class="mca-count">@Model.NameHistory.Count</span></h3>
-                <p class="text-muted">Former legal names, oldest first. The current name is not repeated here.</p>
+            <div class="mca-section" id="mcaNameHistory" style="margin-top:22px;">
+                <h3>Name History <span class="mca-count">@nameChanges.Count</span></h3>
+                <p class="text-muted">Former legal names, oldest first, and the date each changed. Where the filings hold the Registrar's certificate of change of name, its date is used and its page linked.</p>
                 <div class="pi-table-wrap"><table class="pi-results-table">
-                    <thead><tr><th>Former name</th><th>In use until</th></tr></thead>
+                    <thead><tr><th>Former name</th><th>Renamed to</th><th>Changed on</th><th>Source</th></tr></thead>
                     <tbody>
-                    @foreach (var n in Model.NameHistory)
+                    @foreach (var n in nameChanges)
                     {
                         <tr>
-                            <td>@n.PreviousName</td>
-                            <td>@(n.TillDate is { } td ? td.ToString("d MMM yyyy") : Or(n.TillDateRaw))</td>
+                            <td>@n.FromName</td>
+                            <td>@n.ToName</td>
+                            <td>@(n.Date is { } nd ? nd.ToString("d MMM yyyy") : Or(n.HistoryRow?.TillDateRaw))</td>
+                            <td>
+                                @if (n.Certificate is { } cert)
+                                {
+                                    <a href="/Requests/@Model.Request.RequestId/documents/@cert.FilingDocumentId/view#page=@cert.Page" target="_blank" rel="noopener">Certificate, page @cert.Page</a>
+                                    @if (n.Check == MCAROC_Analysis.Services.McaFilings.NameChangeCheck.DatesDiffer)
+                                    {
+                                        <div class="text-muted small">The name history gives @DetailsFormat.D(n.HistoryDate)</div>
+                                    }
+                                    else if (n.Check == MCAROC_Analysis.Services.McaFilings.NameChangeCheck.CertificateOnly)
+                                    {
+                                        <div class="text-muted small">Not in the name history</div>
+                                    }
+                                    else if (n.Check == MCAROC_Analysis.Services.McaFilings.NameChangeCheck.CertificateUndated)
+                                    {
+                                        <div class="text-muted small">Certificate date not readable; date from the name history</div>
+                                    }
+                                    else if (n.Check == MCAROC_Analysis.Services.McaFilings.NameChangeCheck.HistoryUndated)
+                                    {
+                                        <div class="text-muted small">The name history gives no date</div>
+                                    }
+                                }
+                                else
+                                {
+                                    <text>Name history</text>
+                                }
+                            </td>
                         </tr>
                     }
                     </tbody>

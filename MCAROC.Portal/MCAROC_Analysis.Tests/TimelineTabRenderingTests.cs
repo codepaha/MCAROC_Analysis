@@ -59,7 +59,9 @@ public class TimelineTabRenderingTests
         return services.BuildServiceProvider();
     }
 
-    private static async Task<string> RenderTimelineTabAsync(RequestDetailsViewModel model)
+    private static Task<string> RenderTimelineTabAsync(RequestDetailsViewModel model) => RenderAsync(model, "Details/_TimelineTab");
+
+    private static async Task<string> RenderAsync(RequestDetailsViewModel model, string view)
     {
         var sp = CreateServices();
         var viewEngine = sp.GetRequiredService<IRazorViewEngine>();
@@ -70,11 +72,11 @@ public class TimelineTabRenderingTests
         routeData.Values["controller"] = "Requests";
         var actionContext = new ActionContext(httpContext, routeData, new ActionDescriptor());
 
-        var viewPath = "/Views/Requests/Details/_TimelineTab.cshtml";
+        var viewPath = $"/Views/Requests/{view}.cshtml";
         var viewResult = viewEngine.GetView(executingFilePath: null, viewPath: viewPath, isMainPage: false);
         if (!viewResult.Success)
         {
-            viewResult = viewEngine.FindView(actionContext, "Details/_TimelineTab", isMainPage: false);
+            viewResult = viewEngine.FindView(actionContext, view, isMainPage: false);
         }
 
         if (!viewResult.Success)
@@ -119,6 +121,72 @@ public class TimelineTabRenderingTests
         public string EnvironmentName { get; set; } = "Testing";
         public string ContentRootPath { get; set; } = "";
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+    }
+
+    [Fact]
+    public async Task A_change_of_name_links_the_certificate_page_it_is_read_from()
+    {
+        var vm = CreateViewModel();
+        vm.Timeline =
+        [
+            new CorporateTimelineEvent(
+                new DateOnly(2010, 8, 11), TimelineEventCategory.Corporate, "Renamed from \"A PRIVATE LIMITED\" to \"A LIMITED\"",
+                "The certificate of change of name is dated 11 Aug 2010; the name history gives 1 May 1995.",
+                new TimelineEventProvenance(nameof(CompanyNameHistory), 1, "Highlights", 12, null),
+                "Certificate of change of name, page 1", "/Requests/4/documents/135/view#page=1")
+        ];
+
+        var html = await RenderTimelineTabAsync(vm);
+
+        Assert.Contains("the name history gives 1 May 1995.", html);
+        Assert.Contains("<a href=\"/Requests/4/documents/135/view#page=1\" target=\"_blank\" rel=\"noopener\">Certificate of change of name, page 1</a>", html);
+    }
+
+    /// <summary>#497: the Corporate tab's Name History lists each change with its date and where it is from: the certificate's page (and the
+    /// history's other date, when they differ), or the name history alone.</summary>
+    [Fact]
+    public async Task The_name_history_table_shows_each_change_with_its_certificate_or_the_history()
+    {
+        var vm = CreateViewModel();
+        vm.Request.RequestId = 4;
+        vm.Request.CompanyName = "Coastal Projects Limited";
+        vm.NameHistory =
+        [
+            new CompanyNameHistory { CompanyNameHistoryId = 1, DisplayOrder = 1, PreviousName = "COASTAL PROJECTS PRIVATE LIMITED", TillDate = new DateOnly(1995, 5, 1) },
+            new CompanyNameHistory { CompanyNameHistoryId = 2, DisplayOrder = 2, PreviousName = "EAST COAST CARRIERS PVT LTD", TillDate = new DateOnly(2014, 6, 19) },
+        ];
+        vm.NameChangeCertificates = [new MCAROC_Analysis.Services.McaFilings.CertificateNameChange("COASTAL PROJECTS PRIVATE LIMITED", "COASTALPROJECTS LIMITED", new DateOnly(2010, 8, 11), 135, 1)];
+
+        var html = await RenderAsync(vm, "Details/_CorporateTab");
+
+        var table = html[html.IndexOf("id=\"mcaNameHistory\"", StringComparison.Ordinal)..];
+        table = table[..table.IndexOf("</table>", StringComparison.Ordinal)];
+        Assert.Contains("<td>COASTAL PROJECTS PRIVATE LIMITED</td>", table);
+        Assert.Contains("<td>Coastal Projects Limited</td>", table);
+        Assert.Contains("<td>11 Aug 2010</td>", table);
+        Assert.Contains("href=\"/Requests/4/documents/135/view#page=1\"", table);
+        Assert.Contains("The name history gives 1 May 1995", table);
+        Assert.Contains("<td>19 Jun 2014</td>", table);
+        Assert.Contains("Name history", table[table.IndexOf("EAST COAST CARRIERS PVT LTD", StringComparison.Ordinal)..]);
+    }
+
+    /// <summary>Review of #535: a certificate whose date could not be read is linked, but the date beside it is marked as the name history's.</summary>
+    [Fact]
+    public async Task The_name_history_table_marks_a_date_the_certificate_does_not_confirm()
+    {
+        var vm = CreateViewModel();
+        vm.Request.RequestId = 4;
+        vm.Request.CompanyName = "Coastal Projects Limited";
+        vm.NameHistory = [new CompanyNameHistory { CompanyNameHistoryId = 1, DisplayOrder = 1, PreviousName = "COASTAL PROJECTS PRIVATE LIMITED", TillDate = new DateOnly(1995, 5, 1) }];
+        vm.NameChangeCertificates = [new MCAROC_Analysis.Services.McaFilings.CertificateNameChange("COASTAL PROJECTS PRIVATE LIMITED", "COASTALPROJECTS LIMITED", null, 135, 1)];
+
+        var html = await RenderAsync(vm, "Details/_CorporateTab");
+
+        var table = html[html.IndexOf("id=\"mcaNameHistory\"", StringComparison.Ordinal)..];
+        table = table[..table.IndexOf("</table>", StringComparison.Ordinal)];
+        Assert.Contains("<td>1 May 1995</td>", table);
+        Assert.Contains("href=\"/Requests/4/documents/135/view#page=1\"", table);
+        Assert.Contains("Certificate date not readable; date from the name history", table);
     }
 
     [Fact]

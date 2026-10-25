@@ -17,10 +17,13 @@ public sealed record TimelineEventProvenance(
     long? SourceDocumentId);
 
 /// <summary>One dated corporate event for the portal's Timeline tab. Deliberately NOT part of
-/// <see cref="DossierModel"/> — see <c>CorporateTimelineBuilder</c>.</summary>
+/// <see cref="DossierModel"/> — see <c>CorporateTimelineBuilder</c>. <paramref name="LinkUrl"/> opens the
+/// document page the event is read from (a certificate of change of name), labelled <paramref name="LinkText"/>.</summary>
 public sealed record CorporateTimelineEvent(
     DateOnly Date,
     TimelineEventCategory Category,
     string Title,
     string? Detail,
-    TimelineEventProvenance Provenance);
+    TimelineEventProvenance Provenance,
+    string? LinkText = null,
+    string? LinkUrl = null);
