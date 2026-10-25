@@ -280,5 +280,79 @@ public class PersonNameAttributionTests
         Assert.Equal(expectedGrade, assessment.Grade);
         Assert.Equal(expectedOutcome, assessment.Outcome);
     }
-}
 
+    // ─────────────────────────────────────────────────────────────
+    // 4. PR Review Regression Tests (Mixed-case, Prefix Company, Partial Names, Lender Context)
+    // ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Normaliser_preserves_mixed_case_characters_and_does_not_collapse_to_initials()
+    {
+        Assert.Equal("RAMESH KUMAR", PersonNameNormaliser.Normalise("Ramesh Kumar"));
+        Assert.Equal("RAKESH KHANNA", PersonNameNormaliser.Normalise("Rakesh Khanna"));
+        Assert.Equal("R K SHARMA", PersonNameNormaliser.Normalise("R. K. Sharma"));
+        Assert.Equal("MOHAMMED IMRAN KHAN", PersonNameNormaliser.Normalise("Dr. Mohd. Imran Khan"));
+    }
+
+    [Fact]
+    public void Mixed_case_different_names_sharing_initials_never_match()
+    {
+        var target = new PersonTargetProfile("Ramesh Kumar", AssociatedCompanyName: "ACME LIMITED");
+        var parties = new[] { "Rakesh Khanna", "ACME LIMITED" };
+
+        var assessment = PersonAttributionRules.Assess(parties, target);
+        Assert.Equal(PersonAttributionGrade.Excluded, assessment.Grade);
+        Assert.Equal(LitigationAttributionOutcome.NotTheCompany, assessment.Outcome);
+        Assert.Equal("name-not-matched", assessment.Rule);
+    }
+
+    [Fact]
+    public void Company_coparty_requires_whole_entity_match_and_rejects_unrelated_prefix_companies()
+    {
+        var target = new PersonTargetProfile("RAMESH KUMAR", AssociatedCompanyName: "ACME");
+
+        // Unrelated prefix/extension company must NOT corroborate
+        var unrelatedParties = new[] { "RAMESH KUMAR", "ACME LONG PRODUCTS LIMITED" };
+        var assessmentUnrelated = PersonAttributionRules.Assess(unrelatedParties, target);
+        Assert.Equal(PersonAttributionGrade.Possible, assessmentUnrelated.Grade);
+        Assert.Equal(LitigationAttributionOutcome.Ambiguous, assessmentUnrelated.Outcome);
+        Assert.Equal("possible-name-only", assessmentUnrelated.Rule);
+
+        // Exact whole-entity company must corroborate
+        var matchingParties = new[] { "RAMESH KUMAR", "ACME LIMITED" };
+        var assessmentMatching = PersonAttributionRules.Assess(matchingParties, target);
+        Assert.Equal(PersonAttributionGrade.Confirmed, assessmentMatching.Grade);
+        Assert.Equal(LitigationAttributionOutcome.Attributed, assessmentMatching.Outcome);
+        Assert.Equal("confirmed-company-coparty", assessmentMatching.Rule);
+    }
+
+    [Fact]
+    public void Partial_name_candidates_settle_as_possible_ambiguous_and_never_pending()
+    {
+        var target = new PersonTargetProfile("RAMESH KUMAR");
+        var parties = new[] { "RAMESH", "STATE OF TEST" };
+
+        var assessment = PersonAttributionRules.Assess(parties, target);
+        Assert.Equal(PersonAttributionGrade.Possible, assessment.Grade);
+        Assert.Equal(LitigationAttributionOutcome.Ambiguous, assessment.Outcome);
+        Assert.Equal("possible-partial-name", assessment.Rule);
+        Assert.False(assessment.NeedsJudgement);
+    }
+
+    [Fact]
+    public void Lender_link_requires_credit_recovery_context()
+    {
+        var target = new PersonTargetProfile("RAMESH KUMAR");
+        var parties = new[] { "RAMESH KUMAR", "STATE BANK OF INDIA" };
+
+        // Without recovery context (generic civil dispute): stays name-only Possible
+        var genericAssessment = PersonAttributionRules.Assess(parties, target, caseType: "Motor Accident Claim", court: "District Court");
+        Assert.Equal(PersonAttributionGrade.Possible, genericAssessment.Grade);
+        Assert.Equal("possible-name-only", genericAssessment.Rule);
+
+        // With recovery context (DRT / O.A. / NI 138): reaches Probable via lender link
+        var recoveryAssessment = PersonAttributionRules.Assess(parties, target, caseType: "Original Application", court: "Debts Recovery Tribunal");
+        Assert.Equal(PersonAttributionGrade.Probable, recoveryAssessment.Grade);
+        Assert.Equal("probable-lender-link", recoveryAssessment.Rule);
+    }
+}

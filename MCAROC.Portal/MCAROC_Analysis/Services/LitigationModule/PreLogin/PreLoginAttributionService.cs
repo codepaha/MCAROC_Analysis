@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
@@ -376,16 +377,100 @@ public sealed class PreLoginAttributionService(
         }
 
         var address = data?.Company?.Address ?? data?.Assignment?.CompanyDetails?.RegisteredOfficeAddress;
-        var associatedCompany = job.SubmittedCompanyName;
+        var rocName = data?.Company?.RocName;
+        var (district, state) = ExtractDistrictAndState(address, rocName);
+        var associatedCompany = job.SubmittedCompanyName ?? data?.Company?.Name ?? data?.Assignment?.CompanyDetails?.CompanyName;
 
         return new PersonTargetProfile(
             Name: targetName,
             FatherOrHusbandName: fatherOrHusband,
-            District: address,
-            State: null,
+            District: district,
+            State: state,
             AssociatedCompanyName: associatedCompany,
             Din: din,
             Pan: pan);
+    }
+
+    private static readonly string[] IndianStates =
+    [
+        "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana",
+        "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur",
+        "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana",
+        "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal", "Delhi", "Chandigarh", "Jammu and Kashmir",
+        "Ladakh", "Puducherry"
+    ];
+
+    private static readonly string[] IndianCities =
+    [
+        "Navi Mumbai", "Mumbai", "Thane", "Pune", "Nagpur", "Nashik", "New Delhi", "Delhi", "Gurugram", "Gurgaon",
+        "Noida", "Ghaziabad", "Bengaluru", "Bangalore", "Mysuru", "Chennai", "Coimbatore", "Hyderabad", "Secunderabad",
+        "Kolkata", "Ahmedabad", "Surat", "Vadodara", "Chandigarh", "Mohali", "Jaipur", "Lucknow", "Kanpur", "Indore",
+        "Bhopal", "Kochi", "Thiruvananthapuram", "Bhubaneswar", "Visakhapatnam", "Vijayawada", "Patna", "Ranchi",
+        "Raipur", "Guwahati", "Panaji", "Ludhiana", "Amritsar", "Agra", "Varanasi", "Prayagraj", "Allahabad"
+    ];
+
+    private static (string? District, string? State) ExtractDistrictAndState(string? address, string? rocName)
+    {
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            var rocState = ExtractStateFromRoc(rocName);
+            return (null, rocState);
+        }
+
+        string? state = null;
+        foreach (var s in IndianStates)
+        {
+            if (Regex.IsMatch(address, $@"\b(?:{Regex.Escape(s)}|{Regex.Escape(s.Replace(" ", ""))})\b", RegexOptions.IgnoreCase))
+            {
+                state = s;
+                break;
+            }
+        }
+        state ??= ExtractStateFromRoc(rocName);
+
+        string? district = null;
+        foreach (var c in IndianCities)
+        {
+            if (Regex.IsMatch(address, $@"\b{Regex.Escape(c)}\b", RegexOptions.IgnoreCase))
+            {
+                district = c;
+                break;
+            }
+        }
+
+        if (district is null)
+        {
+            var m = Regex.Match(address, @",\s*(?<city>[A-Za-z]{3,}(?:\s+[A-Za-z]{3,})?)\s*(?:,|-|\s+[1-9]\d{5})");
+            if (m.Success)
+            {
+                district = m.Groups["city"].Value.Trim();
+            }
+        }
+
+        return (district, state);
+    }
+
+    private static string? ExtractStateFromRoc(string? rocName)
+    {
+        if (string.IsNullOrWhiteSpace(rocName)) return null;
+        var upper = rocName.ToUpperInvariant();
+        if (upper.Contains("MUMBAI") || upper.Contains("PUNE")) return "Maharashtra";
+        if (upper.Contains("DELHI")) return "Delhi";
+        if (upper.Contains("BANGALORE") || upper.Contains("BENGALURU")) return "Karnataka";
+        if (upper.Contains("HYDERABAD")) return "Telangana";
+        if (upper.Contains("CHENNAI") || upper.Contains("COIMBATORE")) return "Tamil Nadu";
+        if (upper.Contains("KOLKATA")) return "West Bengal";
+        if (upper.Contains("AHMEDABAD")) return "Gujarat";
+        if (upper.Contains("JAIPUR")) return "Rajasthan";
+        if (upper.Contains("KANPUR")) return "Uttar Pradesh";
+        if (upper.Contains("CHANDIGARH")) return "Chandigarh";
+        if (upper.Contains("ERNAKULAM") || upper.Contains("KOCHI")) return "Kerala";
+        if (upper.Contains("CUTTACK")) return "Odisha";
+        if (upper.Contains("PATNA")) return "Bihar";
+        if (upper.Contains("GWALIOR")) return "Madhya Pradesh";
+        if (upper.Contains("SHILLONG")) return "Meghalaya";
+        if (upper.Contains("GOA")) return "Goa";
+        return null;
     }
 
     private static (LitigationAttributionOutcome Outcome, string Rule, string? Party, string Reason) AssessIndividual(

@@ -87,15 +87,18 @@ public static partial class PersonNameNormaliser
     /// <summary>
     /// Normalises a person name: strips honorifics, expands/canonicalises transliterations,
     /// and standardises spacing.
+    /// Preserves letters and digits across scripts before canonicalisation.
     /// </summary>
     public static string Normalise(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return string.Empty;
 
-        // Strip leading list numbers ("1. ", "2) ", etc.)
-        var t = ListNumberRegex().Replace(name.Trim(), "");
+        var upper = name.Trim().ToUpperInvariant();
 
-        // Replace punctuation with spaces
+        // Strip leading list numbers ("1. ", "2) ", etc.)
+        var t = ListNumberRegex().Replace(upper, "");
+
+        // Replace non-alphanumeric punctuation with spaces (preserves Unicode letters and digits)
         t = NonAlnumRegex().Replace(t, " ");
 
         var words = t.Split(' ', StringSplitOptions.RemoveEmptyEntries)
@@ -276,7 +279,7 @@ public static partial class PersonNameNormaliser
     [GeneratedRegex(@"^\d{1,3}[.)]?\s+", RegexOptions.CultureInvariant)]
     private static partial Regex ListNumberRegex();
 
-    [GeneratedRegex(@"[^A-Z0-9]+", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"[^\p{L}\p{Nd}]+", RegexOptions.CultureInvariant)]
     private static partial Regex NonAlnumRegex();
 
     [GeneratedRegex(@"\b(?:S/O|S\.O\.|SO|SON\s+OF|S/D/W/O)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

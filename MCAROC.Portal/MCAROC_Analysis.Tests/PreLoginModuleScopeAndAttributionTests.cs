@@ -255,6 +255,38 @@ public class PreLoginModuleScopeAndAttributionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Attribution_Director_Partial_Name_Settles_As_Ambiguous_Without_Hanging_In_Pending()
+    {
+        await using var db = Ctx();
+        var cases = new List<LegalCaseRecord>
+        {
+            new("district", "City Court", "CNR350", "CS/350/2023", "CS", "2023", "PENDING", "-", "2023-01-01", "Delhi", "Delhi",
+                "Director: Ramesh Kumar (partial match)", "2023-05-01", "Pending",
+                CaseRowId: "C-1", Petitioner: "RAMESH", Respondent: "STATE OF TEST")
+        };
+        var (job, _, _) = await CreateJobWithTargetsAsync(db, "TEST ENTERPRISES", "RAMESH KUMAR", cases);
+
+        var backfillService = new PreLoginAssignmentBackfillService(db);
+        await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+        var opt = Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Apply });
+        var attributionService = new PreLoginAttributionService(db, opt, new ServiceCollection().BuildServiceProvider());
+
+        var res = await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+
+        Assert.Equal(1, res.Assessed);
+        Assert.Equal(1, res.Ambiguous);
+        Assert.Equal(0, res.Attributed);
+
+        var scope = await db.Set<ModuleScope>().FirstAsync(s => s.Kind == ModuleScopeKind.Assignment && s.ExternalId == job.PreLoginReportJobId);
+        var sc1 = await db.Set<ModuleScopeCase>().FirstAsync(s => s.ScopeId == scope.ScopeId && s.Alias == "C-1");
+
+        // Terminal visible unconfirmed result, NOT left in Pending
+        Assert.Equal(LitigationAttributionOutcome.Ambiguous, sc1.AttributionOutcome);
+        Assert.Equal("possible-partial-name", sc1.AttributionRule);
+    }
+
+    [Fact]
     public async Task Switching_To_Apply_Mode_Promotes_Open_Suggestions()
     {
         await using var db = Ctx();

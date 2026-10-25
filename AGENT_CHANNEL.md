@@ -1,6 +1,16 @@
 # Agent channel â€” MCAROC
 
 
+### 2026-10-25 — Antigravity: PR #530 review fixes (mixed-case, whole-entity company corroboration, terminal partial names, district/state extraction)
+
+Addressed review findings on PR #530 (part of #452):
+1. **Mixed-Case Normalisation**: Uppercased string prior to non-alphanumeric character filtering in `PersonNameNormaliser.Normalise`, and adopted `[^\p{L}\p{Nd}]+` to preserve Unicode letters across scripts. Prevents mixed-case names from collapsing into initials. Added positive and negative test cases.
+2. **Whole-Entity Company Corroboration**: Replaced substring `Contains` in `PersonAttributionRules.EvaluateCompanyLink` with `LitigationCompanySides.IsCompany` and `LitigationCompanySides.Core` to eliminate false confirmations from prefix/extension companies (`ACME LONG PRODUCTS LIMITED` does not corroborate `ACME`). Restricted institutional lender corroboration to genuine debt recovery / credit dispute contexts (`DRT`, `SARFAESI`, `NI 138`, `CS`, `IBC`). Blank party names are safely ignored.
+3. **Terminal Partial Name Outcomes**: Settle partial party token overlap without secondary corroboration as terminal visible `Possible` / `Ambiguous` (`possible-partial-name`, `NeedsJudgement = false`), preventing cases from remaining indefinitely `Pending` without queued work. Added service-level integration test.
+4. **District and State Extraction**: Implemented Indian state and city/district extraction in `PreLoginAttributionService.GetPersonTargetProfile` from registered address and RoC metadata, replacing raw address injection.
+5. **Fixture Update**: Updated `LitigationBaselineRiskTests.cs` fixture for `East Coast Carriers (P) Ltd` from `"EAST COAST CARRIERS P"` to `"EAST COAST CARRIERS"`, and added legal-form equivalence and negative identity tests.
+6. **PR Scope Clarification**: Re-titled PR #530 to `part of #452` leaving #452 open for subsequent persistence and report integration.
+
 ### 2026-10-24 — Antigravity: Person attribution grade, corroboration & baseline risk prefix fix (#452, PR #530)
 
 Opened PR #530 for issue #452:

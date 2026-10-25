@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.LitigationData;
 
@@ -80,7 +81,8 @@ public static class PersonAttributionRules
         string? caseDistrict = null,
         string? caseState = null,
         string? caseType = null,
-        string? court = null)
+        string? court = null,
+        string? act = null)
     {
         if (parties.Count == 0)
         {
@@ -127,7 +129,7 @@ public static class PersonAttributionRules
         }
 
         // Check company link among co-parties
-        var companyLink = EvaluateCompanyLink(parties, target.AssociatedCompanyName);
+        var companyLink = EvaluateCompanyLink(parties, target.AssociatedCompanyName, caseType, court, act);
 
         // Check district/state corroboration
         var districtStrength = EvaluateDistrict(target.District, target.State, caseDistrict, caseState);
@@ -192,20 +194,20 @@ public static class PersonAttributionRules
             {
                 return new PersonRuleAssessment(
                     Grade: PersonAttributionGrade.Possible,
-                    Outcome: LitigationAttributionOutcome.Pending,
-                    Rule: "unsettled-candidates",
-                    Party: null,
-                    Reason: "Parties partially resemble the individual's name; awaiting judgement.",
+                    Outcome: LitigationAttributionOutcome.Ambiguous,
+                    Rule: "possible-partial-name",
+                    Party: candidates[0],
+                    Reason: "Parties partially match the individual's name; unresolved without corroborating signals.",
                     Signals: signals,
                     Candidates: candidates,
-                    NeedsJudgement: true);
+                    NeedsJudgement: false);
             }
 
             return new PersonRuleAssessment(
                 Grade: PersonAttributionGrade.Excluded,
                 Outcome: LitigationAttributionOutcome.NotTheCompany,
                 Rule: "name-not-matched",
-                Party: parties[0],
+                Party: parties.FirstOrDefault(p => !string.IsNullOrWhiteSpace(p)) ?? string.Empty,
                 Reason: "No listed party matches the individual's name.",
                 Signals: signals,
                 Candidates: []);
@@ -387,34 +389,62 @@ public static class PersonAttributionRules
         return DistrictMatchStrength.NotProvided;
     }
 
-    private static CompanyLinkStrength EvaluateCompanyLink(IReadOnlyList<string> parties, string? associatedCompanyName)
+    private static CompanyLinkStrength EvaluateCompanyLink(
+        IReadOnlyList<string> parties,
+        string? associatedCompanyName,
+        string? caseType,
+        string? court,
+        string? act)
     {
-        if (string.IsNullOrWhiteSpace(associatedCompanyName)) return CompanyLinkStrength.None;
-
-        var compNorm = associatedCompanyName.Trim().ToUpperInvariant();
-        foreach (var p in parties)
+        if (!string.IsNullOrWhiteSpace(associatedCompanyName))
         {
-            var pUpper = p.ToUpperInvariant();
-            if (pUpper.Contains(compNorm) || compNorm.Contains(pUpper))
+            var compCore = LitigationCompanySides.Core(associatedCompanyName);
+            if (compCore.Length > 0)
             {
-                return CompanyLinkStrength.Direct;
+                foreach (var p in parties)
+                {
+                    if (string.IsNullOrWhiteSpace(p)) continue;
+                    if (LitigationCompanySides.IsCompany(p, [compCore]))
+                    {
+                        return CompanyLinkStrength.Direct;
+                    }
+                }
             }
         }
 
-        // Check if any party is a recognized institutional lender
-        if (parties.Any(IsFinancialInstitution))
+        // Check if any party is a recognized institutional lender AND the case context is a recovery or credit dispute
+        if (IsRecoveryOrCreditDispute(caseType, court, act))
         {
-            return CompanyLinkStrength.Lender;
+            foreach (var p in parties)
+            {
+                if (string.IsNullOrWhiteSpace(p)) continue;
+                if (IsFinancialInstitution(p))
+                {
+                    return CompanyLinkStrength.Lender;
+                }
+            }
         }
 
         return CompanyLinkStrength.None;
     }
 
+    private static bool IsRecoveryOrCreditDispute(string? caseType, string? court, string? act)
+    {
+        var text = $"{caseType} {court} {act}".ToUpperInvariant();
+        if (text.Contains("DRT") || text.Contains("DRAT") || text.Contains("DEBTS RECOVERY")) return true;
+        if (text.Contains("SARFAESI") || text.Contains("SECURITISATION") || text.Contains("SECURITIZATION")) return true;
+        if (text.Contains("138") || text.Contains("NEGOTIABLE") || text.Contains("N.I. ACT") || text.Contains("CHEQUE")) return true;
+        if (text.Contains("RECOVERY") || text.Contains("MONEY SUIT") || text.Contains("EXECUTION") || text.Contains("DARKHAST")) return true;
+        if (text.Contains("IBC") || text.Contains("INSOLVENCY") || text.Contains("NCLT") || text.Contains("NCLAT") || text.Contains("SECTION 95") || text.Contains("SECTION 7")) return true;
+        if (Regex.IsMatch(text, @"\b(?:CS|COMMERCIAL|CIVIL\s+SUIT|SUIT|O\.A\.|OA)\b")) return true;
+        return false;
+    }
+
     private static bool IsFinancialInstitution(string party)
     {
+        if (string.IsNullOrWhiteSpace(party)) return false;
         var upper = party.ToUpperInvariant();
-        return upper.Contains("BANK") || upper.Contains("FINANCE") || upper.Contains("NBFC") ||
-               upper.Contains("HOUSING FINANCE") || upper.Contains("ASSET RECONSTRUCTION") || upper.Contains("STATE BANK");
+        return Regex.IsMatch(upper, @"\b(?:BANK|NBFC|ARC|ASSET\s+RECONSTRUCTION|HOUSING\s+FINANCE|FINANCIAL\s+SERVICES|STATE\s+BANK)\b");
     }
 
     private static IReadOnlyList<string> FindCandidates(IReadOnlyList<string> parties, IReadOnlyList<string> targetTokens)
@@ -422,6 +452,7 @@ public static class PersonAttributionRules
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var p in parties)
         {
+            if (string.IsNullOrWhiteSpace(p)) continue;
             var parsed = PersonNameNormaliser.ParseParty(p);
             if (parsed.IsCorporateOnly) continue;
             if (parsed.Tokens.Any(t => targetTokens.Contains(t, StringComparer.OrdinalIgnoreCase)))

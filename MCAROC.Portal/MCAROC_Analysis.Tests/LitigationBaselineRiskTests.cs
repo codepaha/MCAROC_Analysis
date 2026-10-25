@@ -161,9 +161,24 @@ public class LitigationCompanySidesTests
     [InlineData("M/s Coastal Projects Ltd.", "COASTAL PROJECTS")]
     [InlineData("COASTAL PROJECTS LIMITED (IN LIQUIDATION)", "COASTAL PROJECTS")]
     [InlineData("The Coastal Projects Private Limited", "COASTAL PROJECTS")]
-    [InlineData("East Coast Carriers (P) Ltd", "EAST COAST CARRIERS P")]
+    [InlineData("East Coast Carriers (P) Ltd", "EAST COAST CARRIERS")]
     public void Names_are_reduced_to_their_distinguishing_words(string name, string expectedStart) =>
         Assert.StartsWith(expectedStart, LitigationCompanySides.Core(name));
+
+    [Fact]
+    public void Core_name_reduction_treats_legal_form_variants_as_equivalent_and_rejects_unrelated_extensions()
+    {
+        var baseCore = LitigationCompanySides.Core("East Coast Carriers Limited");
+        Assert.Equal("EAST COAST CARRIERS", baseCore);
+        Assert.Equal(baseCore, LitigationCompanySides.Core("East Coast Carriers (P) Ltd"));
+        Assert.Equal(baseCore, LitigationCompanySides.Core("East Coast Carriers Pvt Ltd"));
+        Assert.Equal(baseCore, LitigationCompanySides.Core("East Coast Carriers Private Limited"));
+
+        // Negative identity: unrelated company extending the name must have different core
+        var differentCore = LitigationCompanySides.Core("East Coast Carriers Heavy Haulage Limited");
+        Assert.Equal("EAST COAST CARRIERS HEAVY HAULAGE", differentCore);
+        Assert.False(LitigationCompanySides.IsCompany("East Coast Carriers Heavy Haulage Limited", [baseCore]));
+    }
 
     [Fact]
     public void The_side_follows_which_list_names_the_company_current_or_earlier_name()
