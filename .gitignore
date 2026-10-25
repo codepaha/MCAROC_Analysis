@@ -63,3 +63,8 @@ MCAROC.Portal/MCAROC_Analysis.Tests/Fixtures/workbooks/
 
 # Host-local application login hash
 **/appsettings.ApplicationLogin.json
+
+# Local scratch: agents' review copies, probes and test runs (tmp/), and E2E evidence such as portal logs and screenshots
+# (artifacts/, which can hold company data). Root only. A file already committed under artifacts/ stays tracked.
+/tmp/
+/artifacts/
