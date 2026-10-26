@@ -247,13 +247,13 @@ public sealed class PreLoginAttributionService(
         string? oldReportPath = null;
         string? newReportPath = null;
 
-        // #452: Synchronize attribution metadata (grade, rule, signals) to DataJson
+        // #452: Synchronize attribution metadata (grade, rule, signals) to DataJson and republish versioned report on report-affecting changes
         var scopeCaseMap = scopeCases.ToDictionary(sc => sc.Alias, StringComparer.OrdinalIgnoreCase);
-        if (TrySyncAttributionsToDataJson(job.DataJson, scopeCaseMap, syncExclusions: mode == PreLoginAttributionMode.Apply, out var updatedJson, out var updatedData, out var syncError))
+        if (TrySyncAttributionsToDataJson(job.DataJson, scopeCaseMap, syncExclusions: mode == PreLoginAttributionMode.Apply, out var updatedJson, out var updatedData, out var hasReportChanges, out var syncError))
         {
-            job.DataJson = updatedJson;
-            if (mode == PreLoginAttributionMode.Apply && autoExcluded > 0 && updatedData != null)
+            if (hasReportChanges && updatedData != null)
             {
+                job.DataJson = updatedJson;
                 oldReportPath = job.ReportStoragePath;
                 newReportPath = await TryPublishReportAsync(job, updatedData, job.DataVersion + 1, ct);
                 if (newReportPath != null)
@@ -1596,8 +1596,10 @@ public sealed class PreLoginAttributionService(
         bool syncExclusions,
         out string? updatedJson,
         out InstaReportData? updatedData,
+        out bool hasReportAffectingChanges,
         out string? errorMessage)
     {
+        hasReportAffectingChanges = false;
         if (string.IsNullOrWhiteSpace(dataJson))
         {
             updatedJson = null;
@@ -1625,26 +1627,63 @@ public sealed class PreLoginAttributionService(
         }
 
         var cases = data.LegalCases.Cases.ToList();
+        bool hasChanges = false;
         for (int i = 0; i < cases.Count; i++)
         {
             var existing = cases[i];
             if (scopeCaseMap.TryGetValue(existing.CaseRowId, out var sc))
             {
                 var effectiveGrade = sc.AttributionGrade ?? InferGrade(sc.AttributionOutcome, sc.AttributionRule);
-                cases[i] = existing with
+                var newIsExcluded = syncExclusions ? sc.IsExcluded : existing.IsExcludedFromReport;
+                var newExclusionReason = syncExclusions && sc.IsExcluded ? (sc.ExclusionReason ?? existing.ExclusionReason) : existing.ExclusionReason;
+
+                if (existing.AttributionGrade != effectiveGrade ||
+                    existing.AttributionRule != sc.AttributionRule ||
+                    existing.AttributionSignalsJson != sc.AttributionSignalsJson ||
+                    existing.IsExcludedFromReport != newIsExcluded ||
+                    existing.ExclusionReason != newExclusionReason)
                 {
-                    AttributionGrade = effectiveGrade,
-                    AttributionRule = sc.AttributionRule,
-                    AttributionSignalsJson = sc.AttributionSignalsJson,
-                    IsExcludedFromReport = syncExclusions ? sc.IsExcluded : existing.IsExcludedFromReport,
-                    ExclusionReason = syncExclusions && sc.IsExcluded ? (sc.ExclusionReason ?? existing.ExclusionReason) : existing.ExclusionReason
-                };
+                    hasChanges = true;
+                    cases[i] = existing with
+                    {
+                        AttributionGrade = effectiveGrade,
+                        AttributionRule = sc.AttributionRule,
+                        AttributionSignalsJson = sc.AttributionSignalsJson,
+                        IsExcludedFromReport = newIsExcluded,
+                        ExclusionReason = newExclusionReason
+                    };
+                }
             }
         }
 
         var updatedLegalCases = LegalCaseFileParser.ToInstaLegalCases(cases) with { NextCaseRowIdIndex = data.LegalCases.NextCaseRowIdIndex };
-        updatedData = data with { LegalCases = updatedLegalCases };
-        updatedJson = JsonSerializer.Serialize(updatedData);
+        if (hasChanges ||
+            data.LegalCases.SupremeCourt != updatedLegalCases.SupremeCourt ||
+            data.LegalCases.HighCourt != updatedLegalCases.HighCourt ||
+            data.LegalCases.DistrictCourt != updatedLegalCases.DistrictCourt ||
+            data.LegalCases.ConsumerForum != updatedLegalCases.ConsumerForum ||
+            data.LegalCases.ItatTax != updatedLegalCases.ItatTax ||
+            data.LegalCases.NcltNclat != updatedLegalCases.NcltNclat ||
+            data.LegalCases.DrtDrat != updatedLegalCases.DrtDrat ||
+            data.LegalCases.Rera != updatedLegalCases.Rera ||
+            data.LegalCases.NgtOthers != updatedLegalCases.NgtOthers)
+        {
+            hasChanges = true;
+        }
+
+        if (hasChanges)
+        {
+            updatedData = data with { LegalCases = updatedLegalCases };
+            updatedJson = JsonSerializer.Serialize(updatedData);
+            hasReportAffectingChanges = true;
+        }
+        else
+        {
+            updatedData = data;
+            updatedJson = dataJson;
+            hasReportAffectingChanges = false;
+        }
+
         errorMessage = null;
         return true;
     }

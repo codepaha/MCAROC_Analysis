@@ -170,7 +170,7 @@ public sealed class LitigationCaseListQuery(
                 c.LitigationCaseId, c.CaseNumber, c.Cnr, c.Court, c.CourtCategory, c.CaseType, c.Type, c.Act,
                 c.CaseStage, c.CaseClassification, c.ProceedingType, c.CaseStatus, c.Direction,
                 c.PetitionersJson, c.RespondentsJson, c.NextHearingDate, c.LastSeenUtc,
-                c.FilingDate, c.DecisionDate, c.CaseYear
+                c.FilingDate, c.DecisionDate, c.CaseYear, c.AttributionGrade
             }).ToListAsync(ct)).ToDictionary(c => c.LitigationCaseId);
         var rows = displayedIds.Where(rowsById.ContainsKey).Select(id => rowsById[id]).ToList(); // a case deleted since the keys were read is simply absent
         var pageIds = rows.Select(c => c.LitigationCaseId).ToArray();
@@ -220,7 +220,8 @@ public sealed class LitigationCaseListQuery(
                 OrderCount = orderCounts.GetValueOrDefault(row.LitigationCaseId)?.Total ?? 0,
                 DownloadedOrderCount = orderCounts.GetValueOrDefault(row.LitigationCaseId)?.Downloaded ?? 0,
                 Risk = LitigationBaselineRisk.Assess(new LitigationRiskInput(row.Type, row.Court, row.CourtCategory, row.CaseType,
-                    row.Act, row.CaseStage, row.CaseClassification, row.ProceedingType, statusBucket, side, petitioners)),
+                    row.Act, row.CaseStage, row.CaseClassification, row.ProceedingType, statusBucket, side, petitioners,
+                    row.AttributionGrade)),
                 Analysis = analysis is null ? null : new LitigationCaseAiAnalysisViewModel
                 {
                     Status = Enum.Parse<LitigationAiAnalysisItemStatus>(analysis.Status), CompletedUtc = analysis.CompletedUtc,

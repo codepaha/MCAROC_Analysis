@@ -460,4 +460,74 @@ public sealed class LitigationCasePageServiceTests : IAsyncLifetime
         Assert.Equal("DRT/DRAT recovery proceeding", a.Trigger);
     }
 
+
+    [Theory]
+    [InlineData(PersonAttributionGrade.Possible)]
+    [InlineData(PersonAttributionGrade.Excluded)]
+    public void Mapper_evaluates_unconfirmed_DRT_case_to_R0(PersonAttributionGrade grade)
+    {
+        var entity = new LitigationCase
+        {
+            Type = "drt",
+            Court = "Debts Recovery Tribunal",
+            CourtCategory = "high_risk_court",
+            CaseType = "Original Application-",
+            CaseStatus = "PENDING",
+            Direction = "against",
+            PetitionersJson = "[\"BANK OF BARODA\"]",
+            RespondentsJson = "[\"COASTAL PROJECTS LIMITED\"]",
+            AttributionGrade = grade
+        };
+
+        var ctx = new LitigationCaseMapContext(
+            new Dictionary<long, LitigationOrderDocument>(),
+            new Dictionary<long, List<LitigationPropertyMatchResult>>(),
+            new Dictionary<long, OrderOutcomeMatch>(),
+            OrderOutcomeLookup.Empty,
+            new Dictionary<long, LitigationCaseAiAnalysis>(),
+            0,
+            DateOnly.FromDateTime(DateTime.UtcNow),
+            ["COASTAL PROJECTS LIMITED"]);
+
+        var card = LitigationCaseCardMapper.Map(entity, ctx);
+
+        Assert.Equal(LitigationRiskTier.R0, card.Risk.Tier);
+        Assert.Equal("Unconfirmed case", card.Risk.Trigger);
+    }
+
+    [Theory]
+    [InlineData(PersonAttributionGrade.Confirmed)]
+    [InlineData(PersonAttributionGrade.Probable)]
+    [InlineData(null)]
+    public void Mapper_evaluates_confirmed_or_ungraded_DRT_case_to_R3(PersonAttributionGrade? grade)
+    {
+        var entity = new LitigationCase
+        {
+            Type = "drt",
+            Court = "Debts Recovery Tribunal",
+            CourtCategory = "high_risk_court",
+            CaseType = "Original Application-",
+            CaseStatus = "PENDING",
+            Direction = "against",
+            PetitionersJson = "[\"BANK OF BARODA\"]",
+            RespondentsJson = "[\"COASTAL PROJECTS LIMITED\"]",
+            AttributionGrade = grade
+        };
+
+        var ctx = new LitigationCaseMapContext(
+            new Dictionary<long, LitigationOrderDocument>(),
+            new Dictionary<long, List<LitigationPropertyMatchResult>>(),
+            new Dictionary<long, OrderOutcomeMatch>(),
+            OrderOutcomeLookup.Empty,
+            new Dictionary<long, LitigationCaseAiAnalysis>(),
+            0,
+            DateOnly.FromDateTime(DateTime.UtcNow),
+            ["COASTAL PROJECTS LIMITED"]);
+
+        var card = LitigationCaseCardMapper.Map(entity, ctx);
+
+        Assert.Equal(LitigationRiskTier.R3, card.Risk.Tier);
+        Assert.Equal("DRT/DRAT recovery proceeding", card.Risk.Trigger);
+    }
+
 }
