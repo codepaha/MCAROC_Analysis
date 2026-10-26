@@ -19,6 +19,7 @@
             <div class="fw-semibold" id="afStage">
                 @if (failed) { <i class="bi bi-x-circle text-danger me-1"></i> }
                 else if (running) { <i class="bi bi-arrow-repeat me-1"></i> }
+                else if (job.Status == AutoFetchJobStatus.CompletedWithWarnings) { <i class="bi bi-exclamation-triangle text-warning me-1"></i> }
                 else { <i class="bi bi-check-circle text-success me-1"></i> }
                 <span id="afMessage">@(job.StatusMessage ?? job.Status.ToString())</span>
             </div>
@@ -29,11 +30,11 @@
                 @if (job.CompletedUtc is { } c) { <span> &middot; finished @Ist.Format(c, "d MMM HH:mm")</span> }
             </div>
         </div>
-        @if (failed)
+        @if (failed || (job.Status == AutoFetchJobStatus.CompletedWithWarnings && job.FilingsDocumentId is null && job.IncludeFilings))
         {
             <form method="post" action="/Requests/@r.RequestId/autofetch/retry">
                 @Html.AntiForgeryToken()
-                <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-arrow-clockwise me-1"></i>Retry</button>
+                <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-arrow-clockwise me-1"></i>Retry@(job.Status == AutoFetchJobStatus.CompletedWithWarnings ? " filings" : "")</button>
             </form>
         }
     </div>

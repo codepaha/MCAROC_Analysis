@@ -374,18 +374,43 @@ public sealed class AutoFetchJobService(
             await SaveWarningsAsync(job, correlationId, warnings, ct);
 
             // 5. Filings
+            var filingsStageFailed = false;
+            string? filingsStageFailure = null;
             if (job.IncludeFilings && job.FilingsDocumentId is null)
             {
                 await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
-                if (string.IsNullOrWhiteSpace(userId))
-                    throw new ReferenceToolException("The reference tool's user id could not be determined from the session — set ReferenceTool:UserId.");
-                await FetchFilingsAsync(request, job, correlationId, userId, warnings, ct);
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(userId))
+                        throw new ReferenceToolException("The reference tool's user id could not be determined from the session — set ReferenceTool:UserId.");
+                    await FetchFilingsAsync(request, job, correlationId, userId, warnings, ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (AutoFetchJobCancelledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    filingsStageFailed = true;
+                    filingsStageFailure = ex is ReferenceToolException ? ex.Message : $"{ex.GetType().Name}: {ex.Message}";
+                    logger.LogWarning(ex, "Auto-fetch filings failed for job {JobId} (request {RequestId}); continuing to CompletedWithWarnings",
+                        job.AutoFetchJobId, job.RequestId);
+                    var warning = $"Filings stage failed: {filingsStageFailure}";
+                    if (!warnings.Contains(warning)) warnings.Add(warning);
+                    await SaveWarningsAsync(job, correlationId, warnings, ct);
+                }
             }
 
             var finalStatus = warnings.Count > 0 ? AutoFetchJobStatus.CompletedWithWarnings : AutoFetchJobStatus.Completed;
-            var finalMessage = job.IncludeFilings
-                ? "Done — workbook data extracted, analysis queued, filings handed to the document pipeline."
-                : "Done — workbook data extracted and analysis queued.";
+            var finalMessage = filingsStageFailed
+                ? $"Done with warnings — workbook data extracted and analysis queued, but filings stage failed ({filingsStageFailure})."
+                : job.IncludeFilings
+                    ? "Done — workbook data extracted, analysis queued, filings handed to the document pipeline."
+                    : "Done — workbook data extracted and analysis queued.";
             var completedNow = DateTime.UtcNow;
             var warningsJson = JsonSerializer.Serialize(warnings);
 
