@@ -260,11 +260,12 @@ public sealed class AssignmentsController(
     public async Task<IActionResult> Download(Guid batch, long id, CancellationToken ct)
     {
         var job = await jobs.FindInBatchAsync(batch, id, ct);
-        if (job is null || job.ReportStoragePath is null || !System.IO.File.Exists(job.ReportStoragePath))
+        var fullReportPath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(job?.ReportStoragePath);
+        if (job is null || string.IsNullOrWhiteSpace(fullReportPath) || !System.IO.File.Exists(fullReportPath))
             return NotFound("Report not found or not yet generated.");
 
-        var fileName = Path.GetFileName(job.ReportStoragePath);
-        return PhysicalFile(job.ReportStoragePath, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", fileName);
+        var fileName = Path.GetFileName(fullReportPath);
+        return PhysicalFile(fullReportPath, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", fileName);
     }
 
     [HttpGet("suggestions")]

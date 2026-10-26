@@ -23,6 +23,8 @@ public sealed class PreLoginReportJobService(
     IOptions<BprLitigationOptions>? litigationOptions = null)
 {
     private readonly PreLoginLitigationTargetQueue? targetQueue = targetQueue;
+    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
+        environment != null ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(environment, null) : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
 
     public async Task<Guid> QueueRequestAsync(IFormFile? requestFile, string? requestText, CancellationToken ct)
     {
@@ -347,19 +349,21 @@ public sealed class PreLoginReportJobService(
             throw;
         }
 
-        if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+        var fullOldReportPath = _pathResolver.ResolveFullPath(oldReportPath);
+        var fullNewReportPath = _pathResolver.ResolveFullPath(newReportPath);
+        if (!string.IsNullOrWhiteSpace(fullOldReportPath) && !string.Equals(fullOldReportPath, fullNewReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(fullOldReportPath))
         {
-            try { File.Delete(oldReportPath); } catch { }
+            try { File.Delete(fullOldReportPath); } catch { }
         }
     }
 
     private async Task<string> StoreReportAsync(long jobId, GeneratedReport generated, CancellationToken cancellationToken)
     {
-        var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
+        var directory = _pathResolver.GetPreLoginReportsDir();
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, $"{jobId}-{generated.FileName}");
         await File.WriteAllBytesAsync(path, generated.Bytes, cancellationToken);
-        return path;
+        return _pathResolver.ToRelativePath(path);
     }
 
     /// <summary>Restricted to <paramref name="batch"/> per #47 — see <see cref="FindInBatchAsync"/>.</summary>
@@ -615,7 +619,7 @@ public sealed class PreLoginReportJobService(
 
             var generated = await reports.GenerateFromDataAsync(job.Cin, format, updatedData, cancellationToken);
 
-            var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
+            var directory = _pathResolver.GetPreLoginReportsDir();
             Directory.CreateDirectory(directory);
             var nextVersion = job.DataVersion + 1;
             var attemptId = Guid.NewGuid().ToString("N");
@@ -624,7 +628,7 @@ public sealed class PreLoginReportJobService(
             await File.WriteAllBytesAsync(newReportPath, generated.Bytes, cancellationToken);
 
             var oldReportPath = job.ReportStoragePath;
-            job.ReportStoragePath = newReportPath;
+            job.ReportStoragePath = _pathResolver.ToRelativePath(newReportPath);
             job.DataVersion++;
             job.Status = PreLoginReportJobStatus.Completed;
             job.ProgressPercent = 100;
@@ -644,9 +648,11 @@ public sealed class PreLoginReportJobService(
                 throw;
             }
 
-            if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+            var fullOld = _pathResolver.ResolveFullPath(oldReportPath);
+            var fullNew = _pathResolver.ResolveFullPath(newReportPath);
+            if (!string.IsNullOrWhiteSpace(fullOld) && !string.Equals(fullOld, fullNew, StringComparison.OrdinalIgnoreCase) && File.Exists(fullOld))
             {
-                try { File.Delete(oldReportPath); } catch { }
+                try { File.Delete(fullOld); } catch { }
             }
         }
         catch (DbUpdateConcurrencyException)
@@ -1134,13 +1140,14 @@ public sealed class PreLoginReportJobService(
             var identifier = updatedData.Company.LitigationOnly ? updatedData.Company.RegistrationNumber : job.Cin;
             var generated = await reports.GenerateFromDataAsync(identifier, format, updatedData, ct);
 
-            var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
+            var directory = _pathResolver.GetPreLoginReportsDir();
             Directory.CreateDirectory(directory);
             var nextVersion = submittedDataVersion + 1;
             var attemptId = Guid.NewGuid().ToString("N");
             var versionedFileName = $"{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}";
-            newReportPath = Path.Combine(directory, versionedFileName);
-            await File.WriteAllBytesAsync(newReportPath, generated.Bytes, ct);
+            var fullNew = Path.Combine(directory, versionedFileName);
+            await File.WriteAllBytesAsync(fullNew, generated.Bytes, ct);
+            newReportPath = _pathResolver.ToRelativePath(fullNew);
         }
 
         var affected = await db.PreLoginReportJobs
@@ -1152,9 +1159,13 @@ public sealed class PreLoginReportJobService(
 
         if (affected == 0)
         {
-            if (newReportPath != null && File.Exists(newReportPath))
+            if (newReportPath != null)
             {
-                try { File.Delete(newReportPath); } catch { }
+                var fullNew = _pathResolver.ResolveFullPath(newReportPath);
+                if (File.Exists(fullNew))
+                {
+                    try { File.Delete(fullNew); } catch { }
+                }
             }
             await tx.RollbackAsync(ct);
             throw new PreLoginConcurrencyException("Concurrent update detected at write time. Changes rolled back.");
@@ -1162,9 +1173,11 @@ public sealed class PreLoginReportJobService(
 
         await tx.CommitAsync(ct);
 
-        if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+        var fullOldReport = _pathResolver.ResolveFullPath(oldReportPath);
+        var fullNewReport = _pathResolver.ResolveFullPath(newReportPath);
+        if (!string.IsNullOrWhiteSpace(fullOldReport) && !string.Equals(fullOldReport, fullNewReport, StringComparison.OrdinalIgnoreCase) && File.Exists(fullOldReport))
         {
-            try { File.Delete(oldReportPath); } catch { }
+            try { File.Delete(fullOldReport); } catch { }
         }
     }
 
@@ -1236,13 +1249,14 @@ public sealed class PreLoginReportJobService(
             var identifier = updatedData.Company.LitigationOnly ? updatedData.Company.RegistrationNumber : job.Cin;
             var generated = await reports.GenerateFromDataAsync(identifier, format, updatedData, ct);
 
-            var directory = Path.Combine(environment.ContentRootPath, "App_Data", "PreLoginReports");
+            var directory = _pathResolver.GetPreLoginReportsDir();
             Directory.CreateDirectory(directory);
             var nextVersion = payload.SubmittedDataVersion + 1;
             var attemptId = Guid.NewGuid().ToString("N");
             var versionedFileName = $"{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}";
-            newReportPath = Path.Combine(directory, versionedFileName);
-            await File.WriteAllBytesAsync(newReportPath, generated.Bytes, ct);
+            var fullNew = Path.Combine(directory, versionedFileName);
+            await File.WriteAllBytesAsync(fullNew, generated.Bytes, ct);
+            newReportPath = _pathResolver.ToRelativePath(fullNew);
         }
 
         var affected = await db.PreLoginReportJobs
@@ -1254,9 +1268,13 @@ public sealed class PreLoginReportJobService(
 
         if (affected == 0)
         {
-            if (newReportPath != null && File.Exists(newReportPath))
+            if (newReportPath != null)
             {
-                try { File.Delete(newReportPath); } catch { }
+                var fullNew = _pathResolver.ResolveFullPath(newReportPath);
+                if (File.Exists(fullNew))
+                {
+                    try { File.Delete(fullNew); } catch { }
+                }
             }
             await tx.RollbackAsync(ct);
             throw new PreLoginConcurrencyException("Concurrent update detected at write time. Changes rolled back.");
@@ -1264,9 +1282,11 @@ public sealed class PreLoginReportJobService(
 
         await tx.CommitAsync(ct);
 
-        if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+        var fullOldReport = _pathResolver.ResolveFullPath(oldReportPath);
+        var fullNewReport = _pathResolver.ResolveFullPath(newReportPath);
+        if (!string.IsNullOrWhiteSpace(fullOldReport) && !string.Equals(fullOldReport, fullNewReport, StringComparison.OrdinalIgnoreCase) && File.Exists(fullOldReport))
         {
-            try { File.Delete(oldReportPath); } catch { }
+            try { File.Delete(fullOldReport); } catch { }
         }
 
         return new BatchUpdateResult

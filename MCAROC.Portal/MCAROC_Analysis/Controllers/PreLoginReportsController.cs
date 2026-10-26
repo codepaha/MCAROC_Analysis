@@ -190,7 +190,8 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs, App
         var data = jobs.AssignmentData(job);
         if (data is null) return NotFound();
         ViewBag.Job = job;
-        ViewBag.DownloadAvailable = !string.IsNullOrWhiteSpace(job.ReportStoragePath) && System.IO.File.Exists(job.ReportStoragePath);
+        var fullReportPath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(job.ReportStoragePath);
+        ViewBag.DownloadAvailable = !string.IsNullOrWhiteSpace(fullReportPath) && System.IO.File.Exists(fullReportPath);
         return View(data);
     }
 
@@ -226,13 +227,14 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs, App
     {
         var job = await jobs.FindInBatchAsync(batch, id, cancellationToken);
         if (job is null || job.Status != PreLoginReportJobStatus.Completed) return NotFound();
-        if (string.IsNullOrWhiteSpace(job.ReportStoragePath) || !System.IO.File.Exists(job.ReportStoragePath))
+        var fullReportPath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(job.ReportStoragePath);
+        if (string.IsNullOrWhiteSpace(fullReportPath) || !System.IO.File.Exists(fullReportPath))
         {
             TempData["ReportError"] = "The generated Word file is unavailable. The report data can still be reviewed below; rerun the assignment to regenerate the file.";
             return RedirectToAction(nameof(Preview), new { batch, id });
         }
         Response.Headers.CacheControl = "no-store";
-        return PhysicalFile(job.ReportStoragePath, "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            Path.GetFileName(job.ReportStoragePath).Split('-', 2).Last());
+        return PhysicalFile(fullReportPath, "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            Path.GetFileName(fullReportPath).Split('-', 2).Last());
     }
 }

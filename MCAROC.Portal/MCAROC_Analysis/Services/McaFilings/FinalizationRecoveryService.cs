@@ -151,7 +151,8 @@ public class FinalizationRecoveryService(
                 logger.LogError(ex, "Finalization failed for session {SessionId}", sessionId);
 
                 // Storage admission guarantee: check whether archive was already moved to destination volume
-                var moved = File.Exists(session.DestinationStoragePath)
+                var fullDest = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(session.DestinationStoragePath);
+                var moved = File.Exists(fullDest)
                     || await db.LargeArchiveUploadSessions.AnyAsync(s => s.SessionId == sessionId
                         && (s.Status == LargeArchiveUploadSessionStatus.ArchiveMoved
                             || s.Status == LargeArchiveUploadSessionStatus.DocumentCommitted
@@ -239,15 +240,17 @@ public class FinalizationRecoveryService(
                 throw new InvalidOperationException("Finalization lease fence expired or was revoked before acquiring move lock.");
             }
 
-            var destDir = Path.GetDirectoryName(session.DestinationStoragePath)!;
+            var fullStaging = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(session.StagingFilePath);
+            var fullDest = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(session.DestinationStoragePath);
+            var destDir = Path.GetDirectoryName(fullDest)!;
             Directory.CreateDirectory(destDir);
 
             // Atomic file move
-            if (File.Exists(session.StagingFilePath))
+            if (File.Exists(fullStaging))
             {
-                File.Move(session.StagingFilePath, session.DestinationStoragePath, overwrite: false);
+                File.Move(fullStaging, fullDest, overwrite: false);
             }
-            else if (!File.Exists(session.DestinationStoragePath))
+            else if (!File.Exists(fullDest))
             {
                 throw new FileNotFoundException("Neither staging file nor destination file was found during finalization move.");
             }
@@ -279,14 +282,15 @@ public class FinalizationRecoveryService(
         var existingDoc = await db.RequestDocuments.AsNoTracking().FirstOrDefaultAsync(d => d.UploadSessionId == session.SessionId, ct);
         if (existingDoc is null)
         {
-            var fileInfo = new FileInfo(session.DestinationStoragePath);
+            var fullDest = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(session.DestinationStoragePath);
+            var fileInfo = new FileInfo(fullDest);
             existingDoc = new RequestDocument
             {
                 RequestId = session.RequestId,
                 DocumentType = DocumentType.McaFilingsArchive,
                 OriginalFileName = session.OriginalFileName,
-                StoredFileName = Path.GetFileName(session.DestinationStoragePath),
-                StoragePath = session.DestinationStoragePath,
+                StoredFileName = Path.GetFileName(fullDest),
+                StoragePath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ToRelativePath(session.DestinationStoragePath),
                 FileSize = fileInfo.Exists ? fileInfo.Length : session.TotalExpectedSizeBytes,
                 FileHash = session.ExpectedFullSha256,
                 UploadStatus = DocumentUploadStatus.Uploaded,
@@ -453,7 +457,8 @@ public class FinalizationRecoveryService(
 
                 if (session.Status == LargeArchiveUploadSessionStatus.Verifying)
                 {
-                    if (File.Exists(session.DestinationStoragePath))
+                    var fullDest = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(session.DestinationStoragePath);
+                    if (File.Exists(fullDest))
                     {
                         // File move succeeded before crash
                         await db.LargeArchiveUploadSessions

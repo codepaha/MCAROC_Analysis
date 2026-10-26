@@ -58,8 +58,8 @@ public class RequestsUploadController(
             return StatusCode(StatusCodes.Status429TooManyRequests, slotResult.Error ?? "Another large upload is currently in progress.");
 
         // 2. Resolve paths and reserve volume storage capacity
-        var stagingDir = Path.Combine(env.ContentRootPath, "App_Data", "Requests", requestId.ToString(), "mca-filings", "staging", sessionId.ToString());
-        var destDir = Path.Combine(env.ContentRootPath, "App_Data", "Uploads", requestId.ToString(), "original");
+        var stagingDir = Path.Combine(MCAROC_Analysis.Services.Storage.StoragePathHelper.GetDataRoot(), "Requests", requestId.ToString(), "mca-filings", "staging", sessionId.ToString());
+        var destDir = MCAROC_Analysis.Services.Storage.StoragePathHelper.GetUploadsDir(requestId);
         var stagingPartPath = Path.Combine(stagingDir, "archive.part");
         var destZipPath = Path.Combine(destDir, $"{sessionId:N}.zip");
 
@@ -87,8 +87,8 @@ public class RequestsUploadController(
             NextExpectedOffset = 0,
             ExpectedFullSha256 = request.ExpectedFullSha256.Trim().ToLowerInvariant(),
             Status = LargeArchiveUploadSessionStatus.Uploading,
-            StagingFilePath = stagingPartPath,
-            DestinationStoragePath = destZipPath,
+            StagingFilePath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ToRelativePath(stagingPartPath),
+            DestinationStoragePath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ToRelativePath(destZipPath),
             CreatedUtc = DateTime.UtcNow,
             LastHeartbeatUtc = DateTime.UtcNow,
             ExpiresUtc = DateTime.UtcNow.Add(_opts.SessionLifetime)

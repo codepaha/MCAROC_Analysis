@@ -24,6 +24,10 @@ public class FilingBatchProcessor(
     IOperationalSlotLeaseService? slotLeaseService = null,
     IOptions<LargeArchiveUploadOptions>? archiveOptions = null)
 {
+    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
+        !string.IsNullOrWhiteSpace(contentRootPath)
+            ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(Path.Combine(contentRootPath, "App_Data"))
+            : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
     private readonly ArchiveSafetyLimits _limits = archiveOptions?.Value is { } o ? ArchiveSafetyLimits.FromOptions(o) : ArchiveSafetyLimits.Default;
     private const int MaxRetryCount = 3;
     private static readonly FilingCategory[] AiEligibleCategories =
@@ -103,7 +107,8 @@ public class FilingBatchProcessor(
             batch.Status = FilingBatchStatus.Unpacking;
             await db.SaveChangesAsync(cts.Token);
 
-            var outerSafety = ArchiveSafetyValidator.ValidateOuterArchive(outerZipDoc.StoragePath, _limits);
+            var fullOuterZipPath = _pathResolver.ResolveFullPath(outerZipDoc.StoragePath);
+            var outerSafety = ArchiveSafetyValidator.ValidateOuterArchive(fullOuterZipPath, _limits);
             if (!outerSafety.IsValid)
                 throw new InvalidOperationException($"Archive safety check failed: {outerSafety.Error}");
 
@@ -119,7 +124,7 @@ public class FilingBatchProcessor(
             // them, so a zero-start tracker would never see their bytes again).
             var cumulativeStats = new CumulativeArchiveStats(batch.CumulativeUncompressedBytes, batch.CumulativePdfCount);
 
-            using (var outerArchive = ZipFile.OpenRead(outerZipDoc.StoragePath))
+            using (var outerArchive = ZipFile.OpenRead(fullOuterZipPath))
             {
                 var nestedZipEntries = outerArchive.Entries.Where(e => e.FullName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)).ToList();
                 foreach (var nestedEntry in nestedZipEntries)
@@ -315,7 +320,7 @@ public class FilingBatchProcessor(
                 RequestId = batch.RequestId,
                 OriginalFileName = entryFileName,
                 SourceFolder = sourceFolder,
-                StoragePath = storagePath,
+                StoragePath = _pathResolver.ToRelativePath(storagePath),
                 FileHash = hash,
                 ProcessingStatus = FilingDocumentProcessingStatus.Discovered,
                 UpdatedAt = DateTime.UtcNow,
@@ -370,7 +375,8 @@ public class FilingBatchProcessor(
             // extracted in an earlier batch reuses that text (OCR is the slow part); classification below still
             // runs fresh, since it also reads folder and file names a refresh may change.
             var earlier = await FindEarlierExtractedTextAsync(document, ct);
-            var extraction = earlier?.Result ?? await pdfTextExtractor.ExtractAsync(document.StoragePath, tempDir, ct);
+            var fullDocPath = _pathResolver.ResolveFullPath(document.StoragePath);
+            var extraction = earlier?.Result ?? await pdfTextExtractor.ExtractAsync(fullDocPath, tempDir, ct);
             document.ReusedFromDocumentId = earlier?.SourceDocumentId;
 
             if (extraction.Status != FilingDocumentProcessingStatus.TextExtracted)
@@ -406,7 +412,7 @@ public class FilingBatchProcessor(
                 if (extraction.EmbeddedFiles is { } embedded)
                     await EmbeddedFiles.WriteSidecarAsync(textPath, embedded, ct);
 
-                document.ExtractedTextPath = textPath;
+                document.ExtractedTextPath = _pathResolver.ToRelativePath(textPath);
                 document.ExtractedCharCount = extraction.FullText.Length;
                 document.NativePageCount = extraction.NativePageCount;
                 document.OcrPageCount = extraction.OcrPageCount;
@@ -624,8 +630,8 @@ public class FilingBatchProcessor(
         var contexts = new List<FilingDocumentContext>();
         foreach (var d in documents)
         {
-            var effectiveTextPath = d.ExtractedTextPath;
-            if (effectiveTextPath is null) continue;
+            var effectiveTextPath = _pathResolver.ResolveFullPath(d.ExtractedTextPath);
+            if (string.IsNullOrWhiteSpace(effectiveTextPath) || !File.Exists(effectiveTextPath)) continue;
             var text = await File.ReadAllTextAsync(effectiveTextPath, ct);
             contexts.Add(new FilingDocumentContext(d.OriginalFileName, d.FormType, text));
         }
@@ -737,9 +743,10 @@ public class FilingBatchProcessor(
             .ToListAsync(ct);
         foreach (var c in candidates)
         {
-            if (!File.Exists(c.ExtractedTextPath))
+            var fullTextPath = _pathResolver.ResolveFullPath(c.ExtractedTextPath);
+            if (!File.Exists(fullTextPath))
                 continue; // retired (#360) or missing — try an older copy, else extract afresh
-            var text = await File.ReadAllTextAsync(c.ExtractedTextPath!, ct);
+            var text = await File.ReadAllTextAsync(fullTextPath, ct);
             // #369: text extracted before XFA e-forms were read is Adobe's placeholder, not the form — never carry it forward.
             if (XfaFormReader.IsPlaceholderText(text))
                 continue;
@@ -747,8 +754,8 @@ public class FilingBatchProcessor(
                 document.FilingDocumentId, c.FilingDocumentId);
             // The same PDF has the same form fields and embedded files: carry what was saved beside the earlier text (#364,
             // #377). Anything not saved there stays null and is filled in by ChargeFormBackfill from the PDF.
-            var xfa = await XfaFormReader.ReadSidecarAsync(c.ExtractedTextPath!, ct);
-            var embedded = await EmbeddedFiles.ReadSidecarAsync(c.ExtractedTextPath!, ct);
+            var xfa = await XfaFormReader.ReadSidecarAsync(fullTextPath, ct);
+            var embedded = await EmbeddedFiles.ReadSidecarAsync(fullTextPath, ct);
             return (new PdfExtractionResult(text, c.PageCount, c.NativePageCount, c.OcrPageCount, c.TextExtractionMethod,
                 FilingDocumentProcessingStatus.TextExtracted, null, xfa is { Count: > 0 } ? xfa : null, embedded), c.ReusedFromDocumentId ?? c.FilingDocumentId);
         }

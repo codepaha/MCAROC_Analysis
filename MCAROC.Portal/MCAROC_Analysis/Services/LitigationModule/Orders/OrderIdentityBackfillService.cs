@@ -114,19 +114,23 @@ public sealed class OrderIdentityBackfillService(
                     doc.ContentHash = doc.FileHash;
                     changed = true;
                 }
-                else if (!string.IsNullOrWhiteSpace(doc.StoragePath) && File.Exists(doc.StoragePath))
+                else if (!string.IsNullOrWhiteSpace(doc.StoragePath))
                 {
-                    try
+                    var fullPath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(doc.StoragePath);
+                    if (File.Exists(fullPath))
                     {
-                        var bytes = File.ReadAllBytes(doc.StoragePath);
-                        var hash = OrderContentHasher.ComputeBytesHash(bytes);
-                        doc.FileHash = hash;
-                        doc.ContentHash = hash;
-                        changed = true;
-                    }
-                    catch
-                    {
-                        // Leave hash unknown
+                        try
+                        {
+                            var bytes = File.ReadAllBytes(fullPath);
+                            var hash = OrderContentHasher.ComputeBytesHash(bytes);
+                            doc.FileHash = hash;
+                            doc.ContentHash = hash;
+                            changed = true;
+                        }
+                        catch
+                        {
+                            // Leave hash unknown
+                        }
                     }
                 }
                 // When content is unknown, leave doc.ContentHash as null (unknown) — never fabricate an empty-byte hash.

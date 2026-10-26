@@ -63,6 +63,9 @@ builder.Services.AddScoped<AnalystRequestDetailsQueryService>();
 builder.Services.AddScoped<AnalystRequestBoundaryFilter>();
 builder.Services.AddScoped<IAuthorizationHandler, AnalystRequestAuthorizationHandler>();
 builder.Services.AddMemoryCache();
+builder.Services.Configure<MCAROC_Analysis.Services.Storage.StorageOptions>(builder.Configuration.GetSection(MCAROC_Analysis.Services.Storage.StorageOptions.SectionName));
+builder.Services.AddSingleton<MCAROC_Analysis.Services.Storage.IStoragePathResolver, MCAROC_Analysis.Services.Storage.StoragePathResolver>();
+builder.Services.AddScoped<MCAROC_Analysis.Services.Storage.StoragePathBackfillService>();
 builder.Services.AddHttpClient<InstaFinancialsClient>(client => client.Timeout = TimeSpan.FromMinutes(10));
 builder.Services.Configure<InstaFinancialsOptions>(builder.Configuration.GetSection(InstaFinancialsOptions.SectionName));
 builder.Services.Configure<LargeArchiveUploadOptions>(builder.Configuration.GetSection(LargeArchiveUploadOptions.SectionName));
@@ -617,5 +620,21 @@ app.MapGet("/health", async (AppDbContext db, IIntegrationHealthService health, 
 
 // Anonymous liveness reveals no integration errors or job data.
 app.MapGet("/health/live", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
+
+// Run storage path relative backfill once on startup to migrate legacy absolute paths
+try
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetService<AppDbContext>();
+    if (db != null)
+    {
+        var backfill = scope.ServiceProvider.GetRequiredService<MCAROC_Analysis.Services.Storage.StoragePathBackfillService>();
+        await backfill.RunAsync();
+    }
+}
+catch (Exception ex)
+{
+    app.Logger.LogWarning(ex, "StoragePathBackfill skipped or failed during startup.");
+}
 
 app.Run();
