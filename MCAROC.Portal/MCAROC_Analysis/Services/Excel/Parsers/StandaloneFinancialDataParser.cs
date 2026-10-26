@@ -267,25 +267,44 @@ public static class StandaloneFinancialDataParser
 
         // An LLP's statement has no "Total Equity" or long-term borrowings line: its partners' funds are the contribution received plus
         // reserves and surplus, and its long-term borrowings the secured plus unsecured loans (#539). Only for an LLP's statement: a company's
-        // figures are never derived this way.
-        if (Label(headerRow)?.StartsWith("STATEMENT OF ASSETS AND LIABILITIES", StringComparison.OrdinalIgnoreCase) == true)
+        // figures are never derived this way. A derived figure needs every part reported: a part missing (no row, or "-") is not taken as zero,
+        // which would print a confident total that may be wrong (review of #546); the figure stays empty and a warning says why.
+        var isLlp = Label(headerRow)?.StartsWith("STATEMENT OF ASSETS AND LIABILITIES", StringComparison.OrdinalIgnoreCase) == true;
+        if (isLlp)
         {
             decimal? Fact(int year, string label) =>
                 factSink.FirstOrDefault(f => f.FinancialYear == year && f.Section == FinancialStatementSection.BalanceSheet && f.Label == label)?.NumericValue;
+            void Incomplete(string field, int year, string missing) =>
+                result.AddWarning(new ParseIssue(IssueSeverity.Warning, ParserName, field, null, "LLP_FIGURE_INCOMPLETE",
+                    $"{field} FY{year} is not derived: {missing} is not reported on the LLP's statement."));
             foreach (var e in byYear.Values)
             {
+                var reserves = Fact(e.FinancialYear, "Reserves and Surplus");
                 if (e.NetWorth is null && e.ShareCapital is { } contribution)
-                    e.NetWorth = contribution + (Fact(e.FinancialYear, "Reserves and Surplus") ?? 0m);
+                {
+                    if (reserves is { } r) e.NetWorth = contribution + r;
+                    else Incomplete(nameof(FinancialYearData.NetWorth), e.FinancialYear, "Reserves and Surplus");
+                }
                 var (secured, unsecured) = (Fact(e.FinancialYear, "Secured Loans"), Fact(e.FinancialYear, "Unsecured Loans"));
-                if (e.LongTermBorrowings is null && (secured is not null || unsecured is not null))
-                    e.LongTermBorrowings = (secured ?? 0m) + (unsecured ?? 0m);
+                if (e.LongTermBorrowings is null && secured is { } s && unsecured is { } u)
+                    e.LongTermBorrowings = s + u;
+                else if (e.LongTermBorrowings is null && (secured is not null || unsecured is not null))
+                    Incomplete(nameof(FinancialYearData.LongTermBorrowings), e.FinancialYear, secured is null ? "Secured Loans" : "Unsecured Loans");
+
+                // Total debt likewise only from both parts: a missing one would understate it.
+                if (e.TotalDebt is null && e.LongTermBorrowings is { } longTerm && e.ShortTermBorrowings is { } shortTerm)
+                    e.TotalDebt = longTerm + shortTerm;
+                else if (e.TotalDebt is null && (e.LongTermBorrowings is not null || e.ShortTermBorrowings is not null || secured is not null || unsecured is not null))
+                    Incomplete(nameof(FinancialYearData.TotalDebt), e.FinancialYear, e.ShortTermBorrowings is null ? "Short Term Borrowing" : "a long-term loan line");
             }
         }
 
         // The sheet lists long- and short-term borrowings but no total line, so Total Debt was never filled: every dossier showed "—" and the
         // High Leverage rule (debt / net worth) could never run (TruBoard test, 2026-10-13). It is the sum of the two, when either is reported.
-        foreach (var e in byYear.Values)
-            e.TotalDebt ??= TotalDebtOf(e.LongTermBorrowings, e.ShortTermBorrowings);
+        // (An LLP's is set above, from both parts only.)
+        if (!isLlp)
+            foreach (var e in byYear.Values)
+                e.TotalDebt ??= TotalDebtOf(e.LongTermBorrowings, e.ShortTermBorrowings);
 
         result.Items.AddRange(byYear.Values.OrderBy(f => f.FinancialYear));
         return result;

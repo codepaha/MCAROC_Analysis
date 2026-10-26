@@ -295,6 +295,29 @@ public class LlpWorkbookTests : IAsyncLifetime
         Assert.DoesNotContain(facts, f => f.RawValue.Contains("SAMPLE AUDITOR") || f.Label is "Year" or "2025");   // the certifier block is not figures
     }
 
+    /// <summary>Review of #546: a part not reported (a row missing, or "-") is never taken as zero. The figure it would make stays empty, with a
+    /// warning, instead of a confident total that may be wrong.</summary>
+    [Fact]
+    public void An_LLP_figure_with_a_part_not_reported_is_left_empty_and_says_so()
+    {
+        var sheet = Sheet("Financial Data",
+            Row("STATEMENT OF ASSETS AND LIABILITIES (Rs. Crore)", "", "31 Mar, 2025"),
+            Row("Contribution Received", "", 2.0),
+            Row("Reserves and Surplus", "", "-"),
+            Row("Secured Loans", "", 0.4),
+            Row("Short Term Borrowing", "", 0.2));
+
+        var result = StandaloneFinancialDataParser.Parse(sheet, 1, 1, null, out _);
+
+        var fy = Assert.Single(result.Items);
+        Assert.Equal((2.0m, (decimal?)null, (decimal?)null, 0.2m, (decimal?)null),
+            (fy.ShareCapital!.Value, fy.NetWorth, fy.LongTermBorrowings, fy.ShortTermBorrowings!.Value, fy.TotalDebt));
+        Assert.Equal(["NetWorth FY2025 is not derived: Reserves and Surplus is not reported on the LLP's statement.",
+                "LongTermBorrowings FY2025 is not derived: Unsecured Loans is not reported on the LLP's statement.",
+                "TotalDebt FY2025 is not derived: a long-term loan line is not reported on the LLP's statement."],
+            result.Warnings.Where(w => w.IssueCode == "LLP_FIGURE_INCOMPLETE").Select(w => w.Message));
+    }
+
     [Fact]
     public void A_company_statement_without_a_total_equity_line_is_never_given_an_LLPs_derived_net_worth()
     {
