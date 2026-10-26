@@ -176,7 +176,7 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
             row.ConstantItem(20).Element(HeaderLogo);
             row.ConstantItem(8);
             row.RelativeItem().AlignMiddle().Text(Cover.CompanyName).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkSoft);
-            row.RelativeItem().AlignRight().AlignMiddle().Text($"CIN {Cover.Cin ?? "—"}")
+            row.RelativeItem().AlignRight().AlignMiddle().Text($"{Cover.Wording.Identifier} {Cover.Cin ?? "—"}")
                 .FontFamily(DossierTheme.Mono).FontSize(DossierTheme.Small).FontColor(DossierTheme.InkFaint);
         });
 
@@ -284,7 +284,7 @@ public partial class DossierPdfComposer(DossierModel model, DossierVariant varia
             col.Item().PaddingBottom(30).Text(Cover.CompanyName)
                 .FontFamily(DossierTheme.Display).FontSize(DossierTheme.CoverTitle).FontColor(DossierTheme.Ink);
 
-            col.Item().Element(c => CoverField(c, "CIN", Cover.Cin ?? "—", mono: true));
+            col.Item().Element(c => CoverField(c, Cover.Wording.Identifier, Cover.Cin ?? "—", mono: true));
             col.Item().Element(c => CoverField(c, "PAN", Cover.Pan ?? "—", mono: true));
             col.Item().Element(c => CoverField(c, "Report date", Ist.Date(Cover.ReportDate, "dd MMMM yyyy")));
             col.Item().Element(c => CoverField(c, "Prepared for", string.IsNullOrWhiteSpace(Cover.ClientName) ? "[Client Institution Name]" : Cover.ClientName));

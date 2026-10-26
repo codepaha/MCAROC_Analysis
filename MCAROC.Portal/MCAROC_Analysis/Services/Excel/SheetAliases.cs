@@ -60,6 +60,16 @@ public static class SheetAliases
         RelatedPartyTransactions, CreditRatings, UnacceptedRatings, LegalCasesFinancialDispute,
     ];
 
+    /// <summary>The tracked sheets an LLP's export never has (#539): shareholding, allotment of securities and consolidated accounts are a
+    /// company's, and so are the filings behind auditors' comments and the financial-parameters annexure (AOC-4), related-party transactions
+    /// (AOC-2), MSME payment delays (MSME Form I) and related (holding / subsidiary) corporates. An LLP is neither counted short of them nor
+    /// told its upload lacked them.</summary>
+    public static readonly IReadOnlyList<string[]> CompanyOnlySheets =
+    [
+        DirectorShareholding, MajorShareholding, SecuritiesAllotment, ConsolidatedFinancialData, Auditors, AuditorsConsolidated,
+        FinancialParametersAnnexure, RelatedPartyTransactions, Msme, RelatedCorporates,
+    ];
+
     /// <summary>The canonical (reviewer-facing) name for an alias set — its first entry.</summary>
     public static string CanonicalName(IReadOnlyList<string> aliases) => aliases[0];
 

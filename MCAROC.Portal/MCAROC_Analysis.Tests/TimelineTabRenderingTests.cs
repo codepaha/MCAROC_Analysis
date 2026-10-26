@@ -170,6 +170,38 @@ public class TimelineTabRenderingTests
         Assert.Contains("Name history", table[table.IndexOf("EAST COAST CARRIERS PVT LTD", StringComparison.Ordinal)..]);
     }
 
+    /// <summary>#539 PR 3: an LLP's Corporate tab shows its LLPIN, its contribution in place of capital, its designated partners and its partners'
+    /// contributions, with no shareholding, capital or company-only fields.</summary>
+    [Fact]
+    public async Task An_LLPs_corporate_tab_shows_its_partners_and_contributions_not_a_companys_capital()
+    {
+        var vm = CreateViewModel();
+        vm.Request.EntityType = EntityType.LLP;
+        vm.Request.Llpin = "ZZZ-1234";
+        vm.CompanyProfile = new CompanyProfile { CompanyName = "SAMPLE FARMS LLP", Llpin = "ZZZ-1234", CompanyStatus = "Active", LlpObligationOfContributionCrore = 2.0m, LlpContributionReceivedCrore = 1.75m };
+        vm.Structure = new CompanyStructure { LlpPartners = 1, LlpDesignatedPartners = 2 };
+        vm.LlpContributions =
+        [
+            new LlpContribution { Name = "PARTNER ONE", Kind = LlpContributorKind.Partner, Designation = "Designated Partner", ObligationOfContributionCrore = 1.25m, ContributionReceivedCrore = 1.0m, AsOnDate = new DateOnly(2026, 3, 31) },
+            new LlpContribution { Name = "SAMPLE HOLDINGS PRIVATE LIMITED", Kind = LlpContributorKind.BodyCorporate, NomineeName = "NOMINEE PERSON", ObligationOfContributionCrore = 0.75m, ContributionReceivedCrore = 0.75m },
+        ];
+        vm.Directors = [new Director { Din = "1234567", NameRaw = "PARTNER ONE", Designation = "Designated Partner" }];
+
+        var html = await RenderAsync(vm, "Details/_CorporateTab");
+
+        Assert.Contains("<dt>LLPIN</dt><dd>ZZZ-1234</dd>", html);
+        Assert.Contains("<dt>Contribution Received</dt>", html);
+        Assert.Contains("Current Designated partners", html);
+        Assert.Contains("<h3>Partners' Contributions <span class=\"mca-count\">2</span></h3>", html);
+        Assert.Contains("<td>PARTNER ONE</td>", html);
+        Assert.Contains("Body corporate (nominee NOMINEE PERSON)", html);
+        Assert.DoesNotContain("Paid-up Capital", html);
+        Assert.DoesNotContain("Authorised Capital", html);
+        Assert.DoesNotContain("Promoter Holding", html);
+        Assert.DoesNotContain("Listing Status", html);
+        Assert.DoesNotContain("sec-corporate-capital\"", html[..html.IndexOf("tab-content", StringComparison.Ordinal)]);   // no Capital sub-tab
+    }
+
     /// <summary>Review of #535: a certificate whose date could not be read is linked, but the date beside it is marked as the name history's.</summary>
     [Fact]
     public async Task The_name_history_table_marks_a_date_the_certificate_does_not_confirm()

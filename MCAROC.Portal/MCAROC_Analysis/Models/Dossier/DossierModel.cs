@@ -46,9 +46,14 @@ public sealed record DossierModel(
     // falls back to the deterministic reading for any text without one. Appended last, same precedent as above.
     IReadOnlyDictionary<string, Data.Entities.PropertyParticularsExtraction>? PropertyExtractions = null);
 
+/// <param name="Cin">The entity's identifier: a company's CIN or an LLP's LLPIN (#539).</param>
+/// <param name="IsLlp">An LLP (#539): the dossier says LLPIN, partners' contribution, partners' funds and designated partners.</param>
 public sealed record DossierCover(
     string CompanyName, string? Cin, string? Pan, DateOnly? IncorporationDate, string? Status,
-    string ClientName, DateTime ReportDate, DateTime? McaDataAsOf, DateTime? SourceSnapshotDate = null);
+    string ClientName, DateTime ReportDate, DateTime? McaDataAsOf, DateTime? SourceSnapshotDate = null, bool IsLlp = false)
+{
+    public EntityWording Wording => IsLlp ? EntityWording.Llp : EntityWording.Company;
+}
 
 public sealed record DossierCorporate(
     IReadOnlyList<Director> Directors,
@@ -64,10 +69,13 @@ public sealed record DossierCorporate(
     IReadOnlyList<RelatedPartyTransaction> RelatedPartyTransactions,
     // Appended after every existing field, nullable with a normalizing list property, so the ~17
     // existing positional `new DossierCorporate(...)` test call sites keep compiling unchanged (#215).
-    IReadOnlyList<ProprietorshipAssociation>? Proprietorship = null)
+    IReadOnlyList<ProprietorshipAssociation>? Proprietorship = null,
+    // An LLP's partners' and body corporates' contributions (#539); empty for a company. Appended like Proprietorship above.
+    IReadOnlyList<LlpContribution>? LlpContributions = null)
 {
     public int ActiveDirectorCount => Directors.Count(d => d.CessationDate is null);
     public IReadOnlyList<ProprietorshipAssociation> ProprietorshipList => Proprietorship ?? [];
+    public IReadOnlyList<LlpContribution> LlpContributionList => LlpContributions ?? [];
 }
 
 public sealed record DossierFinancials(

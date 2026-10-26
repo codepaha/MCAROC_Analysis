@@ -63,6 +63,10 @@ public class RequestDetailsViewModel
     // Phase 8 — data-parity layer
     public List<CompanyEmail> CompanyEmails { get; set; } = [];
     public List<ShareholdingPatternRow> ShareholdingPattern { get; set; } = [];
+    /// <summary>An LLP's partners' and body corporates' contributions (#539); empty for a company.</summary>
+    public List<LlpContribution> LlpContributions { get; set; } = [];
+    /// <summary>The words the page uses for the entity: LLPIN, partners, contribution for an LLP (#539).</summary>
+    public EntityWording Wording => EntityWording.For(Request.EntityType);
     public List<CompanyNameHistory> NameHistory { get; set; } = [];
     /// <summary>#497: the changes of name the Registrar's certificates in the filings state (empty when none was read).</summary>
     public IReadOnlyList<MCAROC_Analysis.Services.McaFilings.CertificateNameChange> NameChangeCertificates { get; set; } = [];

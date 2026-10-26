@@ -21,7 +21,7 @@ public sealed class WorkbookDetailsQuery(AppDbContext db, ILogger? logger = null
         if (request.LatestCompletedIngestionRunId is { } runId)
         {
             vm.LatestRun = await db.IngestionRuns.AsNoTracking().FirstOrDefaultAsync(r => r.IngestionRunId == runId, ct);
-            vm.SheetCoverage = SheetCoverage.From(vm.LatestRun);
+            vm.SheetCoverage = SheetCoverage.From(vm.LatestRun, request.EntityType == EntityType.LLP);
             vm.Issues = await db.IngestionIssues.AsNoTracking().Where(i => i.IngestionRunId == runId).ToListAsync(ct);
 
             vm.CompanyProfile = await db.CompanyProfiles.AsNoTracking().FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
@@ -79,6 +79,9 @@ public sealed class WorkbookDetailsQuery(AppDbContext db, ILogger? logger = null
 
             // Phase 6 — the 12 additional workbook sheets.
             vm.Structure = await db.CompanyStructures.AsNoTracking().FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
+            vm.LlpContributions = request.EntityType == EntityType.LLP
+                ? await db.LlpContributions.AsNoTracking().Where(x => x.IngestionRunId == runId).OrderBy(x => x.Kind).ThenBy(x => x.DisplayOrder).ToListAsync(ct)
+                : [];
             vm.ShareholdingPattern = await db.ShareholdingPatternRows.AsNoTracking().Where(x => x.IngestionRunId == runId)
                 .OrderBy(x => x.HolderClass).ThenBy(x => x.DisplayOrder).ToListAsync(ct);
             vm.NameHistory = await db.CompanyNameHistories.AsNoTracking().Where(x => x.IngestionRunId == runId)

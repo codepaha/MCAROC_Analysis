@@ -40,6 +40,15 @@ public static partial class DossierComputations
             CreditRatingMetrics(model)
         };
 
+        if (model.Cover.IsLlp)
+        {
+            // An LLP (#539) has no shareholding to measure, and a group with no value at all would only list what an LLP's export never
+            // carries; its directors group is its designated partners.
+            groups = groups.Where(g => g.Title != "Shareholding" && g.Metrics.Any(m => m.HasValue))
+                .Select(g => g.Title == "Directors" ? g with { Label = model.Cover.Wording.Directors } : g)
+                .ToList();
+        }
+
         return groups.Where(g => g.HasAny).ToList();
     }
 
@@ -296,22 +305,25 @@ public static partial class DossierComputations
         list.Add(MetricResult.Ok("Joint / consortium charge count", jointOrConsortium,
             MetricUnit.Count, asOfStr, "RocChargeEvent.JointHolding", "RocChargeEvent.ConsortiumHolding"));
 
-        // B9: Charge-to-paid-up-capital ratio
+        // B9: Charge-to-paid-up-capital ratio (an LLP's: to its partners' contribution received, #539)
+        var llp = model.Cover.IsLlp;
+        var capitalRatioLabel = llp ? "Charge-to-partners'-contribution ratio" : "Charge-to-paid-up-capital ratio";
+        var capitalInput = llp ? "CompanyProfile.LlpContributionReceivedCrore" : "CompanyProfile.PaidUpCapital";
         if (anyOpenMissingAmount)
         {
-            list.Add(MetricResult.Insufficient("Charge-to-paid-up-capital ratio", MetricUnit.Times,
-                "Open charge amounts incomplete; ratio undefined", "RocCharge.CurrentAmount", "CompanyProfile.PaidUpCapital"));
+            list.Add(MetricResult.Insufficient(capitalRatioLabel, MetricUnit.Times,
+                "Open charge amounts incomplete; ratio undefined", "RocCharge.CurrentAmount", capitalInput));
         }
         else if (model.Corporate.PaidUpCapital is { } puc && puc > 0m)
         {
             var ratio = Math.Round(totalOpen!.Value / puc, 2);
-            list.Add(MetricResult.Ok("Charge-to-paid-up-capital ratio", ratio,
-                MetricUnit.Times, asOfStr, "RocCharge.CurrentAmount", "CompanyProfile.PaidUpCapital"));
+            list.Add(MetricResult.Ok(capitalRatioLabel, ratio,
+                MetricUnit.Times, asOfStr, "RocCharge.CurrentAmount", capitalInput));
         }
         else
         {
-            list.Add(MetricResult.Insufficient("Charge-to-paid-up-capital ratio", MetricUnit.Times,
-                "Paid-up capital not reported or zero", "RocCharge.CurrentAmount", "CompanyProfile.PaidUpCapital"));
+            list.Add(MetricResult.Insufficient(capitalRatioLabel, MetricUnit.Times,
+                llp ? "Partners' contribution not reported or zero" : "Paid-up capital not reported or zero", "RocCharge.CurrentAmount", capitalInput));
         }
 
         // B10: Open charges vs balance-sheet borrowings
@@ -2621,7 +2633,11 @@ public static partial class DossierComputations
     /// only on that side. Pure computation over <paramref name="model"/>.</summary>
     public static MetricGroup CapitalReconciliationMetrics(Dossier.DossierModel model)
     {
-        const string label = "MCA master-data paid-up capital vs standalone share capital";
+        // An LLP (#539) compares the contribution received its About sheet gives with the one its statement of accounts gives.
+        var llp = model.Cover.IsLlp;
+        var label = llp ? "MCA master-data partners' contribution vs statement's contribution received"
+            : "MCA master-data paid-up capital vs standalone share capital";
+        var profileInput = llp ? "CompanyProfile.LlpContributionReceivedCrore" : "CompanyProfile.PaidUpCapital";
         var list = new List<MetricResult>();
         var profilePaidUp = model.Corporate.PaidUpCapital;
         var latest = model.Financials.Latest;
@@ -2629,8 +2645,8 @@ public static partial class DossierComputations
         if (profilePaidUp is null)
         {
             list.Add(MetricResult.Insufficient(label, MetricUnit.Crore,
-                "Paid-up capital not reported on the About the Company sheet",
-                "CompanyProfile.PaidUpCapital", "FinancialYearData.ShareCapital"));
+                llp ? "Partners' contribution not reported on the About the LLP sheet" : "Paid-up capital not reported on the About the Company sheet",
+                profileInput, "FinancialYearData.ShareCapital"));
         }
         else if (latest?.ShareCapital is null)
         {
@@ -2640,7 +2656,7 @@ public static partial class DossierComputations
                     ? "No standalone financial year data on record"
                     : $"FY{latest.FinancialYear}: Share Capital row not reported on the Standalone Financial Data sheet";
             list.Add(MetricResult.Insufficient(label, MetricUnit.Crore, reason,
-                "CompanyProfile.PaidUpCapital", "FinancialYearData.ShareCapital"));
+                profileInput, "FinancialYearData.ShareCapital"));
         }
         else
         {
@@ -2649,9 +2665,9 @@ public static partial class DossierComputations
             var diff = profilePaidUp.Value - latest.ShareCapital.Value;
             var asOfSuffix = model.Cover.SourceSnapshotDate is { } snap ? $" as of {snap:d MMM yyyy}" : "";
             var period = $"FY{latest.FinancialYear} — MCA master-data snapshot ₹{profilePaidUp.Value:0.##} Cr{asOfSuffix} " +
-                $"vs standalone share capital ₹{latest.ShareCapital.Value:0.##} Cr";
+                $"vs {(llp ? "the statement's contribution received" : "standalone share capital")} ₹{latest.ShareCapital.Value:0.##} Cr";
             list.Add(MetricResult.Ok(label, diff, MetricUnit.Crore, period,
-                "CompanyProfile.PaidUpCapital", "FinancialYearData.ShareCapital"));
+                profileInput, "FinancialYearData.ShareCapital"));
         }
 
         return new MetricGroup("Capital reconciliation", list);

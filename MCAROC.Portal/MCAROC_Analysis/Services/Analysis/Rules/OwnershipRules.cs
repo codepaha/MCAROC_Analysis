@@ -10,6 +10,8 @@ public static class OwnershipRules
     public static List<RuleEvaluationOutcome> Evaluate(AnalysisContext ctx, RuleThresholds thresholds)
     {
         var outcomes = new List<RuleEvaluationOutcome>();
+        // An LLP has no shares and so no promoter holding (#539): the rule does not apply, and is not reported as not assessed.
+        if (ctx.Request.EntityType == EntityType.LLP) return outcomes;
         var promoterRows = ctx.Shareholdings.Where(s => s.IsPromoter).ToList();
 
         if (promoterRows.Count == 0)

@@ -66,3 +66,5 @@ renders `"₹{v:N2} Cr"` — this issue does not touch it. The PDF is a static, 
 already rendered to a fixed document. The distinct, later, already-tracked concern is C10's print
 stylesheet for the *portal page itself* (a browser print of the live Details tab), which will show
 whichever unit was selected on screen at print time — unrelated to this dossier PDF pipeline.
+
+**Update (#539, LLP display):** `_CorporateTab.cshtml` gains 6 amount sites (an LLP's obligation of contribution and contribution received in the overview and the ownership panel, plus the two columns of the partners' contributions table) and 4 unit-label sites (2× `long`, 2× `suffix`), so the tab is 18 / 12 and the totals are 49 / 25.

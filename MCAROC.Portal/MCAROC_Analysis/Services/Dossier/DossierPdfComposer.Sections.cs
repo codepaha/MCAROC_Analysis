@@ -36,7 +36,7 @@ public partial class DossierPdfComposer
         {
             row.RelativeItem().Element(c => StatTile(c, "Review priority", priority, accent: true));
             row.ConstantItem(10);
-            row.RelativeItem().Element(c => StatTile(c, $"Total equity, FY{f.LatestYear}", NumOrDash(f.Latest?.NetWorth)));
+            row.RelativeItem().Element(c => StatTile(c, $"{(Cover.IsLlp ? "Partners' funds" : "Total equity")}, FY{f.LatestYear}", NumOrDash(f.Latest?.NetWorth)));
             row.ConstantItem(10);
             row.RelativeItem().Element(c => StatTile(c, "Open charge amount, ₹ Cr", $"{ch.TotalOpenAmount:N0}"));
             if (ShowLitigation)
@@ -48,14 +48,23 @@ public partial class DossierPdfComposer
 
         col.Item().PaddingTop(16).Row(row =>
         {
-            row.RelativeItem().Element(c => KvBlock(c, "Corporate", new[]
-            {
-                ("Directors on record", model.Corporate.Directors.Count.ToString()),
-                ("Active directors", model.Corporate.ActiveDirectorCount.ToString()),
-                ("Non-DIN officers", model.Corporate.Officers.Count.ToString()),
-                ("Related corporates", model.Corporate.RelatedCorporates.Count.ToString()),
-                ("Last allotment", D(model.Corporate.SecurityAllotments.FirstOrDefault()?.AllotmentDate)),
-            }));
+            // An LLP (#539) has designated partners and partners' contributions, not officers, related corporates or allotments.
+            row.RelativeItem().Element(c => KvBlock(c, "Corporate", Cover.IsLlp
+                ? new[]
+                {
+                    ("Designated partners on record", model.Corporate.Directors.Count.ToString()),
+                    ("Active designated partners", model.Corporate.ActiveDirectorCount.ToString()),
+                    ("Partners (not designated)", model.Corporate.Structure?.LlpPartners?.ToString() ?? "—"),
+                    ("Contributors on record", model.Corporate.LlpContributionList.Count.ToString()),
+                }
+                : new[]
+                {
+                    ("Directors on record", model.Corporate.Directors.Count.ToString()),
+                    ("Active directors", model.Corporate.ActiveDirectorCount.ToString()),
+                    ("Non-DIN officers", model.Corporate.Officers.Count.ToString()),
+                    ("Related corporates", model.Corporate.RelatedCorporates.Count.ToString()),
+                    ("Last allotment", D(model.Corporate.SecurityAllotments.FirstOrDefault()?.AllotmentDate)),
+                }));
             row.ConstantItem(12);
             row.RelativeItem().Element(c => KvBlock(c, "Charges & security", new[]
             {
@@ -70,12 +79,11 @@ public partial class DossierPdfComposer
         {
             row.RelativeItem().Element(c => KvBlock(c, $"Financials (Standalone, FY{f.LatestYear})", new[]
             {
-                ("Total Equity", NumOrDash(f.Latest?.NetWorth)),
+                (Cover.Wording.NetWorth, NumOrDash(f.Latest?.NetWorth)),
                 ("Revenue", NumOrDash(f.Latest?.Revenue)),
                 ("PAT", NumOrDash(f.Latest?.Pat)),
                 ("Total Debt", NumOrDash(f.Latest?.TotalDebt)),
-                ("Consolidated Total Equity", NumOrDash(f.Consolidated.OrderBy(x => x.FinancialYear).LastOrDefault()?.NetWorth)),
-            }));
+            }.Concat(Cover.IsLlp ? [] : new[] { ("Consolidated Total Equity", NumOrDash(f.Consolidated.OrderBy(x => x.FinancialYear).LastOrDefault()?.NetWorth)) }).ToArray()));
             row.ConstantItem(12);
             row.RelativeItem().Element(c =>
             {
@@ -142,10 +150,19 @@ public partial class DossierPdfComposer
                 .Text(text.ToUpperInvariant()).FontSize(DossierTheme.Kicker).FontColor(DossierTheme.Maroon).LetterSpacing(0.05f);
 
             Row("Legal name", model.Cover.CompanyName);
-            Row("CIN", model.Cover.Cin);
+            Row(model.Cover.Wording.Identifier, model.Cover.Cin);
             Row("PAN", model.Cover.Pan);
-            Row("Authorised capital", Money(p.AuthorisedCapital));
-            Row("Paid-up capital", Money(p.PaidUpCapital));
+            if (model.Cover.IsLlp)
+            {
+                // An LLP's partners' contribution stands where a company's capital does (#539).
+                Row("Obligation of contribution", Money(p.LlpObligationOfContributionCrore));
+                Row("Contribution received", Money(p.LlpContributionReceivedCrore));
+            }
+            else
+            {
+                Row("Authorised capital", Money(p.AuthorisedCapital));
+                Row("Paid-up capital", Money(p.PaidUpCapital));
+            }
             Row("Sum of charges (MCA)", Money(p.McaSumOfChargesCrore));
             Row("Company status", p.CompanyStatus);
             Row("Compliance status", p.ComplianceStatus);
@@ -471,7 +488,7 @@ public partial class DossierPdfComposer
         var years = stdAsc.TakeLast(3).ToList();
         (string Label, Func<FinancialYearData, decimal?> V)[] rows =
         [
-            ("Total Equity (₹ Cr)", f => f.NetWorth),
+            ($"{Cover.Wording.NetWorth} (₹ Cr)", f => f.NetWorth),
             ("Revenue (₹ Cr)", f => f.Revenue),
             ("PAT (₹ Cr)", f => f.Pat),
             ("Total Debt (₹ Cr)", f => f.TotalDebt),
