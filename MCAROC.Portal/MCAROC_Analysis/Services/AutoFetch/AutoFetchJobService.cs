@@ -41,7 +41,8 @@ public sealed class AutoFetchJobService(
     IWorkbookDerivativeService? derivativeService = null,
     CompanyRefreshService? refresh = null,
     CompanyUnlockService? unlock = null,
-    IdentityResolutionService? identity = null)
+    IdentityResolutionService? identity = null,
+    IOptions<LargeArchiveUploadOptions>? uploadOptions = null)
 {
     /// <summary>Fallback per-file size estimate used when the registry gives no declared size for a
     /// document or an attachment — only for sizing the up-front storage reservation and the plan-time
@@ -49,6 +50,7 @@ public sealed class AutoFetchJobService(
     /// actually bounds real disk usage regardless of how good this estimate is.</summary>
     private const long FallbackPerFileEstimateBytes = 2_000_000L; // 2 MB
     private readonly ReferenceToolOptions _opts = options.Value;
+    private readonly ArchiveSafetyLimits _archiveLimits = uploadOptions?.Value is { } u ? ArchiveSafetyLimits.FromOptions(u) : ArchiveSafetyLimits.Default;
     private static readonly TimeSpan ProgressFlushInterval = TimeSpan.FromSeconds(2);
 
     // ── Creation ───────────────────────────────────────────────────────────────────────────────────
@@ -81,6 +83,7 @@ public sealed class AutoFetchJobService(
         job.FailureReason = null;
         job.CompletedUtc = null;
         await db.SaveChangesAsync(ct);
+        db.ChangeTracker.Clear();
         return job;
     }
 
@@ -153,6 +156,7 @@ public sealed class AutoFetchJobService(
     /// <summary>Puts a Failed job back in the queue keeping its checkpoints — the caller enqueues it.</summary>
     public async Task<AutoFetchJob?> RequeueAsync(long requestId, CancellationToken ct, string? correlationId = null)
     {
+        db.ChangeTracker.Clear();
         var job = await db.AutoFetchJobs.FirstOrDefaultAsync(j => j.RequestId == requestId, ct);
         if (job is null || !job.IsTerminal) return job;
         if (!string.IsNullOrWhiteSpace(correlationId))
@@ -379,6 +383,9 @@ public sealed class AutoFetchJobService(
             if (job.IncludeFilings && job.FilingsDocumentId is null)
             {
                 await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
+                // Clear any prior filings-stage failure warning before re-attempting filings,
+                // preserving unrelated workbook warnings.
+                warnings.RemoveAll(w => w.StartsWith("Filings stage failed:", StringComparison.OrdinalIgnoreCase));
                 try
                 {
                     if (string.IsNullOrWhiteSpace(userId))
@@ -428,6 +435,7 @@ public sealed class AutoFetchJobService(
                 db.ChangeTracker.Clear();
                 throw new AutoFetchJobCancelledException(job.AutoFetchJobId);
             }
+            db.ChangeTracker.Clear();
         }
         catch (AutoFetchJobCancelledException)
         {
@@ -732,7 +740,7 @@ public sealed class AutoFetchJobService(
             var outerZipPath = Path.Combine(stagingDir, $"{job.Cin}_filings.zip");
             AutoFetchArchiveBuilder.Build(outerZipPath, request.CompanyName, job.Cin, plan.Select(p => p.ToArchiveFiling()), ct);
 
-            var safety = ArchiveSafetyValidator.ValidateOuterArchive(outerZipPath, ArchiveSafetyLimits.Default);
+            var safety = ArchiveSafetyValidator.ValidateOuterArchive(outerZipPath, _archiveLimits);
             if (!safety.IsValid)
                 throw new ReferenceToolException($"The packaged filings archive failed the safety check: {safety.Error}");
 
