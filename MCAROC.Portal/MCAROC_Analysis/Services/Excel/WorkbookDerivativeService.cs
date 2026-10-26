@@ -292,25 +292,33 @@ public class WorkbookDerivativeService(
             .Select(d => d.StoragePath)
             .ToListAsync(ct);
 
-        var activeSet = new HashSet<string>(activePaths, StringComparer.OrdinalIgnoreCase);
-        var deletedCount = 0;
+        var activeSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in activePaths)
+        {
+            if (string.IsNullOrWhiteSpace(p)) continue;
+            var fullPath = _pathResolver.ResolveFullPath(p);
+            activeSet.Add(Path.GetFullPath(fullPath));
+        }
 
+        var deletedCount = 0;
         var files = Directory.GetFiles(derivativesDir);
         foreach (var file in files)
         {
-            if (activeSet.Contains(file)) continue;
+            var normalizedFile = Path.GetFullPath(file);
+            if (!_pathResolver.IsContained(normalizedFile, derivativesDir)) continue;
+            if (activeSet.Contains(normalizedFile)) continue;
 
-            var fileInfo = new FileInfo(file);
+            var fileInfo = new FileInfo(normalizedFile);
             if (fileInfo.LastWriteTimeUtc < threshold)
             {
                 try
                 {
-                    File.Delete(file);
+                    File.Delete(normalizedFile);
                     deletedCount++;
                 }
                 catch (Exception ex)
                 {
-                    logger.LogWarning(ex, "Failed to delete orphan derivative file {File}", file);
+                    logger.LogWarning(ex, "Failed to delete orphan derivative file {File}", normalizedFile);
                 }
             }
         }

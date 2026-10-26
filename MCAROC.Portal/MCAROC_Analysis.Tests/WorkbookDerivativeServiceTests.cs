@@ -602,6 +602,118 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
         Assert.True(File.Exists(activePath), "Active published file must be preserved.");
     }
 
+    [Fact]
+    public async Task CleanupOrphanGenerationsAsync_RetainsOldActiveRelativeAndLegacyPaths_RemovesOnlyOrphan()
+    {
+        await using var db = CreateContext();
+
+        var client = new Client
+        {
+            ClientCode = $"TST{Guid.NewGuid():N}"[..10],
+            ClientName = "Cleanup Test Client",
+            CreatedDate = DateTime.UtcNow
+        };
+        db.Clients.Add(client);
+
+        var request = new McaRequest
+        {
+            Client = client,
+            EntityType = EntityType.Company,
+            CompanyName = "Cleanup Test Co",
+            RequestNumber = $"TEST-{Guid.NewGuid():N}",
+            CreatedDate = DateTime.UtcNow
+        };
+        db.Requests.Add(request);
+
+        var doc1 = new RequestDocument
+        {
+            Request = request,
+            DocumentType = DocumentType.McaRocReport,
+            OriginalFileName = "roc1.xlsx",
+            StoredFileName = "stored1.xlsx",
+            StoragePath = "Uploads/test/roc1.xlsx",
+            FileSize = 100,
+            FileHash = "hash1",
+            UploadStatus = DocumentUploadStatus.Uploaded,
+            UploadedDate = DateTime.UtcNow
+        };
+        var doc2 = new RequestDocument
+        {
+            Request = request,
+            DocumentType = DocumentType.McaRocReport,
+            OriginalFileName = "roc2.xlsx",
+            StoredFileName = "stored2.xlsx",
+            StoragePath = "Uploads/test/roc2.xlsx",
+            FileSize = 200,
+            FileHash = "hash2",
+            UploadStatus = DocumentUploadStatus.Uploaded,
+            UploadedDate = DateTime.UtcNow
+        };
+        db.RequestDocuments.AddRange(doc1, doc2);
+        await db.SaveChangesAsync();
+
+        var service = CreateService(db);
+        var derivativesDir = Path.Combine(_tempDir, "App_Data", "Uploads", request.RequestId.ToString(), "derivatives");
+        Directory.CreateDirectory(derivativesDir);
+
+        // 1. Old Active Relative-path generation
+        var activeRelPhysical = Path.Combine(derivativesDir, $"{doc1.DocumentId}_sanitized.active_rel.xlsx");
+        File.WriteAllText(activeRelPhysical, "active relative content");
+        File.SetLastWriteTimeUtc(activeRelPhysical, DateTime.UtcNow.AddHours(-3)); // older than threshold!
+
+        var relativeDbPath = $"Uploads/{request.RequestId}/derivatives/{doc1.DocumentId}_sanitized.active_rel.xlsx";
+        var deriv1 = new RequestDocumentDerivative
+        {
+            DocumentId = doc1.DocumentId,
+            RequestId = request.RequestId,
+            DerivativeType = DocumentDerivativeType.SanitizedExcel,
+            SanitizerVersion = 1,
+            RawFileHash = "hash1",
+            Status = DocumentDerivativeStatus.Ready,
+            StoragePath = relativeDbPath, // stored as relative path
+            FileHash = "hash_active_rel",
+            CreatedUtc = DateTime.UtcNow.AddHours(-3),
+            UpdatedUtc = DateTime.UtcNow.AddHours(-3)
+        };
+
+        // 2. Old Active Legacy-remapped absolute path (control)
+        var activeLegacyPhysical = Path.Combine(derivativesDir, $"{doc2.DocumentId}_sanitized.active_legacy.xlsx");
+        File.WriteAllText(activeLegacyPhysical, "active legacy content");
+        File.SetLastWriteTimeUtc(activeLegacyPhysical, DateTime.UtcNow.AddHours(-3)); // older than threshold!
+
+        var legacyDbPath = $@"C:\OldDeploy\MCAROC.Portal\MCAROC_Analysis\App_Data\Uploads\{request.RequestId}\derivatives\{doc2.DocumentId}_sanitized.active_legacy.xlsx";
+        var deriv2 = new RequestDocumentDerivative
+        {
+            DocumentId = doc2.DocumentId,
+            RequestId = request.RequestId,
+            DerivativeType = DocumentDerivativeType.SanitizedExcel,
+            SanitizerVersion = 1,
+            RawFileHash = "hash2",
+            Status = DocumentDerivativeStatus.Ready,
+            StoragePath = legacyDbPath, // stored as legacy absolute App_Data path
+            FileHash = "hash_active_legacy",
+            CreatedUtc = DateTime.UtcNow.AddHours(-3),
+            UpdatedUtc = DateTime.UtcNow.AddHours(-3)
+        };
+
+        db.RequestDocumentDerivatives.AddRange(deriv1, deriv2);
+        await db.SaveChangesAsync();
+
+        // 3. Stale unreferenced generation (orphan)
+        var orphanPath = Path.Combine(derivativesDir, $"{doc1.DocumentId}_sanitized.crashed_orphan.xlsx");
+        File.WriteAllText(orphanPath, "crashed unreferenced content");
+        File.SetLastWriteTimeUtc(orphanPath, DateTime.UtcNow.AddHours(-3)); // older than threshold!
+
+        // Invoke orphan cleanup with 30-minute threshold
+        var deletedCount = await service.CleanupOrphanGenerationsAsync(request.RequestId, TimeSpan.FromMinutes(30));
+
+        // Assert only the orphan was deleted, and both active files were preserved
+        Assert.Equal(1, deletedCount);
+        Assert.False(File.Exists(orphanPath), "Unreferenced orphan file must be deleted.");
+        Assert.True(File.Exists(activeRelPhysical), "Active relative-path file must NOT be deleted.");
+        Assert.True(File.Exists(activeLegacyPhysical), "Active legacy-remapped file must NOT be deleted.");
+    }
+
     private sealed class FakeEnv(string contentRoot) : IWebHostEnvironment
     {
         public string EnvironmentName { get; set; } = "Development";
