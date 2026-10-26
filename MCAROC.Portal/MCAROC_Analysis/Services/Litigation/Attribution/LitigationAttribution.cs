@@ -11,12 +11,16 @@ namespace MCAROC_Analysis.Services.LitigationData.Attribution;
 public static class LitigationAttribution
 {
     public static readonly Expression<Func<LitigationCase, bool>> IsShown =
-        c => c.AttributionOutcome == null || c.AttributionOutcome == LitigationAttributionOutcome.Attributed;
+        c => (c.AttributionGrade == null || c.AttributionGrade == PersonAttributionGrade.Confirmed || c.AttributionGrade == PersonAttributionGrade.Probable)
+             && (c.AttributionOutcome == null || c.AttributionOutcome == LitigationAttributionOutcome.Attributed);
 
     public static readonly Expression<Func<LitigationCaseSourceReport, bool>> IsShownLink =
-        sr => sr.Case!.AttributionOutcome == null || sr.Case.AttributionOutcome == LitigationAttributionOutcome.Attributed;
+        sr => (sr.Case!.AttributionGrade == null || sr.Case.AttributionGrade == PersonAttributionGrade.Confirmed || sr.Case.AttributionGrade == PersonAttributionGrade.Probable)
+              && (sr.Case.AttributionOutcome == null || sr.Case.AttributionOutcome == LitigationAttributionOutcome.Attributed);
 
-    public static bool Shown(LitigationAttributionOutcome? outcome) => outcome is null or LitigationAttributionOutcome.Attributed;
+    public static bool Shown(LitigationAttributionOutcome? outcome, PersonAttributionGrade? grade = null) =>
+        (outcome is null or LitigationAttributionOutcome.Attributed) &&
+        (grade == null || grade == PersonAttributionGrade.Confirmed || grade == PersonAttributionGrade.Probable);
 
     /// <summary>Cases waiting for attribution: imported since attribution exists and not settled yet. The pipeline's litigation stage waits for them.
     /// (A case stored before attribution existed has no outcome; it stays shown and is assessed in the background without holding the pipeline.)</summary>

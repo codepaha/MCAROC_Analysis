@@ -5,6 +5,7 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services;
+using MCAROC_Analysis.Data.Entities;
 
 namespace MCAROC_Analysis.Services.PreLoginReports;
 
@@ -158,20 +159,85 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
                 ?? throw new PreLoginReportException("The selected report template is invalid.");
             var legalCasesRow = legalCasesTable.Elements<TableRow>().Skip(1).FirstOrDefault()
                 ?? throw new PreLoginReportException("The selected report template is invalid.");
-            var values = new[]
-            {
-                data.LegalCases.SupremeCourt, data.LegalCases.HighCourt, data.LegalCases.DistrictCourt,
-                data.LegalCases.ConsumerForum, data.LegalCases.ItatTax, data.LegalCases.NcltNclat,
-                data.LegalCases.DrtDrat, data.LegalCases.Rera, data.LegalCases.NgtOthers
-            };
             var cells = legalCasesRow.Elements<TableCell>().ToList();
-            if (cells.Count != values.Length) throw new PreLoginReportException("The selected report template is invalid.");
-            for (var i = 0; i < values.Length; i++) SetCellText(cells[i], values[i].ToString(CultureInfo.InvariantCulture));
+            if (cells.Count != 9) throw new PreLoginReportException("The selected report template is invalid.");
+
+            var allCases = (data.LegalCases.Cases ?? Enumerable.Empty<LegalCaseRecord>())
+                .Where(c => !c.IsExcludedFromReport)
+                .ToList();
+
+            if (allCases.Count > 0)
+            {
+                var verifiedCases = allCases.Where(c => c.IsVerified).ToList();
+                var possibleCases = allCases.Where(c => c.IsPossible).ToList();
+
+                int CountVerified(params string[] categories) =>
+                    verifiedCases.Count(c => categories.Contains(c.Category, StringComparer.OrdinalIgnoreCase));
+
+                int CountPossible(params string[] categories) =>
+                    possibleCases.Count(c => categories.Contains(c.Category, StringComparer.OrdinalIgnoreCase));
+
+                var categoryBuckets = new[]
+                {
+                    new[] { "supreme" },
+                    new[] { "highcourt" },
+                    new[] { "district" },
+                    new[] { "consumer" },
+                    new[] { "itat", "cestat" },
+                    new[] { "nclt", "nclat" },
+                    new[] { "drt" },
+                    new[] { "rera" }
+                };
+
+                for (var i = 0; i < 9; i++)
+                {
+                    int vCount;
+                    int pCount;
+                    if (i < 8)
+                    {
+                        vCount = CountVerified(categoryBuckets[i]);
+                        pCount = CountPossible(categoryBuckets[i]);
+                    }
+                    else
+                    {
+                        vCount = verifiedCases.Count(c => !LegalCaseFileParser.KnownCategories.Contains(c.Category, StringComparer.OrdinalIgnoreCase));
+                        pCount = possibleCases.Count(c => !LegalCaseFileParser.KnownCategories.Contains(c.Category, StringComparer.OrdinalIgnoreCase));
+                    }
+
+                    string cellText;
+                    if (vCount > 0)
+                    {
+                        cellText = vCount.ToString(CultureInfo.InvariantCulture);
+                    }
+                    else if (pCount > 0)
+                    {
+                        cellText = "Unresolved";
+                    }
+                    else
+                    {
+                        cellText = "0";
+                    }
+
+                    SetCellText(cells[i], cellText);
+                }
+            }
+            else
+            {
+                var values = new[]
+                {
+                    data.LegalCases.SupremeCourt, data.LegalCases.HighCourt, data.LegalCases.DistrictCourt,
+                    data.LegalCases.ConsumerForum, data.LegalCases.ItatTax, data.LegalCases.NcltNclat,
+                    data.LegalCases.DrtDrat, data.LegalCases.Rera, data.LegalCases.NgtOthers
+                };
+                for (var i = 0; i < values.Length; i++) SetCellText(cells[i], values[i].ToString(CultureInfo.InvariantCulture));
+            }
         }
 
         var legalCaseDetailsTable = FindTableAfterHeading(body, "Details of legal cases")
             ?? throw new PreLoginReportException("The selected report template is invalid.");
-        var activeCases = data.LegalCases?.Cases?.Where(c => !c.IsExcludedFromReport).ToList() ?? [];
+        var activeCases = (data.LegalCases?.Cases?.Where(c => !c.IsExcludedFromReport) ?? Enumerable.Empty<LegalCaseRecord>())
+            .OrderBy(c => c.IsVerified ? 0 : 1)
+            .ToList();
         if (activeCases.Count > 0)
         {
             var templateRows = legalCaseDetailsTable.Elements<TableRow>().ToList();
@@ -182,6 +248,29 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
 
             foreach (var (legalCase, index) in activeCases.Select((lc, i) => (lc, i)))
             {
+                var matchStatus = legalCase.IsVerified
+                    ? (legalCase.AttributionGrade != null ? $"Verified ({legalCase.AttributionGrade})" : "Verified")
+                    : (legalCase.IsPossible ? "Possible (Unresolved)" : "Unverified");
+
+                var details = legalCase.CaseDetails;
+                if (legalCase.AttributionGrade != null || legalCase.IsPossible)
+                {
+                    var metaParts = new List<string> { matchStatus };
+                    if (!string.IsNullOrWhiteSpace(legalCase.AttributionRule))
+                        metaParts.Add($"Rule: {legalCase.AttributionRule}");
+                    if (!string.IsNullOrWhiteSpace(legalCase.AttributionSignalsJson))
+                        metaParts.Add($"Signals: {legalCase.AttributionSignalsJson}");
+                    var prefix = $"[{string.Join(" | ", metaParts)}]";
+                    if (!details.Contains(prefix, StringComparison.OrdinalIgnoreCase))
+                        details = $"{prefix} {details}";
+                }
+
+                var statusValue = legalCase.Status;
+                if (legalCase.AttributionGrade != null || legalCase.IsPossible)
+                {
+                    statusValue = $"{legalCase.Status} ({matchStatus})";
+                }
+
                 var fields = new (string Label, string Value)[]
                 {
                     ("Court", legalCase.Court),
@@ -194,11 +283,11 @@ public sealed class PreLoginReportService(InstaFinancialsClient client, IWebHost
                     ("Date of Filing", legalCase.DateOfFiling),
                     ("State", legalCase.State),
                     ("District", legalCase.District),
-                    ("Case details", legalCase.CaseDetails),
+                    ("Case details", details),
                     // LDOH has no reliable source data (see LegalCaseFileParser), so it remains "-".
                     ("Last Date of Hearing", "-"),
                     ("Next Date of Hearing", legalCase.DateOfHearing),
-                    ("Status", legalCase.Status)
+                    ("Status", statusValue)
                 };
 
                 foreach (var (field, fieldIndex) in fields.Select((field, fieldIndex) => (field, fieldIndex)))

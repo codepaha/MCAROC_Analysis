@@ -408,4 +408,56 @@ public sealed class LitigationCasePageServiceTests : IAsyncLifetime
         Assert.Empty(other.Respondents); // a blank name is not a party
         Assert.Equal(LitigationCompanySide.AgainstCompany, other.CompanySide);
     }
+
+    [Theory]
+    [InlineData(PersonAttributionGrade.Possible)]
+    [InlineData(PersonAttributionGrade.Excluded)]
+    public void Possible_or_excluded_attribution_grade_returns_R0_unconfirmed(PersonAttributionGrade grade)
+    {
+        var input = new LitigationRiskInput(
+            Type: "drt",
+            Court: "Drt",
+            CourtCategory: "high_risk_court",
+            CaseType: "Original Application-",
+            Act: null,
+            CaseStage: null,
+            CaseClassification: null,
+            ProceedingType: null,
+            Status: LitigationCaseStatusBucket.Pending,
+            Side: LitigationCompanySide.AgainstCompany,
+            Petitioners: [],
+            AttributionGrade: grade);
+
+        var a = LitigationBaselineRisk.Assess(input);
+
+        Assert.Equal(LitigationRiskTier.R0, a.Tier);
+        Assert.Equal("Unconfirmed case", a.Trigger);
+    }
+
+    [Theory]
+    [InlineData(PersonAttributionGrade.Confirmed)]
+    [InlineData(PersonAttributionGrade.Probable)]
+    [InlineData(null)]
+    public void Confirmed_probable_or_null_attribution_grade_evaluates_normal_risk_tier(PersonAttributionGrade? grade)
+    {
+        var input = new LitigationRiskInput(
+            Type: "drt",
+            Court: "Drt",
+            CourtCategory: "high_risk_court",
+            CaseType: "Original Application-",
+            Act: null,
+            CaseStage: null,
+            CaseClassification: null,
+            ProceedingType: null,
+            Status: LitigationCaseStatusBucket.Pending,
+            Side: LitigationCompanySide.AgainstCompany,
+            Petitioners: [],
+            AttributionGrade: grade);
+
+        var a = LitigationBaselineRisk.Assess(input);
+
+        Assert.Equal(LitigationRiskTier.R3, a.Tier);
+        Assert.Equal("DRT/DRAT recovery proceeding", a.Trigger);
+    }
+
 }

@@ -515,9 +515,9 @@
                                         var isSuggested = attr?.IsSuggestedExclusion == true;
                                         var isAutoExcluded = attr?.IsAutoExcluded == true;
                                         var isUnconfirmed = attr?.IsUnconfirmed == true;
-                                        var isVerified = attr?.IsVerified == true;
-                                        var isPossible = attr?.IsPossible == true;
-                                        var effectiveGrade = attr?.Grade ?? MCAROC_Analysis.Services.LitigationModule.PreLogin.PreLoginAttributionService.InferGrade(attr?.Outcome, attr?.Rule);
+                                        var isVerified = attr?.IsVerified == true || (attr == null && c.IsVerified);
+                                        var isPossible = attr?.IsPossible == true || (attr == null && c.IsPossible);
+                                        var effectiveGrade = attr?.Grade ?? c.AttributionGrade ?? MCAROC_Analysis.Services.LitigationModule.PreLogin.PreLoginAttributionService.InferGrade(attr?.Outcome, attr?.Rule);
                                         <tr data-case-row-id="@c.CaseRowId"
                                             data-cnr="@c.CnrNumber"
                                             data-court="@c.Court"

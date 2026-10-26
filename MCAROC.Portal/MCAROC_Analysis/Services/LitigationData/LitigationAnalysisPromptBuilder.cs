@@ -24,7 +24,8 @@ public static class LitigationAnalysisPromptBuilder
             .ToList();
 
         var evidence = new LitigationAnalysisEvidence(@case.LitigationCaseId, @case.Cnr, @case.Court,
-            @case.CaseNumber, @case.ProceedingType, @case.CaseStatus, excerpts);
+            @case.CaseNumber, @case.ProceedingType, @case.CaseStatus, excerpts,
+            @case.AttributionGrade?.ToString(), @case.AttributionRule);
         return evidence;
     }
 
@@ -106,6 +107,7 @@ public static class LitigationAnalysisPromptBuilder
 }
 
 public sealed record LitigationAnalysisEvidence(long LitigationCaseId, string? Cnr, string? Court,
-    string? CaseNumber, string? ProceedingType, string? CaseStatus, IReadOnlyList<LitigationEvidenceExcerpt> Excerpts);
+    string? CaseNumber, string? ProceedingType, string? CaseStatus, IReadOnlyList<LitigationEvidenceExcerpt> Excerpts,
+    string? AttributionGrade = null, string? AttributionRule = null);
 public sealed record LitigationEvidenceExcerpt(long LitigationCaseOrderId, long LitigationOrderDocumentId,
     int PageNumber, int ChunkIndex, string Text);

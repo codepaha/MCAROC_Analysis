@@ -2,6 +2,7 @@ using System.Data;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using ExcelDataReader;
+using MCAROC_Analysis.Data.Entities;
 
 namespace MCAROC_Analysis.Services.PreLoginReports;
 
@@ -13,7 +14,21 @@ public sealed record LegalCaseRecord(
     string Category, string Court, string CnrNumber, string CaseNo, string CaseType, string CaseYear, string CaseStage,
     string Act, string DateOfFiling, string State, string District, string CaseDetails, string DateOfHearing, string Status,
     string CaseRowId = "", string? ProceedingType = null, string? Petitioner = null, string? Respondent = null,
-    bool IsExcludedFromReport = false, string? ExclusionReason = null, string? AnalystNote = null);
+    bool IsExcludedFromReport = false, string? ExclusionReason = null, string? AnalystNote = null,
+    PersonAttributionGrade? AttributionGrade = null, string? AttributionRule = null, string? AttributionSignalsJson = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsVerified => !IsExcludedFromReport && AttributionGrade != PersonAttributionGrade.Excluded &&
+        (AttributionGrade == PersonAttributionGrade.Confirmed ||
+         AttributionGrade == PersonAttributionGrade.Probable ||
+         (AttributionGrade == null && !IsPossible));
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsPossible => !IsExcludedFromReport && AttributionGrade != PersonAttributionGrade.Excluded &&
+        (AttributionGrade == PersonAttributionGrade.Possible ||
+         (AttributionGrade == null && (AttributionRule == "possible-name-only" ||
+                                       (CaseDetails != null && CaseDetails.Contains("name-match only", StringComparison.OrdinalIgnoreCase)))));
+}
 
 /// <summary>Parses the two litigation-tracker export shapes seen from clients into <see cref="LegalCaseRecord"/>:
 /// a multi-sheet workbook with one sheet per court level (District/High Court/Supreme/Other/Appellate Cases —
@@ -52,17 +67,18 @@ public static class LegalCaseFileParser
     // include cases from SEBI/SAT, APTEL, and IPAB") is exactly this catch-all bucket, so any category this
     // parser doesn't specifically recognize (appellate-tribunal rows with no clearer signal, etc.) lands
     // there rather than being silently dropped from the counts.
-    private static readonly string[] KnownCategories = ["district", "highcourt", "supreme", "consumer", "itat", "cestat", "drt", "nclt", "nclat", "rera", "ngt"];
+    internal static readonly string[] KnownCategories = ["district", "highcourt", "supreme", "consumer", "itat", "cestat", "drt", "nclt", "nclat", "rera", "ngt"];
 
     public static InstaLegalCases ToInstaLegalCases(IReadOnlyList<LegalCaseRecord> cases)
     {
         var activeCases = cases.Where(c => !c.IsExcludedFromReport).ToList();
-        int Count(params string[] categories) => activeCases.Count(c => categories.Contains(c.Category, StringComparer.OrdinalIgnoreCase));
+        var verifiedCases = activeCases.Where(c => c.IsVerified).ToList();
+        int Count(params string[] categories) => verifiedCases.Count(c => categories.Contains(c.Category, StringComparer.OrdinalIgnoreCase));
         return new InstaLegalCases(
             SupremeCourt: Count("supreme"), HighCourt: Count("highcourt"), DistrictCourt: Count("district"),
             ConsumerForum: Count("consumer"), ItatTax: Count("itat", "cestat"), NcltNclat: Count("nclt", "nclat"),
             DrtDrat: Count("drt"), Rera: Count("rera"),
-            NgtOthers: activeCases.Count(c => !KnownCategories.Contains(c.Category, StringComparer.OrdinalIgnoreCase)),
+            NgtOthers: verifiedCases.Count(c => !KnownCategories.Contains(c.Category, StringComparer.OrdinalIgnoreCase)),
             Cases: cases);
     }
 

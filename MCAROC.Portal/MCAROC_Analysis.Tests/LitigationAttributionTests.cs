@@ -338,4 +338,35 @@ public class LitigationAttributionTests : IAsyncLifetime
         Assert.Equal("ATTRIBUTION_STALLED", Litigation(3, Now.AddHours(-3)).ReasonCode);
         Assert.True(Litigation(0, null).IsDone);
     }
+
+    [Theory]
+    [InlineData(LitigationAttributionOutcome.Attributed, PersonAttributionGrade.Confirmed, true)]
+    [InlineData(LitigationAttributionOutcome.Attributed, PersonAttributionGrade.Probable, true)]
+    [InlineData(LitigationAttributionOutcome.Attributed, PersonAttributionGrade.Possible, false)]
+    [InlineData(LitigationAttributionOutcome.Attributed, PersonAttributionGrade.Excluded, false)]
+    [InlineData(LitigationAttributionOutcome.Attributed, null, true)]
+    [InlineData(LitigationAttributionOutcome.NotTheCompany, PersonAttributionGrade.Confirmed, false)]
+    [InlineData(null, PersonAttributionGrade.Confirmed, true)]
+    [InlineData(null, PersonAttributionGrade.Possible, false)]
+    public void Shown_and_IsShown_filter_by_attribution_grade_and_outcome(
+        LitigationAttributionOutcome? outcome, PersonAttributionGrade? grade, bool expected)
+    {
+        Assert.Equal(expected, LitigationAttribution.Shown(outcome, grade));
+
+        var caseEntity = new LitigationCase
+        {
+            AttributionOutcome = outcome,
+            AttributionGrade = grade
+        };
+        var isShownCompiled = LitigationAttribution.IsShown.Compile();
+        Assert.Equal(expected, isShownCompiled(caseEntity));
+
+        var sourceReport = new LitigationCaseSourceReport
+        {
+            Case = caseEntity
+        };
+        var isShownLinkCompiled = LitigationAttribution.IsShownLink.Compile();
+        Assert.Equal(expected, isShownLinkCompiled(sourceReport));
+    }
+
 }
