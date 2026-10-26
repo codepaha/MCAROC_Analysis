@@ -161,24 +161,30 @@ public sealed class CompanyUnlockService(
                 _ => "The company was unlocked within the last 12 months."
             });
 
+        // Once admitted, the attempt runs to its end whatever the caller does: the approval is consumed and the admission
+        // holds the company's scope, so a cancellation here (the approver's browser leaving the approve click, a shutdown)
+        // would leave a Reserved admission blocking every attempt until its TTL, or a spent credit with no verification.
+        // The reference-tool client's own timeout still bounds each call.
+        var paid = CancellationToken.None;
+
         // Fail closed: from here the credit may be spent, so the ledger records it before the call is made.
-        await admission.CommitAsync(admitted.AdmissionId!.Value, now, ct);
+        await admission.CommitAsync(admitted.AdmissionId!.Value, now, paid);
         logger.LogWarning("Spending 1 reference-tool credit to unlock {Identifier} ({Trigger}, admission {AdmissionId}, approval {ApprovalId})",
             identifier, auto ? "auto" : "approved", admitted.AdmissionId, approvalId);
         try
         {
             try
             {
-                await client.AddAssetAsync(teamId, bid, preview.LegalName ?? identifier, ct);
+                await client.AddAssetAsync(teamId, bid, preview.LegalName ?? identifier, paid);
             }
-            catch (Exception ex) when (ex is ReferenceToolException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+            catch (Exception ex) when (ex is ReferenceToolException or HttpRequestException or TaskCanceledException)
             {
                 logger.LogError(ex, "Unlock call for {Identifier} failed after the admission was committed", identifier);
                 return new UnlockResult(UnlockOutcome.Failed,
                     $"The unlock call failed ({ex.Message}). The credit may have been spent — check the reference tool before approving again.");
             }
 
-            var after = await client.GetAssetStatusAsync(bid, ct);
+            var after = await client.GetAssetStatusAsync(bid, paid);
             if (after.AddedAt is null)
                 return new UnlockResult(UnlockOutcome.Failed,
                     "The reference tool accepted the unlock but still reports the company locked. Check the tool before approving again.");
