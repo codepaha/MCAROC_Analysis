@@ -529,9 +529,30 @@ public sealed class AutoFetchJobService(
     {
         try
         {
-            var hits = await client.SearchCompaniesAsync(job.Cin, 5, ct);
-            var match = hits.FirstOrDefault(h => string.Equals(h.Cin, job.Cin, StringComparison.OrdinalIgnoreCase));
-            if (match is null) return;
+            ReferenceCompanyHint? match = null;
+            try
+            {
+                var hits = await client.SearchCompaniesAsync(job.Cin, 5, ct);
+                match = hits.FirstOrDefault(h => string.Equals(h.Cin, job.Cin, StringComparison.OrdinalIgnoreCase));
+            }
+            // Any failure of the search (the tool's error, a network failure, a timeout) still tries the preview (review of #543); only the job's
+            // own cancellation stops it.
+            catch (Exception ex) when (ex is ReferenceToolException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+            {
+                logger.LogWarning(ex, "Company-name search for {Cin} failed; trying the preview", job.Cin);
+            }
+            if (match is null)
+            {
+                // The name search does not match a CIN (it answered 0 rows for every CIN in the #514 round), so a request made by its identifier
+                // kept the identifier as its name until the workbook came, and a locked company's unlock alert asked for a credit by CIN alone.
+                // The free preview names the company; it is used only when it is for this identifier.
+                var preview = await client.GetCompanyPreviewAsync(job.Bid, ct);
+                if (string.IsNullOrWhiteSpace(preview.LegalName) || !string.Equals(preview.Cin, job.Cin, StringComparison.OrdinalIgnoreCase)) return;
+                await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
+                request.CompanyName = preview.LegalName.Trim();
+                await db.SaveChangesAsync(ct);
+                return;
+            }
             await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
             request.CompanyName = match.LegalName;
             if (!string.IsNullOrWhiteSpace(match.Bid) && !string.Equals(match.Bid, job.Bid, StringComparison.OrdinalIgnoreCase))
