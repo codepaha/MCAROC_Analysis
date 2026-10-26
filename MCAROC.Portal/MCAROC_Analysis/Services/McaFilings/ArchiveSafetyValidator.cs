@@ -11,7 +11,11 @@ public record ArchiveSafetyLimits(
     int MaxPdfCount = 5000, // also batch-wide cumulative
     long MaxIndividualPdfSizeBytes = 200_000_000)
 {
-    public static readonly ArchiveSafetyLimits Default = new();
+    /// <summary>The limits every MCA filings archive is checked against: the large-archive upload's (5 GB archive, 20 GB uncompressed, 10,000 PDFs,
+    /// 250 MB a PDF), so a company's filings fetched by auto-fetch, and unpacked by <see cref="FilingBatchProcessor"/>, are held to what an upload
+    /// of the same filings is. The record's own smaller defaults stopped Infosys's 2,303 filings (2.45 GB) at "Archive exceeds the 2000 MB limit"
+    /// in the #514 round, though the same archive uploaded would pass.</summary>
+    public static readonly ArchiveSafetyLimits Default = FromOptions(new LargeArchiveUploadOptions());
 
     public static ArchiveSafetyLimits FromOptions(LargeArchiveUploadOptions options) =>
         new(
