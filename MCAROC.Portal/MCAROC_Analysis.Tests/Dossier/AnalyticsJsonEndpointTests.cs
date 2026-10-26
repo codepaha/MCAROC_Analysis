@@ -51,7 +51,7 @@ public class AnalyticsJsonEndpointTests : IAsyncLifetime
         Assert.NotEmpty(groups);
         Assert.Contains(groups, g => g.Title == "Charge register");
         Assert.Contains(groups, g => g.Title == "GST compliance");
-        Assert.Contains(groups, g => g.Title == "Legal history");
+        Assert.DoesNotContain(groups, g => g.Title == "Legal history");   // the workbook's litigation sheets are not read (2026-10-26)
         Assert.Contains(groups, g => g.Title == "Directors");
         Assert.Contains(groups, g => g.Title == "Financial trend & leverage");
         Assert.Contains(groups, g => g.Title == "Shareholding");

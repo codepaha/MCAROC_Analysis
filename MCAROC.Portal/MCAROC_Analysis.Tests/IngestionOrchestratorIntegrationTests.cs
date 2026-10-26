@@ -230,7 +230,7 @@ public class IngestionOrchestratorIntegrationTests : IAsyncLifetime
         // orchestrator never looks up would never be added to _absent, so the count would fall short.
         Assert.DoesNotContain(directorsCanonical, absent);
         Assert.Equal(SheetAliases.TrackedOptionalSheets.Count - 1, absent.Count);
-        Assert.Contains(SheetAliases.CanonicalName(SheetAliases.LegalHistory), absent);
+        Assert.Contains(SheetAliases.CanonicalName(SheetAliases.Compliance), absent);
         Assert.Contains(SheetAliases.CanonicalName(SheetAliases.PeerComparison), absent);
 
         // No charges in the ROC report → the "charge report missing" flag stays off.
@@ -238,7 +238,7 @@ public class IngestionOrchestratorIntegrationTests : IAsyncLifetime
 
         var coverage = MCAROC_Analysis.Models.SheetCoverage.From(reloaded);
         Assert.Equal(1, coverage.PresentOptionalSheets);
-        Assert.True(coverage.WasAbsent(SheetAliases.LegalHistory));
+        Assert.True(coverage.WasAbsent(SheetAliases.Compliance));
         Assert.False(coverage.WasAbsent(SheetAliases.Directors));
     }
 

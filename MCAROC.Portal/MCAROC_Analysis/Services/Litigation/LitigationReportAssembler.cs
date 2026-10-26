@@ -112,10 +112,7 @@ public class LitigationReportAssembler(
         var propertyMatches = LitigationOrderAddressMatcher.MatchCases(addressPool, cases, docByOrderId);
 
         // Cases that touch what the open charges secure (charged property, named assets, a lender's recovery case).
-        var workbookLitigations = request.LatestCompletedIngestionRunId is { } ingestionRunId
-            ? await db.Litigations.AsNoTracking().Where(l => l.RequestId == requestId && l.IngestionRunId == ingestionRunId).ToListAsync(ct)
-            : [];
-        var chargeLinks = ChargeLitigationLinker.Build(charges, cases, docByOrderId, workbookLitigations);
+        var chargeLinks = ChargeLitigationLinker.Build(charges, cases, docByOrderId);
         var propertyMatchesByOrderId = propertyMatches
             .GroupBy(m => m.LitigationCaseOrderId)
             .ToDictionary(g => g.Key, g => g.ToList());

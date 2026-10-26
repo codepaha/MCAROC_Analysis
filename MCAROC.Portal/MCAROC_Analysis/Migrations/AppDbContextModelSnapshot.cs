@@ -184,6 +184,9 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<long>("IngestionRunId")
                         .HasColumnType("bigint");
 
+                    b.Property<long?>("LitigationFindingsVersion")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("OverallReviewPriority")
                         .HasMaxLength(10)
                         .HasColumnType("nvarchar(10)");

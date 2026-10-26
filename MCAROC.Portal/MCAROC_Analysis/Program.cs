@@ -162,6 +162,9 @@ builder.Services.Configure<MCAROC_Analysis.Services.LitigationData.Attribution.L
     builder.Configuration.GetSection(MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttributionOptions.SectionName));
 builder.Services.AddScoped<MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttributionService>();
 builder.Services.AddHostedService<MCAROC_Analysis.Services.LitigationData.Attribution.LitigationAttributionWorker>();
+// The analysis's findings follow the request's litigation: re-evaluated (rules only, no AI) when its live-data version moves.
+builder.Services.AddScoped<MCAROC_Analysis.Services.Analysis.LitigationFindingsRefresher>();
+builder.Services.AddHostedService<MCAROC_Analysis.Services.Analysis.LitigationFindingsRefreshWorker>();
 builder.Services.AddScoped<LitigationKeywordSuggester>();
 builder.Services.AddScoped<LitigationStartService>();
 builder.Services.AddScoped<ChargeLitigationService>();

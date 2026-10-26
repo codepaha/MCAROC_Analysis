@@ -48,8 +48,6 @@ public class RequestDetailsViewModel
     public List<EpfoContribution> EpfoContributions { get; set; } = [];
     public List<EpfoEstablishment> EpfoEstablishments { get; set; } = [];
     public List<AuditorObservation> AuditorObservations { get; set; } = [];
-    public List<Litigation> Litigations { get; set; } = [];
-    public List<FinancialDisputeCase> FinancialDisputeCases { get; set; } = [];
     public LitigationTabViewModel? LitigationDataLake { get; set; }
 
     /// <summary>Litigation that touches what the open charges secure (see <c>ChargeLitigationLinker</c>); null
@@ -181,7 +179,9 @@ public class RequestDetailsViewModel
     public decimal? RevenueYoYPercent => DossierComputations.RevenueYoYPercent(FinancialYears);
 
     public int ActiveDirectorCount => Directors.Count(d => d.CessationDate is null);
-    public int LitigationCount => Litigations.Count;
+    /// <summary>The company's cases from the litigation service: the case list's own set, before any filter. Null until a search has
+    /// completed. The workbook's own legal-history sheets are not read (owner, 2026-10-26), so this is the only litigation count.</summary>
+    public int? LitigationCaseCount => LitigationDataLake is { AuthoritativeSnapshot: not null } lake ? lake.SourceCoverage.UniqueCasesCount : null;
 
     // ---------------------------------------------------------------------
     // Phase 6 — Charges & Security workspace helpers (VM-computed, no extra DB work).
@@ -205,25 +205,6 @@ public class RequestDetailsViewModel
     /// <summary>SecurityType values a charge's rollup names — parsed from LatestSecurityTypesJson, never re-derived.</summary>
     public static IReadOnlyList<string> SecurityTypeLabels(RocCharge c) => DossierComputations.SecurityTypeLabels(c);
 
-    // ---------------------------------------------------------------------
-    // Phase 6 — Litigation role attribution. Role is only ever taken from a Phase 3 finding's
-    // SourceReferenceJson; "Filed By" is the residue of the rule's own deterministic partition
-    // (pending + confirmed cases that the rule classified as neither "against" nor "role-uncertain").
-    // A case named by no finding is "Role not determined" — never inferred at display time.
-    // ---------------------------------------------------------------------
-
-    private Dictionary<long, LitigationRole>? _litigationRoles;
-    private Dictionary<long, LitigationRole> LitigationRoles =>
-        _litigationRoles ??= DossierComputations.LitigationRoles(Litigations, AnalysisFindings);
-
-    public LitigationRole RoleFor(Litigation l) => LitigationRoles.GetValueOrDefault(l.LitigationId, LitigationRole.NotDetermined);
-
-    public int LitigationFiledAgainstCount => LitigationRoles.Values.Count(v => v == LitigationRole.FiledAgainst);
-    public int LitigationFiledByCount => LitigationRoles.Values.Count(v => v == LitigationRole.FiledBy);
-    public int LitigationRoleNotDeterminedCount => LitigationRoles.Values.Count(v => v == LitigationRole.NotDetermined);
-
-    public int LitigationPendingCount => Litigations.Count(DossierComputations.IsPendingLitigation);
-    public int LitigationDisposedCount => Litigations.Count - LitigationPendingCount;
 }
 
 /// <summary>One lender's share of the open registered-charge portfolio. PctOfOpenAmount is null only when

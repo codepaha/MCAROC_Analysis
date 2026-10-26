@@ -544,7 +544,6 @@ public class DossierPdfComposerTests : IAsyncLifetime
             SheetAliases.CanonicalName(SheetAliases.CreditRatings),
             SheetAliases.CanonicalName(SheetAliases.UnacceptedRatings),
             SheetAliases.CanonicalName(SheetAliases.Proprietorship),
-            SheetAliases.CanonicalName(SheetAliases.LegalCasesFinancialDispute),
         };
         var fakeRun = new IngestionRun { AbsentOptionalSheetsJson = JsonSerializer.Serialize(absentNames) };
         var absentModel = model2! with { SourceCoverage = SheetCoverage.From(fakeRun) };
@@ -553,7 +552,6 @@ public class DossierPdfComposerTests : IAsyncLifetime
         Assert.Contains("This upload did not include “Related Party Transactions”.", absentText);
         Assert.Contains("This upload did not include “Credit Ratings” or “Unaccepted Ratings”.", absentText);
         Assert.Contains("This upload did not include “Proprietorship”.", absentText);
-        Assert.DoesNotContain("This upload did not include “Legal Cases - Financial Dispute”.", absentText);   // its table is in the removed litigation section
         Assert.DoesNotContain("no dedicated section in this dossier", absentText);
     }
 
@@ -906,7 +904,7 @@ public class DossierPdfComposerTests : IAsyncLifetime
 
         Assert.NotNull(model);
         Assert.False(model!.IncludeLitigation);
-        Assert.NotEmpty(model.Litigation.All);
+        Assert.Empty(model.Litigation.All);   // the workbook's legal-history sheets are not read (2026-10-26)
         Assert.Contains(model.ExecSummary.FindingsInDisplayOrder, f => f.Section == FindingSection.Litigation);
     }
 

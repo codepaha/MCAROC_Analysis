@@ -19,13 +19,6 @@
     "C2": [],
     "C3": []
   },
-  "LitigationFiledAgainstCount": 1,
-  "LitigationFiledByCount": 0,
-  "LitigationRoleNotDeterminedCount": 1,
-  "LitigationRoleByCaseNumber": {
-    "CP(IB) 214/2019": "FiledAgainst",
-    "OS 77/2021": "NotDetermined"
-  },
   "StandaloneFyCount": 3,
   "ConsolidatedFyCount": 2,
   "LatestFinancialYear": 2025,
@@ -41,7 +34,6 @@
   "MetricGroupTitles": [
     "Charge register",
     "GST compliance",
-    "Legal history",
     "Directors",
     "Financial trend & leverage",
     "Shareholding",

@@ -124,10 +124,8 @@ public sealed record DossierLitigation(
     IReadOnlyList<Litigation> All,
     IReadOnlyList<LitigationThread> Threads,
     IReadOnlyDictionary<long, LitigationRole> RoleById,
-    // Appended after every existing field, nullable with a normalizing list property, so the ~17
-    // existing positional `new DossierLitigation(...)` test call sites keep compiling unchanged (#215).
-    // A separate register from Litigation/All — see FinancialDisputeCase's own doc comment.
-    IReadOnlyList<FinancialDisputeCase>? FinancialDisputeCases = null,
+    // Appended after every existing field, nullable, so the ~17 existing positional `new DossierLitigation(...)` test call sites keep
+    // compiling unchanged (#215).
     LitigationDataCurrencySummary? DataCurrency = null)
 {
     public LitigationRole RoleFor(Litigation l) => RoleById.GetValueOrDefault(l.LitigationId, LitigationRole.NotDetermined);
@@ -136,7 +134,6 @@ public sealed record DossierLitigation(
     public int NotDeterminedCount => RoleById.Values.Count(v => v == LitigationRole.NotDetermined);
     public int PendingCount => All.Count(DossierComputations.IsPendingLitigation);
     public int DisposedCount => All.Count - PendingCount;
-    public IReadOnlyList<FinancialDisputeCase> FinancialDisputeCasesList => FinancialDisputeCases ?? [];
 }
 
 public sealed record DossierExecSummary(

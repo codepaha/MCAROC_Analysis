@@ -64,9 +64,6 @@ public class CorporateTimelineBuilder(AppDbContext db)
         var ratings = await db.CreditRatings.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
         events.AddRange(CreditRatingEvents(ratings));
 
-        var disputes = await db.FinancialDisputeCases.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
-        events.AddRange(FinancialDisputeEvents(disputes));
-
         var gstRegs = await db.GstRegistrations.Where(x => x.IngestionRunId == runId).ToListAsync(ct);
         events.AddRange(GstEvents(gstRegs));
 
@@ -96,7 +93,6 @@ public class CorporateTimelineBuilder(AppDbContext db)
         events.AddRange(ChargeEvents(vm.Charges.SelectMany(c => c.Events).ToList()));
         events.AddRange(CapitalEvents(vm.SecurityAllotments));
         events.AddRange(CreditRatingEvents(vm.CreditRatings));
-        events.AddRange(FinancialDisputeEvents(vm.FinancialDisputeCases));
         events.AddRange(GstEvents(vm.GstRegistrations));
         events.AddRange(EpfoEvents(vm.EpfoEstablishments));
         events.AddRange(ComplianceEvents(vm.ComplianceRecords));
@@ -232,26 +228,6 @@ public class CorporateTimelineBuilder(AppDbContext db)
             var title = $"{r.Agency} rated {r.Instrument ?? "instrument"}: {r.Rating ?? "n/a"}{acceptedSuffix}";
             yield return new CorporateTimelineEvent(date, TimelineEventCategory.CreditRatings, title, r.Action,
                 Provenance(r, nameof(CreditRating), r.CreditRatingId));
-        }
-    }
-
-    private static IEnumerable<CorporateTimelineEvent> FinancialDisputeEvents(List<FinancialDisputeCase> disputes)
-    {
-        foreach (var d in disputes)
-        {
-            var amountText = d.AmountUnderDefault is { } amt ? $"₹{amt:N2} Cr — {d.DisputeType ?? "dispute"}" : d.DisputeType;
-            if (d.DateOfDefault is { } defaultDate)
-            {
-                yield return new CorporateTimelineEvent(defaultDate, TimelineEventCategory.FinancialDisputes,
-                    "Financial dispute default", amountText,
-                    Provenance(d, nameof(FinancialDisputeCase), d.FinancialDisputeCaseId));
-            }
-            if (d.DateOfJudgement is { } judgementDate)
-            {
-                yield return new CorporateTimelineEvent(judgementDate, TimelineEventCategory.FinancialDisputes,
-                    "Financial dispute judgement", d.Verdict ?? amountText,
-                    Provenance(d, nameof(FinancialDisputeCase), d.FinancialDisputeCaseId));
-            }
         }
     }
 

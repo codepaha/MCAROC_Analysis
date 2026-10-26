@@ -18,10 +18,6 @@ public sealed record GoldenMasterSnapshot(
     decimal? LargestChargeAmount,
     string[] LenderConcentrationHolders,
     Dictionary<string, string[]> SecurityTypeLabelsByCharge,
-    int LitigationFiledAgainstCount,
-    int LitigationFiledByCount,
-    int LitigationRoleNotDeterminedCount,
-    Dictionary<string, string> LitigationRoleByCaseNumber,
     int StandaloneFyCount,
     int ConsolidatedFyCount,
     int? LatestFinancialYear,
@@ -45,12 +41,6 @@ public sealed record GoldenMasterSnapshot(
         SecurityTypeLabelsByCharge: vm.Charges.OrderBy(c => c.RocChargeNumber).ToDictionary(
             c => c.RocChargeNumber,
             c => RequestDetailsViewModel.SecurityTypeLabels(c).ToArray()),
-        LitigationFiledAgainstCount: vm.LitigationFiledAgainstCount,
-        LitigationFiledByCount: vm.LitigationFiledByCount,
-        LitigationRoleNotDeterminedCount: vm.LitigationRoleNotDeterminedCount,
-        LitigationRoleByCaseNumber: vm.Litigations
-            .Where(l => l.CaseNumber is not null).OrderBy(l => l.CaseNumber)
-            .ToDictionary(l => l.CaseNumber!, l => vm.RoleFor(l).ToString()),
         StandaloneFyCount: vm.FinancialYears.Count,
         ConsolidatedFyCount: vm.ConsolidatedFinancialYears.Count,
         LatestFinancialYear: vm.LatestFinancialYear,
@@ -73,12 +63,6 @@ public sealed record GoldenMasterSnapshot(
         LenderConcentrationHolders: m.Charges.LenderConcentration.Select(r => r.Holder).ToArray(),
         SecurityTypeLabelsByCharge: m.Charges.All.OrderBy(c => c.RocChargeNumber).ToDictionary(
             c => c.RocChargeNumber, c => m.Charges.SecurityTypeLabels(c).ToArray()),
-        LitigationFiledAgainstCount: m.Litigation.FiledAgainstCount,
-        LitigationFiledByCount: m.Litigation.FiledByCount,
-        LitigationRoleNotDeterminedCount: m.Litigation.NotDeterminedCount,
-        LitigationRoleByCaseNumber: m.Litigation.All
-            .Where(l => l.CaseNumber is not null).OrderBy(l => l.CaseNumber)
-            .ToDictionary(l => l.CaseNumber!, l => m.Litigation.RoleFor(l).ToString()),
         StandaloneFyCount: m.Financials.Standalone.Count,
         ConsolidatedFyCount: m.Financials.Consolidated.Count,
         LatestFinancialYear: m.Financials.LatestYear,

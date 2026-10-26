@@ -185,7 +185,8 @@ public class AiAnalysisTabRenderingTests
 
         Assert.Contains("Open charges", chargesSection);
         Assert.Contains("GSTIN cancellation count", complianceSection);
-        Assert.Contains("Open litigations", litigationSection);
+        // The workbook's own legal-history indicators are not shown (owner, 2026-10-26): the Litigation tab is the litigation service's.
+        Assert.DoesNotContain("Open litigations", litigationSection);
 
         // Cross-Section has no mapped MetricGroups — no Key Indicators block should render there.
         Assert.DoesNotContain("Key Indicators", xsecSection);
@@ -202,17 +203,17 @@ public class AiAnalysisTabRenderingTests
         // "No findings in this section" branch — not nested inside the has-findings branch, which
         // would silently hide calculations whenever a domain has metrics but no AI findings yet.
         var vm = CreateViewModel();
-        vm.KeyMetrics = [new MetricGroup("Legal history", [MetricResult.Ok("Open litigations", 4m, MetricUnit.Count, "Current", "Litigation.Status")])];
+        vm.KeyMetrics = [new MetricGroup("Charge register", [MetricResult.Ok("Open charges", 4m, MetricUnit.Count, "Current", "RocCharge.ChargeStatus")])];
         vm.AnalysisFindings = [];
 
         var html = await RenderAiAnalysisTabAsync(vm);
 
-        var litigationIdx = html.IndexOf("id=\"sec-ai-litigation\"", StringComparison.Ordinal);
-        Assert.True(litigationIdx >= 0);
-        var nextPanelIdx = html.IndexOf("tab-pane", litigationIdx + 1, StringComparison.Ordinal);
-        var litigationSection = nextPanelIdx > litigationIdx ? html[litigationIdx..nextPanelIdx] : html[litigationIdx..];
+        var chargesIdx = html.IndexOf("id=\"sec-ai-charges\"", StringComparison.Ordinal);
+        Assert.True(chargesIdx >= 0);
+        var nextPanelIdx = html.IndexOf("tab-pane", chargesIdx + 1, StringComparison.Ordinal);
+        var chargesSection = nextPanelIdx > chargesIdx ? html[chargesIdx..nextPanelIdx] : html[chargesIdx..];
 
-        Assert.Contains("Open litigations", litigationSection);
-        Assert.Contains("No findings in this section.", litigationSection);
+        Assert.Contains("Open charges", chargesSection);
+        Assert.Contains("No findings in this section.", chargesSection);
     }
 }

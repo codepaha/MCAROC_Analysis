@@ -891,7 +891,7 @@ public partial class DossierPdfComposer
         }
 
         var n = grouped.Count > 0 ? 1 : 0;
-        Item(col, ref n, "Legal history (full register)", lit.All, [SheetAliases.LegalHistory],
+        Item(col, ref n, "Legal history (full register)", lit.All, [],
             new Col<Litigation>("Role", 1.6f, l => RoleLabel(lit.RoleFor(l))),
             new Col<Litigation>("Status", 1f, l => l.CaseStatus ?? "-"),
             new Col<Litigation>("Category", 1.2f, l => l.CaseCategory ?? "-"),
@@ -899,17 +899,6 @@ public partial class DossierPdfComposer
             new Col<Litigation>("Parties", 2.4f, l => Clip(l.Litigants, 90)),
             new Col<Litigation>("Case no.", 1.8f, l => l.CaseNumber ?? "-"),
             new Col<Litigation>("Last hearing", 1.1f, l => D(l.LastHearingDate), true));
-
-        // A separate register from the Legal history above — never merged with Litigation rows (see
-        // FinancialDisputeCase's own doc comment).
-        Item(col, ref n, "Legal cases — financial dispute", lit.FinancialDisputeCasesList, [SheetAliases.LegalCasesFinancialDispute],
-            new Col<FinancialDisputeCase>("Direction", 1.3f, x => x.Direction ?? "-"),
-            new Col<FinancialDisputeCase>("Dispute type", 1.5f, x => x.DisputeType ?? "-"),
-            new Col<FinancialDisputeCase>("Court", 1.8f, x => x.Court ?? "-"),
-            new Col<FinancialDisputeCase>("Litigants", 2.2f, x => Clip(x.Litigants, 90)),
-            new Col<FinancialDisputeCase>("Case no.", 1.4f, x => x.CaseNumber ?? "-"),
-            new Col<FinancialDisputeCase>("Amount", 1.4f, x => Money(x.AmountUnderDefault, x.Currency), true),
-            new Col<FinancialDisputeCase>("Verdict", 1.3f, x => x.Verdict ?? "-"));
     });
 
     // ── F. Coverage & data sufficiency ──────────────────────────────────────

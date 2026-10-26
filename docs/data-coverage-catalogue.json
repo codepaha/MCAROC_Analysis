@@ -225,11 +225,11 @@
     },
     {
       "workbook": "RocReport", "sheet": "Legal History", "shape": "5 stacked sub-tables (Confirmed / Filed-By / Consolidation / PROBABLE / UNVERIFIED), 3 column layouts",
-      "parser": "LegalHistoryParser", "entity": "Litigation",
-      "portal_tab": "Litigation", "dossier": "Annexure E",
+      "parser": null, "entity": "Litigation",
+      "portal_tab": null, "dossier": null,
       "fields": [
-        {"source": "Case Type / Case Status / Case Category / Court / Litigant(s) / Case No. / Date of Last Hearing-Judgement", "entityField": "CaseType / CaseStatus / CaseCategory / Court / Litigants / CaseNumber / LastHearingDate", "status": "live", "note": "PR #29 fixed the 3-layout parse; MatchStatus = Confirmed / Probable / Uncertain"},
-        {"source": "UNVERIFIED layout (Court / Petitioner / Respondent / Case No. / Date of Last Activity)", "entityField": "Court / Litigants(joined) / CaseNumber / LastHearingDate, MatchStatus=Uncertain", "status": "live", "note": "B3/#41 — rendered in dedicated Unverified sub-tab with provisional data disclaimer banner"}
+        {"source": "Case Type / Case Status / Case Category / Court / Litigant(s) / Case No. / Date of Last Hearing-Judgement", "entityField": "CaseType / CaseStatus / CaseCategory / Court / Litigants / CaseNumber / LastHearingDate", "status": "dropped-by-design", "note": "Not read (owner, 2026-10-26): a request’s litigation comes only from the litigation service, so the workbook’s own register can never disagree with the Litigation tab. Was: PR #29 fixed the 3-layout parse; MatchStatus = Confirmed / Probable / Uncertain"},
+        {"source": "UNVERIFIED layout (Court / Petitioner / Respondent / Case No. / Date of Last Activity)", "entityField": "Court / Litigants(joined) / CaseNumber / LastHearingDate, MatchStatus=Uncertain", "status": "dropped-by-design", "note": "Not read (owner, 2026-10-26): a request’s litigation comes only from the litigation service, so the workbook’s own register can never disagree with the Litigation tab. Was: B3/#41 — rendered in dedicated Unverified sub-tab with provisional data disclaimer banner"}
       ]
     },
     {
@@ -336,10 +336,10 @@
     },
     {
       "workbook": "RocReport", "sheet": "Legal Cases - Financial Dispute", "shape": "flat table, 10 cols, header row 0 (12/41 companies; absent from the COASTAL fixture)",
-      "parser": "FinancialDisputeParser", "entity": "FinancialDisputeCase",
-      "portal_tab": "Litigation", "dossier": "Annexure E",
+      "parser": null, "entity": "FinancialDisputeCase",
+      "portal_tab": null, "dossier": null,
       "fields": [
-        {"source": "Amount Payable/Receivable / Type Of Financial Dispute / Currency / Amount Under Default / Verdict / Court / Litigant(s) / Case No. / Date Of Default / Date Of Judgement", "entityField": "Direction / DisputeType / Currency / AmountUnderDefault / Verdict / Court / Litigants / CaseNumber / DateOfDefault / DateOfJudgement", "status": "live", "note": "A10/#52 — column layout from the VTION portfolio audit, not a real workbook (absent from COASTAL); synthetic-only test coverage. Separate register from Legal History, its own Litigation-tab section."}
+        {"source": "Amount Payable/Receivable / Type Of Financial Dispute / Currency / Amount Under Default / Verdict / Court / Litigant(s) / Case No. / Date Of Default / Date Of Judgement", "entityField": "Direction / DisputeType / Currency / AmountUnderDefault / Verdict / Court / Litigants / CaseNumber / DateOfDefault / DateOfJudgement", "status": "dropped-by-design", "note": "Not read (owner, 2026-10-26): a request’s litigation comes only from the litigation service, so the workbook’s own register can never disagree with the Litigation tab. Was: A10/#52 — column layout from the VTION portfolio audit, not a real workbook (absent from COASTAL); synthetic-only test coverage. Separate register from Legal History, its own Litigation-tab section."}
       ]
     },
     {

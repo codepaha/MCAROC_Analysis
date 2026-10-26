@@ -19,7 +19,8 @@ public class AnalysisContext
     public required IReadOnlyList<GstRegistration> GstRegistrations { get; init; }
     public required IReadOnlyList<EpfoContribution> EpfoContributions { get; init; }
     public required IReadOnlyList<AuditorObservation> AuditorObservations { get; init; }
-    public required IReadOnlyList<Litigation> Litigations { get; init; }
+    /// <summary>The litigation service's cases for the request (see <see cref="LitigationEvidence"/>); not searched until a search completes.</summary>
+    public LitigationEvidence Litigation { get; init; } = LitigationEvidence.NotSearched;
 
     /// <summary>Only the address pool for ChargedPropertyAddressRules (issue #191) reads this today.</summary>
     public IReadOnlyList<EpfoEstablishment> EpfoEstablishments { get; init; } = [];
@@ -47,9 +48,10 @@ public class AnalysisContext
         IReadOnlyList<FinancialYearData> financialYears, IReadOnlyList<RocCharge> charges,
         IReadOnlyList<MsmePayment> msmePayments, IReadOnlyList<GstRegistration> gstRegistrations,
         IReadOnlyList<EpfoContribution> epfoContributions, IReadOnlyList<AuditorObservation> auditorObservations,
-        IReadOnlyList<Litigation> litigations, DateTime analysisDate,
+        DateTime analysisDate,
         IReadOnlyList<EpfoEstablishment>? epfoEstablishments = null,
-        IReadOnlyDictionary<string, PropertyParticularsExtraction>? propertyExtractions = null)
+        IReadOnlyDictionary<string, PropertyParticularsExtraction>? propertyExtractions = null,
+        LitigationEvidence? litigation = null)
     {
         var orderedYears = financialYears.OrderByDescending(f => f.FinancialYear).ToList();
         var latest = orderedYears.ElementAtOrDefault(0);
@@ -78,7 +80,7 @@ public class AnalysisContext
             GstRegistrations = gstRegistrations,
             EpfoContributions = epfoContributions,
             AuditorObservations = auditorObservations,
-            Litigations = litigations,
+            Litigation = litigation ?? LitigationEvidence.NotSearched,
             EpfoEstablishments = epfoEstablishments ?? [],
             PropertyExtractions = propertyExtractions ?? new Dictionary<string, PropertyParticularsExtraction>(),
             AnalysisDate = analysisDate,

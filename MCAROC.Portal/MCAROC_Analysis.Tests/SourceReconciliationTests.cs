@@ -168,7 +168,6 @@ public class SourceReconciliationTests : IAsyncLifetime
 
         // COASTAL is a full report — the sheets these sections read from are all present.
         Assert.False(coverage.WasAbsent(MCAROC_Analysis.Services.Excel.SheetAliases.Directors));
-        Assert.False(coverage.WasAbsent(MCAROC_Analysis.Services.Excel.SheetAliases.LegalHistory));
         Assert.False(coverage.WasAbsent(MCAROC_Analysis.Services.Excel.SheetAliases.Structure));
         Assert.False(coverage.WasAbsent(MCAROC_Analysis.Services.Excel.SheetAliases.PeerComparison));
         Assert.False(coverage.WasAbsent(MCAROC_Analysis.Services.Excel.SheetAliases.Compliance));
@@ -369,71 +368,6 @@ public class SourceReconciliationTests : IAsyncLifetime
         Assert.Equal(1240.01m, peers[4].RevenueCrore);
         // The metrics grid still parses alongside the peer block.
         Assert.NotEmpty(PeerComparisonParser.Parse(peerSheet, 1, 1, 1).Items);
-    }
-
-    /// <summary>Control totals for the real COASTAL <c>Legal History</c> sheet (960 rows): the parser
-    /// must extract exactly 592 Confirmed + 68 Probable + 292 Uncertain = 952, and no more — the 8
-    /// structural rows (section titles, per-section headers, the blank separator) must not become
-    /// records, and none of the three column layouts may bleed into another. The one-row synthetic
-    /// unit test proves the mapping; this proves the whole 960-row input is exhaustively bounded.</summary>
-    [SkippableFact]
-    public void Legal_history_sheet_extracts_the_exact_control_totals_for_all_three_sections()
-    {
-        Skip.If(Fixtures() is null,
-            "Reconciliation workbooks not present — see MCAROC_Analysis.Tests/Fixtures/README.md");
-
-        var sheets = new ExcelSheetReader().ReadWorkbook(Fixtures()!.Value.Roc);
-        var legalHistory = sheets.Single(s => s.Name == "Legal History");
-        Assert.Equal(960, legalHistory.Rows.Count);
-
-        var items = LegalHistoryParser.Parse(legalHistory, requestId: 1, ingestionRunId: 1, sourceDocumentId: 1).Items;
-
-        var confirmed = items.Where(x => x.MatchStatus == LitigationMatchStatus.Confirmed).ToList();
-        var probable = items.Where(x => x.MatchStatus == LitigationMatchStatus.Probable).ToList();
-        var uncertain = items.Where(x => x.MatchStatus == LitigationMatchStatus.Uncertain).ToList();
-
-        Assert.Equal(592, confirmed.Count);
-        Assert.Equal(68, probable.Count);
-        Assert.Equal(292, uncertain.Count);
-        Assert.Equal(952, items.Count); // 960 rows - 8 structural (2 titles, 2 sub-headers, 1 blank, ... )
-
-        // ── Confirmed: full 7-column layout, first + last ──
-        Assert.Equal("Filed Against this Corporate", confirmed[0].CaseType);
-        Assert.Equal("Insolvency", confirmed[0].CaseCategory);
-        Assert.Equal("State Bank of India", confirmed[0].Litigants);
-        Assert.StartsWith("(CP(IB)No.593/KB/2017)", confirmed[0].CaseNumber);
-        Assert.Equal("Consolidation of Corporate Affairs", confirmed[^1].CaseType);
-        Assert.Equal("Disposed", confirmed[^1].CaseStatus);
-        Assert.Contains("TPNo.94/CTB/2019", confirmed[^1].CaseNumber);
-
-        // ── Probable: shifted layout (no Case Type; Petitioner + Respondent) ──
-        Assert.All(probable, p => Assert.Null(p.CaseType));
-        Assert.Equal("Pending", probable[0].CaseStatus);
-        Assert.Equal("Insolvency", probable[0].CaseCategory);
-        Assert.Contains("APPELLATE", probable[0].Court);
-        Assert.Contains("Himachal Pradesh Power Corporation", probable[0].Litigants);
-        Assert.Contains(" vs. ", probable[0].Litigants);
-        Assert.StartsWith("Company Appeal(AT)(Ins) - 935/2023", probable[0].CaseNumber);
-        Assert.Equal("Disposed", probable[^1].CaseStatus);
-        Assert.Equal("UN CR /18/2014", probable[^1].CaseNumber);
-
-        // ── Uncertain: short 5-column layout (Court | Petitioner | Respondent | Case No | Date) ──
-        Assert.All(uncertain, u =>
-        {
-            Assert.Null(u.CaseType);
-            Assert.Null(u.CaseStatus);
-            Assert.Null(u.CaseCategory);
-            Assert.NotNull(u.Court);
-        });
-        Assert.Equal("CCH1 PRL. CITY CIVIL AND SESSIONS JUDGE", uncertain[0].Court);
-        Assert.Equal("BHARATH HEAVY ELECTRICALS LIMITED vs. M/S COASTAL PROJECTS LIMITED", uncertain[0].Litigants);
-        Assert.Equal("AA/319/2018", uncertain[0].CaseNumber);
-        Assert.Equal("SR. CIVIL COURTS, HYDERABAD - C", uncertain[^1].Court);
-        Assert.Equal("EP/200110/2014", uncertain[^1].CaseNumber);
-
-        // No structural row leaked through as a record.
-        Assert.DoesNotContain(items, x => x.Court is "Court" or "PROBABLE CASES" or "UNVERIFIED COURT RECORDS");
-        Assert.DoesNotContain(items, x => x.CaseStatus is "Case Status" or "PROBABLE CASES");
     }
 
     [Fact]

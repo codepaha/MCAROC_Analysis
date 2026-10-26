@@ -109,8 +109,7 @@ public class TimelineTabRenderingTests
     private static RequestDetailsViewModel CreateViewModel() => new()
     {
         Request = new McaRequest { CompanyName = "Test Co", RequestNumber = "REQ-1" },
-        Documents = [],
-        Litigations = []
+        Documents = []
     };
 
     private sealed class TestWebHostEnvironment : IWebHostEnvironment

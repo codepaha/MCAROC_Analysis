@@ -4,7 +4,7 @@ namespace MCAROC_Analysis.Models.Dossier;
 /// filter chips. Deliberately does not include Litigation, related-party transactions, auditor changes,
 /// or registered-office history — see <c>CorporateTimelineBuilder</c>'s class doc for why each is
 /// excluded from v1.</summary>
-public enum TimelineEventCategory { Corporate, Directors, Charges, Capital, CreditRatings, Gst, Epfo, Compliance, FinancialDisputes }
+public enum TimelineEventCategory { Corporate, Directors, Charges, Capital, CreditRatings, Gst, Epfo, Compliance }
 
 /// <summary>Where one <see cref="CorporateTimelineEvent"/> came from — always a single source row, drawn
 /// from that row's own <see cref="Data.Entities.ExtractedEntityBase"/> fields. Used both for on-screen

@@ -50,8 +50,8 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         new() { [orderId] = new LitigationOrderDocument { LitigationCaseOrderId = orderId, ExtractedText = text, TextExtractionStatus = status } };
 
     private static ChargeLitigationSummary Build(IReadOnlyList<RocCharge> charges, IReadOnlyList<LitigationCase> cases,
-        IReadOnlyDictionary<long, LitigationOrderDocument>? docs = null, IReadOnlyList<Litigation>? workbook = null) =>
-        ChargeLitigationLinker.Build(charges, cases, docs ?? new Dictionary<long, LitigationOrderDocument>(), workbook ?? []);
+        IReadOnlyDictionary<long, LitigationOrderDocument>? docs = null) =>
+        ChargeLitigationLinker.Build(charges, cases, docs ?? new Dictionary<long, LitigationOrderDocument>());
 
     // Ã¢â€â‚¬Ã¢â€â‚¬ signal: charged immovable property named in an order Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     [Fact]
@@ -172,19 +172,6 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
     }
 
     [Fact]
-    public void Workbook_drt_case_naming_the_lender_links_but_only_when_confirmed()
-    {
-        var charge = Charge(1, "CHG-1", "State Bank of India", particulars: null);
-        var confirmed = new Litigation { LitigationId = 7, CaseType = "DRT - Original Application", Litigants = "State Bank of India vs Coastal Projects Limited", Court = "DRT Hyderabad", MatchStatus = LitigationMatchStatus.Confirmed };
-        var probable = new Litigation { LitigationId = 8, CaseType = "DRT - Original Application", Litigants = "State Bank of India vs Coastal Projects Limited", Court = "DRT Hyderabad", MatchStatus = LitigationMatchStatus.Probable };
-
-        var link = Assert.Single(Build([charge], [], workbook: [confirmed, probable]).Links);
-        Assert.Equal(7, link.Case.LitigationId);
-        Assert.Equal("MCA workbook", link.Case.Source);
-        Assert.Null(link.Case.LitigationCaseId);
-    }
-
-    [Fact]
     public void Both_signals_on_one_charge_are_both_kept_and_counted_separately()
     {
         var sarfaesi = Case(11, "SA 99/2021", court: "Debts Recovery Tribunal", act: "SARFAESI", petitioners: "[\"State Bank of India\"]");
@@ -263,7 +250,7 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         }
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var summary = ChargeLitigationLinker.Build(charges, cases, docs, []);
+        var summary = ChargeLitigationLinker.Build(charges, cases, docs);
         sw.Stop();
 
         Assert.False(summary.HasAny);

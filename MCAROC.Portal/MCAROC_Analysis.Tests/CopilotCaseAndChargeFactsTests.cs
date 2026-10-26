@@ -259,55 +259,18 @@ public class CopilotCaseAndChargeFactsTests
     }
 
     [Fact]
-    public async Task A_long_workbook_litigation_list_keeps_the_rows_the_question_points_at()
+    public async Task Workbook_litigation_rows_still_in_the_database_are_never_given_to_the_assistant()
     {
+        // A request's litigation comes only from the litigation service (owner, 2026-10-26): an older request's workbook rows are kept in
+        // the database but are neither counted nor listed, so the assistant can never cite a register the Litigation tab does not show.
         await using var db = CreateContext();
-        var (requestId, _) = await SeedWorkbookRowsAsync(db, StructuredFactsProvider.MaxWorkbookLitigationRows + 20);
-        var provider = new StructuredFactsProvider(db);
-
-        // a case number the question quotes (the workbook spaces it differently)
-        var byNumber = await provider.BuildDigestAsync(requestId,
-            QuestionHintExtractor.Extract("What is the status of CP(IB) No.593/KB/2017?", [], []), default);
-        var row = Assert.Single(byNumber, f => f.EntityType == "Litigation");
-        Assert.Contains("593/KB/2017", row.Text);
-        Assert.Contains(byNumber, f => f.Text.Contains("on file in the report workbook") && f.Text.Contains("1 matching the question"));
-
-        // a described set: pending NCLT cases against the company
-        var byFilter = await provider.BuildDigestAsync(requestId,
-            QuestionHintExtractor.Extract("Which NCLT cases are pending against the company?", [], []), default);
-        var rows = byFilter.Where(f => f.EntityType == "Litigation").ToList();
-        Assert.Equal(2, rows.Count);
-        Assert.All(rows, r => Assert.Contains("NATIONAL COMPANY LAW TRIBUNAL", r.Text));
-        Assert.DoesNotContain(rows, r => r.Text.Contains("77/KB/2019")); // filed by the company, so not "against"
-
-        // a lender the question names
-        var byLender = await provider.BuildDigestAsync(requestId,
-            QuestionHintExtractor.Extract("Any proceedings involving Karur Vysya Bank?", ["KARUR VYSYA BANK"], []), default);
-        Assert.Contains(byLender, f => f.EntityType == "Litigation" && f.Text.Contains("KARUR VYSYA BANK"));
-    }
-
-    [Fact]
-    public async Task A_long_workbook_list_is_narrowed_by_the_subject_words_of_the_question_too()
-    {
-        await using var db = CreateContext();
-        var (requestId, runId) = await SeedWorkbookRowsAsync(db, StructuredFactsProvider.MaxWorkbookLitigationRows + 20);
-        // the word "criminal" appears only in the case type: no number, party or forum in the question points at these rows
-        db.Litigations.Add(new Litigation { RequestId = requestId, IngestionRunId = runId, CaseType = "Criminal Case Filed Against this Corporate", CaseStatus = "Pending",
-            Court = "METROPOLITAN MAGISTRATE", Litigants = "SOME COMPLAINANT", CaseNumber = "CC 12/2020" });
-        db.Litigations.Add(new Litigation { RequestId = requestId, IngestionRunId = runId, CaseType = "Criminal Appeal", CaseStatus = "Pending",
-            Court = "SESSIONS COURT", Litigants = "ANOTHER PARTY", CaseNumber = "CRL A 5/2021" });
-        await db.SaveChangesAsync();
+        var (requestId, _) = await SeedWorkbookRowsAsync(db, 10);
 
         var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId,
-            QuestionHintExtractor.Extract("Are there any criminal cases against the company?", [], []), default);
+            QuestionHintExtractor.Extract("Which NCLT cases are pending against the company?", [], []), default);
 
-        var rows = facts.Where(f => f.EntityType == "Litigation").Select(f => f.Text).ToList();
-        Assert.Contains(rows, r => r.Contains("CC 12/2020"));      // "criminal" is only in the case type
-        Assert.Contains(rows, r => r.Contains("CRL A 5/2021"));
-        Assert.Equal(2, rows.Count(r => r.Contains("Criminal")));
-        // the two criminal rows rank first (a row the subject word AND the "against" filter point at outranks one only the filter does)
-        Assert.Contains("CC 12/2020", rows[0]);
-        Assert.DoesNotContain(rows, r => r.Contains("GENERIC PARTY"));
+        Assert.DoesNotContain(facts, f => f.EntityType == "Litigation");
+        Assert.DoesNotContain(facts, f => f.Text.Contains("workbook", StringComparison.OrdinalIgnoreCase));
     }
 
     [Theory]
@@ -316,33 +279,6 @@ public class CopilotCaseAndChargeFactsTests
     [InlineData("What is the status of the cases?", new string[0])]    // only words that say nothing about the subject
     public void The_subject_words_of_a_question_exclude_the_words_that_only_frame_it(string question, string[] expected) =>
         Assert.Equal(expected, QuestionHintExtractor.ExtractTopicTerms(question.ToLowerInvariant()));
-
-    [Fact]
-    public async Task A_long_workbook_list_with_nothing_to_pick_by_is_counted_not_listed_and_says_so()
-    {
-        await using var db = CreateContext();
-        var (requestId, _) = await SeedWorkbookRowsAsync(db, StructuredFactsProvider.MaxWorkbookLitigationRows + 20);
-
-        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId,
-            new QuestionHints(FilingCategory.Compliance, null, null, null, null), default);
-
-        Assert.DoesNotContain(facts, f => f.EntityType == "Litigation");
-        var note = Assert.Single(facts, f => f.Text.Contains("on file in the report workbook"));
-        Assert.Contains($"{StructuredFactsProvider.MaxWorkbookLitigationRows + 23} litigation record(s)", note.Text);
-        Assert.Contains("none is listed individually", note.Text);
-    }
-
-    [Fact]
-    public async Task A_short_workbook_list_is_still_given_in_full()
-    {
-        await using var db = CreateContext();
-        var (requestId, _) = await SeedWorkbookRowsAsync(db, 10);
-
-        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId,
-            new QuestionHints(FilingCategory.Compliance, null, null, null, null), default);
-
-        Assert.Equal(13, facts.Count(f => f.EntityType == "Litigation"));
-    }
 
     [Fact]
     public async Task The_context_builder_gives_the_matching_case_records_with_links_for_a_described_set_of_cases()

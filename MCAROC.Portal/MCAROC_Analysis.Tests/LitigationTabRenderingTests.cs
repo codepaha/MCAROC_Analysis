@@ -133,8 +133,7 @@ public class LitigationTabRenderingTests
     private static RequestDetailsViewModel CreateViewModel() => new()
     {
         Request = new McaRequest { CompanyName = "Test Co", RequestNumber = "REQ-1" },
-        Documents = [],
-        Litigations = []
+        Documents = []
     };
 
     private sealed class TestWebHostEnvironment : IWebHostEnvironment
@@ -147,109 +146,35 @@ public class LitigationTabRenderingTests
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 
-    // ── D5 / #60 — Key Indicators block ──
+    // ── One source: the litigation service (owner, 2026-10-26) ──
 
     [Fact]
-    public async Task Zero_litigation_renders_key_indicators_block_and_empty_state()
+    public async Task The_cases_badge_counts_the_companys_cases_before_any_filter()
     {
         var vm = CreateViewModel();
-        vm.Litigations = [];
-
-        var emptyDossier = CreateEmptyDossier();
-        var legalMetrics = DossierComputations.LitigationMetrics(emptyDossier);
-        vm.KeyMetrics = [legalMetrics];
-
-        var html = await RenderLitigationTabAsync(vm);
-
-        // Empty state message is present
-        Assert.Contains("No litigation was matched to this entity.", html);
-
-        // Key Indicators block is present even with zero litigations
-        Assert.Contains("Key Indicators", html);
-        Assert.Contains("Legal history", html);
-        Assert.Contains("Confirmed pending case count", html);
-        Assert.Contains("0 confirmed cases on record", html);
-        Assert.Contains("Cases filed against vs by the company", html);
-        Assert.Contains("NCLT / insolvency case count", html);
-        Assert.Contains("DRT case count", html);
-        Assert.Contains("Pending vs disposed ratio", html);
-        Assert.True(
-            html.Contains("Probable + Uncertain exposure count") ||
-            html.Contains("Probable &#x2B; Uncertain exposure count"),
-            "D8 Probable + Uncertain exposure count metric label should be present in HTML");
-
-        // Highlight grid should not be rendered when 0 litigations
-        Assert.DoesNotContain("mca-highlight-grid", html);
-    }
-
-    [Fact]
-    public async Task Populated_litigation_renders_both_highlight_grid_and_key_indicators()
-    {
-        var vm = CreateViewModel();
-        vm.Litigations =
-        [
-            new Litigation
-            {
-                LitigationId = 1,
-                MatchStatus = LitigationMatchStatus.Confirmed,
-                CaseStatus = "Pending",
-                CaseCategory = "Civil Cases",
-                Court = "High Court of Bombay"
-            }
-        ];
-
-        var dossier = CreateEmptyDossier() with
+        vm.LitigationDataLake = new LitigationTabViewModel
         {
-            Litigation = new DossierLitigation(vm.Litigations, [], new Dictionary<long, LitigationRole> { [1] = LitigationRole.FiledAgainst })
+            Request = vm.Request,
+            AuthoritativeSnapshot = new LitigationReportSnapshot { LitigationReportSnapshotId = 10, Status = LitigationReportSnapshotStatus.Completed },
+            SourceCoverage = new LitigationSourceCoverageViewModel { UniqueCasesCount = 28 },
+            TotalCaseCount = 6   // what the page's current status filter lists
         };
-        vm.KeyMetrics = [DossierComputations.LitigationMetrics(dossier)];
 
         var html = await RenderLitigationTabAsync(vm);
 
-        Assert.Contains("mca-highlight-grid", html);
-        Assert.Contains("Total Litigations", html);
-        Assert.Contains("Key Indicators", html);
-        Assert.Contains("Legal history", html);
-        Assert.Contains("Confirmed pending case count", html);
-        Assert.DoesNotContain("No litigation was matched to this entity.", html);
+        Assert.Equal(28, vm.LitigationCaseCount);
+        Assert.Contains("Cases <span class=\"badge\">28</span>", html);
+        Assert.DoesNotContain("Financial Disputes", html);
+        Assert.DoesNotContain("Legal history", html);
     }
 
-    // ── A10 / #52 — Financial Disputes section ──
-
     [Fact]
-    public async Task Financial_dispute_row_shows_direction_amount_and_verdict()
+    public void Before_a_search_completes_there_is_no_case_count()
     {
         var vm = CreateViewModel();
-        vm.FinancialDisputeCases =
-        [
-            new FinancialDisputeCase
-            {
-                Direction = "Payable",
-                DisputeType = "Trade Payable",
-                Currency = "INR",
-                AmountUnderDefault = 12.5m,
-                Verdict = "ALLOWED",
-                Court = "NCLT",
-                Litigants = "ACME BANK vs. TEST CORP",
-                CaseNumber = "CP123",
-                DateOfDefault = new DateOnly(2020, 1, 1)
-            }
-        ];
-
-        var html = await RenderLitigationTabAsync(vm);
-
-        Assert.Contains("Financial Disputes", html);
-        Assert.Contains("Payable", html);
-        Assert.Contains("ALLOWED", html);
-        Assert.Contains("ACME BANK vs. TEST CORP", html);
-        Assert.Contains("12.50", html);
-    }
-
-    [Fact]
-    public async Task Empty_financial_disputes_shows_empty_state()
-    {
-        var html = await RenderLitigationTabAsync(CreateViewModel());
-        Assert.Contains("No financial dispute cases were reported", html);
+        Assert.Null(vm.LitigationCaseCount);
+        vm.LitigationDataLake = new LitigationTabViewModel { Request = vm.Request };
+        Assert.Null(vm.LitigationCaseCount);
     }
 
     // ── #291 — Reused report provenance banner ──

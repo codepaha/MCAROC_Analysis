@@ -51,5 +51,11 @@ public class AnalysisRun
     /// Status/ExecutiveSummaryJson (see AnalysisOrchestrator's own try/catch around it).</summary>
     public string? ChargesNarrativeJson { get; set; }
 
+    /// <summary>The request's litigation live-data version (<see cref="McaRequest.LiveDataVersion"/>) the litigation findings were evaluated
+    /// at. The litigation service's cases land after the analysis, and change with every refresh, hide or attribution; whenever the request's
+    /// version moves past this, <c>LitigationFindingsRefresher</c> re-evaluates only the litigation rules (no AI call) and stores the new
+    /// version. Null for a run made before this existed: it is refreshed once, the same way.</summary>
+    public long? LitigationFindingsVersion { get; set; }
+
     public List<AnalysisFinding> Findings { get; set; } = [];
 }

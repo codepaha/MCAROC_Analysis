@@ -9,9 +9,8 @@ namespace MCAROC_Analysis.Tests;
 /// litigants, [1] director/guarantor vs litigants, [2] charge holder vs requesting client. Built from three
 /// real, verified examples on Coastal Projects Limited (request 4): State Bank of India is both a charge
 /// holder and an NCLT petitioner; director SURENDRA BABU SABBINENI is a personal guarantor and a litigant
-/// across several writ petitions; HDFC Bank is both the requesting client and a charge holder. Every
-/// Litigation fixture below sets CaseStatus="Pending" explicitly — it defaults to null, and
-/// LitigationRules.IsPending(null) is false, so an omitted CaseStatus would silently never match.</summary>
+/// across several writ petitions; HDFC Bank is both the requesting client and a charge holder. The cases are
+/// litigation-service cases (<see cref="AnalysisTestHelpers.Case"/>); only a pending one is a current signal.</summary>
 public class EntityCrossReferenceRulesTests
 {
     // ── Check 1: charge holder ↔ litigant ──────────────────────────────────────────────────────────
@@ -20,14 +19,14 @@ public class EntityCrossReferenceRulesTests
     public void ChargeHolder_MatchingLitigant_TriggersReview()
     {
         var charge = new RocCharge { ChargeId = 1, RocChargeNumber = "C1", LatestChargeHolderRaw = "State Bank of India" };
-        var lit = new Litigation { LitigationId = 10, CaseNumber = "TP 255/2019", CaseStatus = "Pending", Litigants = "State Bank of India vs. Test Co" };
-        var ctx = BuildContext(charges: [charge], litigations: [lit]);
+        var lit = Case(10, "TP 255/2019", "Pending", "State Bank of India vs. Test Co");
+        var ctx = BuildContext(charges: [charge], litigationCases: [lit]);
 
         var result = EntityCrossReferenceRules.Evaluate(ctx);
 
         Assert.Equal(RuleEvaluationStatus.Triggered, result[0].Status);
         Assert.Equal(FindingSeverity.Review, result[0].Finding!.Severity);
-        Assert.Contains("\"entityType\":\"Litigation\"", result[0].Finding!.SourceReferenceJson);
+        Assert.Contains("\"entityType\":\"LitigationCase\"", result[0].Finding!.SourceReferenceJson);
         Assert.Contains("10", result[0].Finding!.SourceReferenceJson);
     }
 
@@ -37,8 +36,8 @@ public class EntityCrossReferenceRulesTests
         // Same lender, two different raw strings — proves the local suffix-stripping normalization (not
         // just NameNormalizer.Normalize, which does no suffix stripping) is doing the work.
         var charge = new RocCharge { ChargeId = 1, RocChargeNumber = "C1", LatestChargeHolderRaw = "Aditya Birla Finance Limited" };
-        var lit = new Litigation { LitigationId = 10, CaseNumber = "1", CaseStatus = "Pending", Litigants = "ADITYA BIRLA FINANCE LTD. vs. Test Co" };
-        var ctx = BuildContext(charges: [charge], litigations: [lit]);
+        var lit = Case(10, "1", "Pending", "ADITYA BIRLA FINANCE LTD. vs. Test Co");
+        var ctx = BuildContext(charges: [charge], litigationCases: [lit]);
 
         var result = EntityCrossReferenceRules.Evaluate(ctx);
 
@@ -49,8 +48,8 @@ public class EntityCrossReferenceRulesTests
     public void ChargeHolder_NoOverlap_NotTriggered()
     {
         var charge = new RocCharge { ChargeId = 1, RocChargeNumber = "C1", LatestChargeHolderRaw = "HDFC Bank Limited" };
-        var lit = new Litigation { LitigationId = 10, CaseNumber = "1", CaseStatus = "Pending", Litigants = "Some unrelated party vs. Test Co" };
-        var ctx = BuildContext(charges: [charge], litigations: [lit]);
+        var lit = Case(10, "1", "Pending", "Some unrelated party vs. Test Co");
+        var ctx = BuildContext(charges: [charge], litigationCases: [lit]);
 
         var result = EntityCrossReferenceRules.Evaluate(ctx);
 
@@ -67,8 +66,8 @@ public class EntityCrossReferenceRulesTests
             ChargeId = 1, RocChargeNumber = "C1", LatestChargeHolderRaw = "State Bank of India",
             SatisfactionDate = new DateOnly(2020, 1, 1)
         };
-        var lit = new Litigation { LitigationId = 10, CaseNumber = "TP 255/2019", CaseStatus = "Pending", Litigants = "State Bank of India vs. Test Co" };
-        var ctx = BuildContext(charges: [charge], litigations: [lit]);
+        var lit = Case(10, "TP 255/2019", "Pending", "State Bank of India vs. Test Co");
+        var ctx = BuildContext(charges: [charge], litigationCases: [lit]);
 
         var result = EntityCrossReferenceRules.Evaluate(ctx);
 
@@ -76,33 +75,28 @@ public class EntityCrossReferenceRulesTests
     }
 
     [Fact]
-    public void ChargeHolder_UnconfirmedLitigationMatch_NotTriggered()
+    public void Before_a_litigation_search_completes_the_litigation_checks_are_not_evaluated()
     {
-        // Review finding #196: LegalHistoryParser marks a case Probable/Uncertain when the data vendor
-        // hasn't confirmed it belongs to this company at all — LitigationRules itself never treats such a
-        // row as a confirmed adverse signal, and neither should this rule.
+        // Only the litigation service's cases are read; until a search completes there is nothing to say either way, so neither check
+        // reports "no match" (that would read as "checked, nothing found").
         var charge = new RocCharge { ChargeId = 1, RocChargeNumber = "C1", LatestChargeHolderRaw = "State Bank of India" };
-        var lit = new Litigation
-        {
-            LitigationId = 10, CaseNumber = "1", CaseStatus = "Pending", Litigants = "State Bank of India vs. Test Co",
-            MatchStatus = LitigationMatchStatus.Probable
-        };
-        var ctx = BuildContext(charges: [charge], litigations: [lit]);
+        var director = new Director { NameRaw = "SURENDRA BABU SABBINENI" };
+        var ctx = BuildContext(charges: [charge], directors: [director]);
 
         var result = EntityCrossReferenceRules.Evaluate(ctx);
 
-        Assert.Equal(RuleEvaluationStatus.NotTriggered, result[0].Status);
+        Assert.Equal(RuleEvaluationStatus.NotEvaluated, result[0].Status);
+        Assert.Equal(RuleEvaluationStatus.NotEvaluated, result[1].Status);
     }
 
     [Fact]
     public void ChargeHolder_ResolvedLitigation_NotTriggered()
     {
-        // Review finding #196: a disposed/closed/dismissed case is resolved, historical exposure — the
-        // same "closed" definition LitigationRules.IsPending already uses to exclude cases from its own
-        // findings, reused rather than duplicated.
+        // Review finding #196: a disposed/closed/dismissed case is resolved, historical exposure — the Litigation tab's own status
+        // buckets decide (LitigationEvidence.IsPending), the same definition LitigationRules uses.
         var charge = new RocCharge { ChargeId = 1, RocChargeNumber = "C1", LatestChargeHolderRaw = "State Bank of India" };
-        var lit = new Litigation { LitigationId = 10, CaseNumber = "1", CaseStatus = "Disposed", Litigants = "State Bank of India vs. Test Co" };
-        var ctx = BuildContext(charges: [charge], litigations: [lit]);
+        var lit = Case(10, "1", "Disposed", "State Bank of India vs. Test Co");
+        var ctx = BuildContext(charges: [charge], litigationCases: [lit]);
 
         var result = EntityCrossReferenceRules.Evaluate(ctx);
 
@@ -115,14 +109,14 @@ public class EntityCrossReferenceRulesTests
     public void Director_MatchingLitigant_TriggersWatch()
     {
         var director = new Director { DirectorId = 1, NameRaw = "SURENDRA BABU SABBINENI" };
-        var lit = new Litigation { LitigationId = 10, CaseNumber = "WP/15439/2020", CaseStatus = "Pending", Litigants = "Sabbineni Surendra vs. Test Co" };
-        var ctx = BuildContext(directors: [director], litigations: [lit]);
+        var lit = Case(10, "WP/15439/2020", "Pending", "Sabbineni Surendra vs. Test Co");
+        var ctx = BuildContext(directors: [director], litigationCases: [lit]);
 
         var result = EntityCrossReferenceRules.Evaluate(ctx);
 
         Assert.Equal(RuleEvaluationStatus.Triggered, result[1].Status);
         Assert.Equal(FindingSeverity.Watch, result[1].Finding!.Severity);
-        Assert.Contains("\"entityType\":\"Litigation\"", result[1].Finding!.SourceReferenceJson);
+        Assert.Contains("\"entityType\":\"LitigationCase\"", result[1].Finding!.SourceReferenceJson);
     }
 
     [Fact]
@@ -140,8 +134,8 @@ public class EntityCrossReferenceRulesTests
                 PropertyParticulars = "Personal Guarantee of Shri. S. Surendra and Shri. G. Hari Hara Rao."
             }]
         };
-        var lit = new Litigation { LitigationId = 10, CaseNumber = "1", CaseStatus = "Pending", Litigants = "G Hari Hara Rao vs. Test Co" };
-        var ctx = BuildContext(charges: [charge], litigations: [lit]);
+        var lit = Case(10, "1", "Pending", "G Hari Hara Rao vs. Test Co");
+        var ctx = BuildContext(charges: [charge], litigationCases: [lit]);
 
         var result = EntityCrossReferenceRules.Evaluate(ctx);
 
@@ -165,8 +159,8 @@ public class EntityCrossReferenceRulesTests
                 PropertyParticulars = "Personal guarantee of Mr. S. Surendra, Managing Director"
             }]
         };
-        var lit = new Litigation { LitigationId = 10, CaseNumber = "1", CaseStatus = "Pending", Litigants = "XYZ Company, Managing Director vs. Test Co" };
-        var ctx = BuildContext(directors: [director], charges: [charge], litigations: [lit]);
+        var lit = Case(10, "1", "Pending", "XYZ Company, Managing Director vs. Test Co");
+        var ctx = BuildContext(directors: [director], charges: [charge], litigationCases: [lit]);
 
         var result = EntityCrossReferenceRules.Evaluate(ctx);
 
@@ -192,8 +186,8 @@ public class EntityCrossReferenceRulesTests
         };
         // Litigants deliberately shares no token with the director's name, so the only way this could
         // trigger is a stray guarantor extraction from the corporate-guarantee text above.
-        var lit = new Litigation { LitigationId = 10, CaseNumber = "1", CaseStatus = "Pending", Litigants = "Orissa State Financial Corporation vs. Test Co" };
-        var ctx = BuildContext(directors: [director], charges: [charge], litigations: [lit]);
+        var lit = Case(10, "1", "Pending", "Orissa State Financial Corporation vs. Test Co");
+        var ctx = BuildContext(directors: [director], charges: [charge], litigationCases: [lit]);
 
         var result = EntityCrossReferenceRules.Evaluate(ctx);
 
@@ -207,8 +201,8 @@ public class EntityCrossReferenceRulesTests
         // token, not any shared token, so an unrelated litigant mentioning only a common surname doesn't
         // falsely implicate a director whose name happens to share it.
         var director = new Director { DirectorId = 1, NameRaw = "Ajay Dilkush Sarupria" }; // longest token: SARUPRIA
-        var lit = new Litigation { LitigationId = 10, CaseNumber = "1", CaseStatus = "Pending", Litigants = "Ramesh Kumar vs. Test Co" };
-        var ctx = BuildContext(directors: [director], litigations: [lit]);
+        var lit = Case(10, "1", "Pending", "Ramesh Kumar vs. Test Co");
+        var ctx = BuildContext(directors: [director], litigationCases: [lit]);
 
         var result = EntityCrossReferenceRules.Evaluate(ctx);
 
@@ -220,8 +214,8 @@ public class EntityCrossReferenceRulesTests
     {
         // Same pending/resolved definition applies to Check 2 as Check 1.
         var director = new Director { DirectorId = 1, NameRaw = "SURENDRA BABU SABBINENI" };
-        var lit = new Litigation { LitigationId = 10, CaseNumber = "1", CaseStatus = "Dismissed", Litigants = "Sabbineni Surendra vs. Test Co" };
-        var ctx = BuildContext(directors: [director], litigations: [lit]);
+        var lit = Case(10, "1", "Dismissed", "Sabbineni Surendra vs. Test Co");
+        var ctx = BuildContext(directors: [director], litigationCases: [lit]);
 
         var result = EntityCrossReferenceRules.Evaluate(ctx);
 
