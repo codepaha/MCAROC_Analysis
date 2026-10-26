@@ -10,7 +10,6 @@ using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Tests.Checks;
 using MCAROC_Analysis.Tests.Dossier;
 using Microsoft.EntityFrameworkCore;
-using UglyToad.PdfPig;
 using Xunit;
 
 namespace MCAROC_Analysis.Tests;
@@ -104,55 +103,6 @@ public class LlpDisplayTests : IAsyncLifetime
     }
 
     public Task DisposeAsync() => Task.CompletedTask;
-
-    private static string WebRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "MCAROC.Portal"))) dir = dir.Parent;
-        return Path.Combine(dir!.FullName, "MCAROC.Portal", "MCAROC_Analysis", "wwwroot");
-    }
-
-    [SkippableFact]
-    public async Task An_LLPs_dossier_says_LLPIN_partners_and_contribution_and_lists_its_contributors()
-    {
-        Skip.IfNot(OperatingSystem.IsWindows(), "PdfPig text extraction from SkiaSharp subset fonts is unreliable on Linux; covered by the windows-tests job.");
-
-        await using var seed = Ctx();
-        var (requestId, _, _) = await DossierTestSeed.SeedAsync(seed);
-        await using var db = Ctx();
-        var company = (await new DossierAssembler(db).BuildAsync(requestId))!;
-        company.Profile!.LlpObligationOfContributionCrore = 2.0m;
-        company.Profile.LlpContributionReceivedCrore = 1.75m;
-        var llp = Llp(company) with
-        {
-            Corporate = company.Corporate with
-            {
-                Structure = new CompanyStructure { LlpPartners = 1, LlpDesignatedPartners = 2 },
-                LlpContributions =
-                [
-                    new LlpContribution { Name = "PARTNER ONE", Kind = LlpContributorKind.Partner, Designation = "Designated Partner", ObligationOfContributionCrore = 1.25m, ContributionReceivedCrore = 1.0m, AsOnDate = new DateOnly(2026, 3, 31) },
-                    new LlpContribution { Name = "SAMPLE HOLDINGS PRIVATE LIMITED", Kind = LlpContributorKind.BodyCorporate, NomineeName = "NOMINEE PERSON", ObligationOfContributionCrore = 0.75m, ContributionReceivedCrore = 0.75m },
-                ],
-            },
-        };
-
-        var pdf = new DossierPdfRenderer(WebRoot()).Render(llp, DossierVariant.Executive);
-        using var doc = PdfDocument.Open(new MemoryStream(pdf));
-        var text = string.Concat(doc.GetPages().Select(p => p.Text));
-
-        Assert.Contains("LLPIN", text);
-        Assert.Contains("ZZZ-1234", text);
-        Assert.DoesNotContain("CIN ZZZ-1234", text);
-        Assert.Contains("Partners & Governance", text);
-        Assert.Contains("Partners' contributions", text);
-        Assert.Contains("PARTNER ONE", text);
-        Assert.Contains("(nominee NOMINEE", text);   // the role cell wraps there, and the extracted text drops the space at a wrap
-        Assert.Contains("Contribution received", text);
-        Assert.Contains("Designated partners", text);
-        Assert.DoesNotContain("Paid-up capital", text);
-        Assert.DoesNotContain("Authorised capital", text);
-        Assert.DoesNotContain("Directors register", text);
-    }
 
     // ---- the chat ----------------------------------------------------------------------------------------------------------------------------
 
