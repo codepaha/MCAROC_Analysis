@@ -41,7 +41,8 @@ public sealed class AutoFetchJobService(
     IWorkbookDerivativeService? derivativeService = null,
     CompanyRefreshService? refresh = null,
     CompanyUnlockService? unlock = null,
-    IdentityResolutionService? identity = null)
+    IdentityResolutionService? identity = null,
+    IOptions<LargeArchiveUploadOptions>? uploadOptions = null)
 {
     /// <summary>Fallback per-file size estimate used when the registry gives no declared size for a
     /// document or an attachment — only for sizing the up-front storage reservation and the plan-time
@@ -49,6 +50,7 @@ public sealed class AutoFetchJobService(
     /// actually bounds real disk usage regardless of how good this estimate is.</summary>
     private const long FallbackPerFileEstimateBytes = 2_000_000L; // 2 MB
     private readonly ReferenceToolOptions _opts = options.Value;
+    private readonly ArchiveSafetyLimits _archiveLimits = uploadOptions?.Value is { } u ? ArchiveSafetyLimits.FromOptions(u) : ArchiveSafetyLimits.Default;
     private static readonly TimeSpan ProgressFlushInterval = TimeSpan.FromSeconds(2);
 
     // ── Creation ───────────────────────────────────────────────────────────────────────────────────
@@ -154,7 +156,9 @@ public sealed class AutoFetchJobService(
     public async Task<AutoFetchJob?> RequeueAsync(long requestId, CancellationToken ct, string? correlationId = null)
     {
         var job = await db.AutoFetchJobs.FirstOrDefaultAsync(j => j.RequestId == requestId, ct);
-        if (job is null || !job.IsTerminal) return job;
+        if (job is null) return null;
+        await db.Entry(job).ReloadAsync(ct);
+        if (!job.IsTerminal) return job;
         if (!string.IsNullOrWhiteSpace(correlationId))
             job.CorrelationId = correlationId.Trim();
 
@@ -374,18 +378,46 @@ public sealed class AutoFetchJobService(
             await SaveWarningsAsync(job, correlationId, warnings, ct);
 
             // 5. Filings
+            var filingsStageFailed = false;
+            string? filingsStageFailure = null;
             if (job.IncludeFilings && job.FilingsDocumentId is null)
             {
                 await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
-                if (string.IsNullOrWhiteSpace(userId))
-                    throw new ReferenceToolException("The reference tool's user id could not be determined from the session — set ReferenceTool:UserId.");
-                await FetchFilingsAsync(request, job, correlationId, userId, warnings, ct);
+                // Clear any prior filings-stage failure warning before re-attempting filings,
+                // preserving unrelated workbook warnings.
+                warnings.RemoveAll(w => w.StartsWith("Filings stage failed:", StringComparison.OrdinalIgnoreCase));
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(userId))
+                        throw new ReferenceToolException("The reference tool's user id could not be determined from the session — set ReferenceTool:UserId.");
+                    await FetchFilingsAsync(request, job, correlationId, userId, warnings, ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (AutoFetchJobCancelledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    filingsStageFailed = true;
+                    filingsStageFailure = ex is ReferenceToolException ? ex.Message : $"{ex.GetType().Name}: {ex.Message}";
+                    logger.LogWarning(ex, "Auto-fetch filings failed for job {JobId} (request {RequestId}); continuing to CompletedWithWarnings",
+                        job.AutoFetchJobId, job.RequestId);
+                    var warning = $"Filings stage failed: {filingsStageFailure}";
+                    if (!warnings.Contains(warning)) warnings.Add(warning);
+                    await SaveWarningsAsync(job, correlationId, warnings, ct);
+                }
             }
 
             var finalStatus = warnings.Count > 0 ? AutoFetchJobStatus.CompletedWithWarnings : AutoFetchJobStatus.Completed;
-            var finalMessage = job.IncludeFilings
-                ? "Done — workbook data extracted, analysis queued, filings handed to the document pipeline."
-                : "Done — workbook data extracted and analysis queued.";
+            var finalMessage = filingsStageFailed
+                ? $"Done with warnings — workbook data extracted and analysis queued, but filings stage failed ({filingsStageFailure})."
+                : job.IncludeFilings
+                    ? "Done — workbook data extracted, analysis queued, filings handed to the document pipeline."
+                    : "Done — workbook data extracted and analysis queued.";
             var completedNow = DateTime.UtcNow;
             var warningsJson = JsonSerializer.Serialize(warnings);
 
@@ -618,11 +650,16 @@ public sealed class AutoFetchJobService(
 
         // No more is downloaded than the packaged archive may hold (PDFs barely compress; 5% is left for the zips' own overhead): past it the
         // archive check would refuse every filing, where stopping here keeps those that fit and says the list was cut.
-        var aggregateCap = Math.Min(_opts.MaxAggregateDownloadBytes, ArchiveSafetyLimits.Default.MaxArchiveSizeBytes / 100 * 95);
-        var (plan, estimatedBytes) = BuildDownloadPlan(registry, job.MaxDocumentsPerSection, aggregateCap, stagingDir, warnings);
+        var aggregateCap = Math.Min(_opts.MaxAggregateDownloadBytes, (long)(_archiveLimits.MaxArchiveSizeBytes * 0.95));
+        var (plan, estimatedBytes) = BuildDownloadPlan(registry, job.MaxDocumentsPerSection, aggregateCap, _archiveLimits, stagingDir, warnings);
         job.FilesTotal = plan.Sum(f => f.Files.Count);
         job.FilesDownloaded = plan.Sum(f => f.Files.Count(x => IsStaged(x.LocalPath)));
         job.FilesFailed = 0;
+        await AutoFetchGuarded(job.AutoFetchJobId, correlationId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.FilesTotal, job.FilesTotal)
+                .SetProperty(j => j.FilesDownloaded, job.FilesDownloaded)
+                .SetProperty(j => j.FilesFailed, 0), ct);
         await SaveWarningsAsync(job, correlationId, warnings, ct);
 
         if (plan.Count == 0)
@@ -728,7 +765,7 @@ public sealed class AutoFetchJobService(
             var outerZipPath = Path.Combine(stagingDir, $"{job.Cin}_filings.zip");
             AutoFetchArchiveBuilder.Build(outerZipPath, request.CompanyName, job.Cin, plan.Select(p => p.ToArchiveFiling()), ct);
 
-            var safety = ArchiveSafetyValidator.ValidateOuterArchive(outerZipPath, ArchiveSafetyLimits.Default);
+            var safety = ArchiveSafetyValidator.ValidateOuterArchive(outerZipPath, _archiveLimits);
             if (!safety.IsValid)
                 throw new ReferenceToolException($"The packaged filings archive failed the safety check: {safety.Error}");
 
@@ -780,13 +817,13 @@ public sealed class AutoFetchJobService(
     /// only decides how much is planned and how large a storage reservation to ask for; the live download
     /// loop in <see cref="FetchFilingsAsync"/> enforces the same cap against real downloaded bytes.</summary>
     private static (List<PlannedFiling> Plan, long EstimatedBytes) BuildDownloadPlan(
-        ReferenceDocumentRegistry registry, int maxDocumentsPerSection, long aggregateByteCap, string stagingDir, List<string> warnings)
+        ReferenceDocumentRegistry registry, int maxDocumentsPerSection, long aggregateByteCap, ArchiveSafetyLimits archiveLimits, string stagingDir, List<string> warnings)
     {
         var plan = new List<PlannedFiling>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var fileCount = 0;
         long estimatedBytes = 0;
-        var pdfCap = ArchiveSafetyLimits.Default.MaxPdfCount;
+        var pdfCap = archiveLimits.MaxPdfCount;
         var truncatedByCount = false;
         var truncatedByBytes = false;
 

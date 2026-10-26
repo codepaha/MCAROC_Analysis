@@ -24,7 +24,7 @@ public class FilingBatchProcessor(
     IOperationalSlotLeaseService? slotLeaseService = null,
     IOptions<LargeArchiveUploadOptions>? archiveOptions = null)
 {
-    private static readonly ArchiveSafetyLimits Limits = ArchiveSafetyLimits.Default;
+    private readonly ArchiveSafetyLimits _limits = archiveOptions?.Value is { } o ? ArchiveSafetyLimits.FromOptions(o) : ArchiveSafetyLimits.Default;
     private const int MaxRetryCount = 3;
     private static readonly FilingCategory[] AiEligibleCategories =
         [FilingCategory.Charge, FilingCategory.Compliance, FilingCategory.Constitutional];
@@ -103,7 +103,7 @@ public class FilingBatchProcessor(
             batch.Status = FilingBatchStatus.Unpacking;
             await db.SaveChangesAsync(cts.Token);
 
-            var outerSafety = ArchiveSafetyValidator.ValidateOuterArchive(outerZipDoc.StoragePath, Limits);
+            var outerSafety = ArchiveSafetyValidator.ValidateOuterArchive(outerZipDoc.StoragePath, _limits);
             if (!outerSafety.IsValid)
                 throw new InvalidOperationException($"Archive safety check failed: {outerSafety.Error}");
 
@@ -207,7 +207,7 @@ public class FilingBatchProcessor(
 
         try
         {
-            var nestedSafety = ArchiveSafetyValidator.ValidateNestedArchive(tempNestedZipPath, Limits, currentDepth: 2, cumulativeStats);
+            var nestedSafety = ArchiveSafetyValidator.ValidateNestedArchive(tempNestedZipPath, _limits, currentDepth: 2, cumulativeStats);
 
             // Persist the tracker's running totals now, in the same SaveChangesAsync as the new McaFiling
             // row below — a crash right after this nested zip finishes must not lose credit for its bytes
