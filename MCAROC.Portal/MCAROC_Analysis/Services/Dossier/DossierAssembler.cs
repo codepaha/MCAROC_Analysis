@@ -133,11 +133,6 @@ public class DossierAssembler(
             catch (Exception ex) when (ex is not OperationCanceledException) { chargeLinks = null; }
         }
 
-        // ── Litigation ──
-        var litigations = await db.Litigations.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct);
-        var financialDisputeCases = await db.FinancialDisputeCases.AsNoTracking().Where(x => x.IngestionRunId == runId)
-            .OrderByDescending(x => x.DateOfDefault).ToListAsync(ct);
-
         // ── Source records (Layer 0) — the verbatim staging rows the "Full source" annexure renders from ──
         var sourceRows = await db.SourceRows.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct);
         var sourceSheets = BuildSourceSheets(sourceRows);
@@ -168,18 +163,6 @@ public class DossierAssembler(
 
         var notAssessed = DeserializeSufficiencyNotes(analysis.DataSufficiencyNotesJson);
 
-        LitigationDataCurrencySummary? litigationCurrency = null;
-        if (courtRefreshStatus is not null)
-        {
-            litigationCurrency = await courtRefreshStatus.GetDossierDataCurrencySummaryAsync(
-                request.RequestId,
-                litigations,
-                run?.SourceSnapshotDate ?? run?.CompletedDate,
-                ct);
-        }
-
-        var roles = DossierComputations.LitigationRoles(litigations, findings);
-
         var model = new DossierModel(
             request.RequestId, runId, analysis.AnalysisRunId,
             new DossierCover(
@@ -196,7 +179,9 @@ public class DossierAssembler(
                 DossierComputations.LenderConcentration(charges),
                 findings.Count(f => f.Code == ChargeRules.MaterialEnhancementCode)),
             new DossierCompliance(compliance, msme, gst, epfo, epfoEstablishments, DossierDeduplicator.SummariseSuitFiled(compliance), creditRatings),
-            new DossierLitigation(litigations, DossierDeduplicator.ThreadLitigation(litigations), roles, financialDisputeCases, litigationCurrency),
+            // A request's litigation comes only from the litigation service and has its own report; the workbook's legal-history sheets are
+            // not read (owner, 2026-10-26), so the dossier carries no litigation register.
+            new DossierLitigation([], [], new Dictionary<long, LitigationRole>()),
             new DossierExecSummary(
                 analysis.OverallReviewPriority,
                 analysis.CriticalFindingsCount, analysis.ReviewFindingsCount,

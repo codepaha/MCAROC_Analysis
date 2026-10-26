@@ -7,73 +7,13 @@
     var lake = Model.LitigationDataLake;
     var reqId = Model.Request.RequestId;
     var reqIdJs = reqId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-
-    // Workbook-reported cases: only Confirmed matches are ever shown to clients.
-    var confirmed = Model.Litigations.Where(l => l.MatchStatus == LitigationMatchStatus.Confirmed).ToList();
-    var showWorkbookFallback = lake?.AuthoritativeSnapshot is null && confirmed.Count > 0;
-    var workbookCats = confirmed
-        .Where(l => !string.IsNullOrWhiteSpace(l.CaseCategory))
-        .GroupBy(l => l.CaseCategory!)
-        .OrderByDescending(g => g.Count()).ToList();
-
-    string RoleBadge(LitigationRole role) => role switch
-    {
-        LitigationRole.FiledAgainst => "sev-critical",
-        LitigationRole.FiledBy => "sev-positive",
-        _ => "sev-watch"
-    };
-
-    void RenderCasesTable(List<Litigation> cases)
-    {
-        if (cases.Count == 0)
-        {
-            <div class="mca-empty"><i class="bi bi-bank"></i><p>No cases in this section.</p></div>
-            return;
-        }
-
-        <div class="pi-table-wrap">
-            <table class="pi-results-table">
-                <thead>
-                    <tr>
-                        <th>Role</th>
-                        <th>Status</th>
-                        <th>Category</th>
-                        <th>Type</th>
-                        <th>Court</th>
-                        <th>Parties</th>
-                        <th>Case No.</th>
-                        <th>Last Hearing</th>
-                        <th>Source</th>
-                    </tr>
-                </thead>
-                <tbody>
-                @foreach (var l in cases.OrderByDescending(l => l.LastHearingDate))
-                {
-                    var role = Model.RoleFor(l);
-                    <tr>
-                        <td><span class="mca-badge @RoleBadge(role)">@RoleLabel(role)</span></td>
-                        <td>@Or(l.CaseStatus)</td>
-                        <td>@Or(l.CaseCategory)</td>
-                        <td>@Or(l.CaseType)</td>
-                        <td>@Or(l.Court)</td>
-                        <td>@Or(l.Litigants)</td>
-                        <td class="report-id">@Or(l.CaseNumber)</td>
-                        <td>@D(l.LastHearingDate)</td>
-                        <td>@(l.Source == LitigationSource.DataLake ? "Data Lake" : "ROC Report")</td>
-                    </tr>
-                }
-                </tbody>
-            </table>
-        </div>
-    }
 }
 
 <nav class="mca-contents-nav litigation-section-links" id="contents-nav-litigation" aria-label="Litigation contents">
 
     <ul class="nav mca-contents-links">
         <li class="nav-item"><a class="nav-link active" href="#sec-litigation-summary">Summary</a></li>
-        <li class="nav-item"><a class="nav-link" href="#sec-litigation-cases">Cases <span class="badge">@(lake?.AuthoritativeSnapshot is not null ? lake.TotalCaseCount : confirmed.Count)</span></a></li>
-        <li class="nav-item"><a class="nav-link" href="#sec-litigation-financial-disputes">Financial Disputes <span class="badge">@Model.FinancialDisputeCases.Count</span></a></li>
+        <li class="nav-item"><a class="nav-link" href="#sec-litigation-cases">Cases <span class="badge">@(Model.LitigationCaseCount ?? 0)</span></a></li>
     </ul>
 </nav>
 
@@ -703,81 +643,10 @@
 
 
 }
-@if (lake?.AuthoritativeSnapshot is null)
-{
-    <!-- Workbook summary: shown until live court records are available. Confirmed matches only. -->
-    @if (Model.LitigationCount == 0)
-    {
-        <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No litigation was matched to this entity.", SheetAliases.LegalHistory)</p></div>
-    }
-    else
-    {
-        <div class="mca-highlight-grid">
-            <div class="pi-metric">
-                <span>Total Litigations</span>
-                <strong>@confirmed.Count</strong>
-                <small>confirmed matches only</small>
-            </div>
-            <div class="pi-metric">
-                <span>Confirmed Cases</span>
-                <strong>@confirmed.Count</strong>
-                <small>@confirmed.Count(IsPendingRow) pending · @confirmed.Count(l => !IsPendingRow(l)) disposed</small>
-            </div>
-            <div class="pi-metric">
-                <span>Filed Against Company</span>
-                <strong>@Model.LitigationFiledAgainstCount</strong>
-                <small>from Phase 3 rule attribution</small>
-            </div>
-            <div class="pi-metric">
-                <span>Filed By Company</span>
-                <strong>@Model.LitigationFiledByCount</strong>
-                <small>company as petitioner</small>
-            </div>
-        </div>
-    }
-
-    @await Html.PartialAsync("~/Views/Requests/Details/_KeyIndicators.cshtml", Model.KeyMetrics.Where(g => g.Title == "Legal history").ToList())
-
-    @if (workbookCats.Count > 0)
-    {
-        <div class="mca-section" style="margin-top:22px;">
-            <h4>By Category</h4>
-            <div class="pi-table-wrap">
-                <table class="pi-results-table">
-                    <thead>
-                        <tr>
-                            <th>Category</th>
-                            <th class="text-end">Total Cases</th>
-                            <th class="text-end">Pending</th>
-                            <th class="text-end">Disposed</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    @foreach (var g in workbookCats)
-                    {
-                        var pending = g.Count(IsPendingRow);
-                        <tr>
-                            <td><strong>@g.Key</strong></td>
-                            <td class="text-end">@g.Count()</td>
-                            <td class="text-end">@pending</td>
-                            <td class="text-end">@(g.Count() - pending)</td>
-                        </tr>
-                    }
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    }
-}
 </section>
 
 <section class="mca-contents-section" id="sec-litigation-cases" aria-labelledby="head-litigation-cases" tabindex="-1">
 <h3 class="visually-hidden" id="head-litigation-cases">Cases</h3>
-@if (showWorkbookFallback)
-{
-    <p class="text-muted small">Confirmed cases reported in the ingested MCA workbook. Live court records appear here once the litigation search completes.</p>
-    RenderCasesTable(confirmed);
-}
 @if (lake is not null)
 {
     <div class="litigation-register" id="litigation-register">
@@ -1115,59 +984,4 @@
     </script>
 }
 
-<!-- Shared Financial Disputes Section -->
-<section class="mca-contents-section mt-4" id="sec-litigation-financial-disputes" aria-labelledby="head-litigation-financial-disputes" tabindex="-1">
-    <h3 id="head-litigation-financial-disputes">Financial Disputes</h3>
-    <p class="text-muted small">Money-claim disputes with an amount under default from the ingested MCA workbook.</p>
-    @if (Model.FinancialDisputeCases.Count > 0)
-    {
-        <div class="pi-table-wrap">
-            <table class="pi-results-table">
-                <thead>
-                    <tr>
-                        <th>Direction</th>
-                        <th>Type</th>
-                        <th class="text-end">Amount Under Default</th>
-                        <th>Currency</th>
-                        <th>Verdict</th>
-                        <th>Court</th>
-                        <th>Parties</th>
-                        <th>Case No.</th>
-                        <th>Date of Default</th>
-                        <th>Date of Judgement</th>
-                    </tr>
-                </thead>
-                <tbody>
-                @foreach (var fd in Model.FinancialDisputeCases)
-                {
-                    <tr>
-                        <td>@Or(fd.Direction)</td>
-                        <td>@Or(fd.DisputeType)</td>
-                        <td class="text-end"><strong>@Num(fd.AmountUnderDefault)</strong></td>
-                        <td>@Or(fd.Currency)</td>
-                        <td><strong>@Or(fd.Verdict)</strong></td>
-                        <td>@Or(fd.Court)</td>
-                        <td>@Or(fd.Litigants)</td>
-                        <td class="report-id">@Or(fd.CaseNumber)</td>
-                        <td>@D(fd.DateOfDefault)</td>
-                        <td>@D(fd.DateOfJudgement)</td>
-                    </tr>
-                }
-                </tbody>
-            </table>
-        </div>
-    }
-    else
-    {
-        <div class="mca-empty"><i class="bi bi-bank"></i><p>@Model.SheetCoverage.EmptyState("No financial dispute cases were reported in this workbook.", SheetAliases.LegalCasesFinancialDispute)</p></div>
-    }
-</section>
 
-@functions {
-    static bool IsPendingRow(Litigation l)
-    {
-        if (string.IsNullOrWhiteSpace(l.CaseStatus)) return false;
-        var t = l.CaseStatus.ToLowerInvariant();
-        return !new[] { "dispos", "clos", "resolv", "dismiss", "withdraw", "settl" }.Any(k => t.Contains(k));
-    }
-}

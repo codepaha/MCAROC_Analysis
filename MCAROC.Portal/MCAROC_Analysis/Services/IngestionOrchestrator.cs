@@ -350,21 +350,8 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
             Collect(r, issues, ref itemCount);
         }
 
-        var legalSheet = rocSheets.Find(SheetAliases.LegalHistory);
-        if (legalSheet is not null)
-        {
-            var r = LegalHistoryParser.Parse(legalSheet, requestId, runId, rocDocumentId);
-            db.Litigations.AddRange(r.Items);
-            Collect(r, issues, ref itemCount);
-        }
-
-        var financialDisputeSheet = rocSheets.Find(SheetAliases.LegalCasesFinancialDispute);
-        if (financialDisputeSheet is not null)
-        {
-            var r = FinancialDisputeParser.Parse(financialDisputeSheet, requestId, runId, rocDocumentId);
-            db.FinancialDisputeCases.AddRange(r.Items);
-            Collect(r, issues, ref itemCount);
-        }
+        // The workbook's "Legal History" and "Legal Cases - Financial Dispute" sheets are not read: a request's litigation comes only from the
+        // litigation service (owner, 2026-10-05 and 2026-10-26), so a second, unattributed register can never disagree with it.
 
         // ── Phase 6 domain sheets ──
         var structureSheet = rocSheets.Find(SheetAliases.Structure);

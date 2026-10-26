@@ -113,12 +113,8 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
             docs = withText.ToDictionary(d => d.LitigationCaseOrderId);
         }
 
-        var workbook = runId is { } rid
-            ? await db.Litigations.AsNoTracking().Where(l => l.RequestId == requestId && l.IngestionRunId == rid).ToListAsync(ct)
-            : [];
-
         // Version/SnapshotId let a consumer that caches or stores its own output (the dossier) key on the evidence used.
-        var summary = ChargeLitigationLinker.Build(charges, cases, docs, workbook) with { SnapshotId = snapshotId, Version = version };
+        var summary = ChargeLitigationLinker.Build(charges, cases, docs) with { SnapshotId = snapshotId, Version = version };
 
         // The app cache is registered with a SizeLimit, so every entry must declare a size (see #331).
         cache.Set(key, summary, new MemoryCacheEntryOptions().SetAbsoluteExpiration(CacheFor).SetSize(1));

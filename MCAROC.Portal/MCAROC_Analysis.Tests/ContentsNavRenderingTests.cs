@@ -261,7 +261,7 @@ public class ContentsNavRenderingTests
     }
 
     [Fact]
-    public async Task LitigationTab_renders_contents_nav_and_exact_plural_financial_disputes_without_subtabs()
+    public async Task LitigationTab_renders_contents_nav_without_subtabs_or_a_financial_disputes_section()
     {
         var vm = CreateViewModel();
         var html = await RenderPartialAsync("/Views/Requests/Details/_LitigationTab.cshtml", vm);
@@ -277,7 +277,7 @@ public class ContentsNavRenderingTests
         Assert.Contains("href=\"#sec-litigation-cases\"", html);
         Assert.DoesNotContain("sec-litigation-probable", html);
         Assert.DoesNotContain("sec-litigation-unverified", html);
-        Assert.Contains("href=\"#sec-litigation-financial-disputes\"", html);
+        Assert.DoesNotContain("sec-litigation-financial-disputes", html);   // the workbook's sheet is not read (2026-10-26)
 
         // Stacked continuous sections
         Assert.Contains("id=\"sec-litigation-summary\"", html);
@@ -288,10 +288,6 @@ public class ContentsNavRenderingTests
         Assert.Contains("aria-labelledby=\"head-litigation-cases\"", html);
         Assert.Contains("id=\"head-litigation-cases\">Cases</h3>", html);
 
-        // Exact plural: sec-litigation-financial-disputes
-        Assert.Contains("id=\"sec-litigation-financial-disputes\"", html);
-        Assert.Contains("aria-labelledby=\"head-litigation-financial-disputes\"", html);
-        Assert.Contains("id=\"head-litigation-financial-disputes\">Financial Disputes</h3>", html);
 
         // No legacy subtab pills or tab-pane containers
         Assert.DoesNotContain("mca-subtabs", html);

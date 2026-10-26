@@ -10,9 +10,8 @@ namespace MCAROC_Analysis.Services.Analysis.Rules;
 /// and 3) are structural facts once normalized, not probabilistic guesses. Person-name matching (Check 2)
 /// is deliberately precision-biased: it matches on a name's single most distinctive token rather than any
 /// shared token, to avoid a common name component (e.g. "KUMAR") producing a false "this director is
-/// personally litigated" claim. Mirrors LitigationRules.DetermineRole's fail-closed substring-matching
-/// style — prefers a name genuinely appearing in free text over trying to parse that text into structured
-/// parties (most real Litigants values don't have a clean two-party shape at all).</summary>
+/// personally litigated" claim. The litigation side is the litigation service's pending cases (the set the
+/// Litigation tab lists, see <see cref="LitigationEvidence"/>), matched against every party they name.</summary>
 public static partial class EntityCrossReferenceRules
 {
     public const string LitigationByExistingChargeHolderCode = "LITIGATION_BY_EXISTING_CHARGE_HOLDER";
@@ -45,8 +44,10 @@ public static partial class EntityCrossReferenceRules
 
     private static RuleEvaluationOutcome EvaluateChargeHolderVsLitigants(AnalysisContext ctx)
     {
-        if (ctx.Charges.Count == 0 || ctx.Litigations.Count == 0)
-            return RuleEvaluationOutcome.NotEvaluated(LitigationByExistingChargeHolderCode, "No charge or litigation records available.");
+        if (ctx.Charges.Count == 0)
+            return RuleEvaluationOutcome.NotEvaluated(LitigationByExistingChargeHolderCode, "No charge records available.");
+        if (!ctx.Litigation.Searched)
+            return RuleEvaluationOutcome.NotEvaluated(LitigationByExistingChargeHolderCode, "The litigation search has not completed yet.");
 
         // Satisfied charges are historical exposure, not a current holder — describing a lender repaid
         // years ago as "an existing charge holder" would be a real, present-tense factual error.
@@ -57,11 +58,12 @@ public static partial class EntityCrossReferenceRules
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var matches = new List<(Litigation Litigation, string HolderName)>();
-        foreach (var lit in ConfirmedPendingLitigations(ctx))
+        var matches = new List<(LitigationCase Litigation, string HolderName)>();
+        foreach (var lit in PendingCases(ctx))
         {
-            if (string.IsNullOrWhiteSpace(lit.Litigants)) continue;
-            var normLitigants = NormalizeCompanyName(lit.Litigants);
+            var parties = LitigationEvidence.PartiesOf(lit);
+            if (parties.Count == 0) continue;
+            var normLitigants = NormalizeCompanyName(string.Join(" | ", parties));
 
             foreach (var holder in holderNames)
             {
@@ -80,8 +82,8 @@ public static partial class EntityCrossReferenceRules
 
         var distinctHolders = matches.Select(m => m.HolderName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var summary = distinctHolders.Count == 1
-            ? $"{distinctHolders[0]}, a secured charge holder on this company, is also named in {matches.Count} litigation record(s)."
-            : $"{distinctHolders.Count} existing charge holders (including {distinctHolders[0]}) are also named across {matches.Count} litigation record(s).";
+            ? $"{distinctHolders[0]}, a secured charge holder on this company, is also a party to {matches.Count} pending case(s)."
+            : $"{distinctHolders.Count} existing charge holders (including {distinctHolders[0]}) are also parties across {matches.Count} pending case(s).";
 
         return RuleEvaluationOutcome.Triggered(new FindingDraft(
             FindingSection.Litigation, FindingSeverity.Review, TemporalStatus.Current,
@@ -91,17 +93,17 @@ public static partial class EntityCrossReferenceRules
             {
                 matchCount = matches.Count,
                 chargeHolders = distinctHolders,
-                caseNumbers = matches.Select(m => m.Litigation.CaseNumber).Distinct()
+                caseNumbers = matches.Select(m => LitigationEvidence.Cite(m.Litigation)).Distinct()
             }),
-            SourceReferenceJson: LitigationRef(matches.Select(m => m.Litigation).Distinct())));
+            SourceReferenceJson: LitigationRules.LitigationRef(matches.Select(m => m.Litigation))));
     }
 
     // ── Check 2: director/guarantor ↔ litigant ─────────────────────────────────────────────────────
 
     private static RuleEvaluationOutcome EvaluateDirectorOrGuarantorVsLitigants(AnalysisContext ctx)
     {
-        if (ctx.Litigations.Count == 0)
-            return RuleEvaluationOutcome.NotEvaluated(LitigationInvolvesDirectorOrGuarantorCode, "No litigation records available.");
+        if (!ctx.Litigation.Searched)
+            return RuleEvaluationOutcome.NotEvaluated(LitigationInvolvesDirectorOrGuarantorCode, "The litigation search has not completed yet.");
 
         var candidateNames = ctx.Directors
             .Select(d => d.NameRaw)
@@ -113,11 +115,12 @@ public static partial class EntityCrossReferenceRules
         if (candidateNames.Count == 0)
             return RuleEvaluationOutcome.NotEvaluated(LitigationInvolvesDirectorOrGuarantorCode, "No director or personal-guarantor names available.");
 
-        var matches = new List<(Litigation Litigation, string PersonName)>();
-        foreach (var lit in ConfirmedPendingLitigations(ctx))
+        var matches = new List<(LitigationCase Litigation, string PersonName)>();
+        foreach (var lit in PendingCases(ctx))
         {
-            if (string.IsNullOrWhiteSpace(lit.Litigants)) continue;
-            var litigantTokens = Tokenize(lit.Litigants);
+            var parties = LitigationEvidence.PartiesOf(lit);
+            if (parties.Count == 0) continue;
+            var litigantTokens = Tokenize(string.Join(" ", parties));
 
             foreach (var name in candidateNames)
             {
@@ -134,8 +137,8 @@ public static partial class EntityCrossReferenceRules
 
         var distinctPeople = matches.Select(m => m.PersonName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var summary = distinctPeople.Count == 1
-            ? $"{distinctPeople[0]} (a director or personal guarantor of this company) is also named in {matches.Count} litigation record(s)."
-            : $"{distinctPeople.Count} directors/personal guarantors (including {distinctPeople[0]}) are also named across {matches.Count} litigation record(s).";
+            ? $"{distinctPeople[0]} (a director or personal guarantor of this company) is also a party to {matches.Count} pending case(s)."
+            : $"{distinctPeople.Count} directors/personal guarantors (including {distinctPeople[0]}) are also parties across {matches.Count} pending case(s).";
 
         return RuleEvaluationOutcome.Triggered(new FindingDraft(
             FindingSection.Litigation, FindingSeverity.Watch, TemporalStatus.Current,
@@ -145,9 +148,9 @@ public static partial class EntityCrossReferenceRules
             {
                 matchCount = matches.Count,
                 people = distinctPeople,
-                caseNumbers = matches.Select(m => m.Litigation.CaseNumber).Distinct()
+                caseNumbers = matches.Select(m => LitigationEvidence.Cite(m.Litigation)).Distinct()
             }),
-            SourceReferenceJson: LitigationRef(matches.Select(m => m.Litigation).Distinct())));
+            SourceReferenceJson: LitigationRules.LitigationRef(matches.Select(m => m.Litigation))));
     }
 
     /// <summary>Extracts personal-guarantor names from free text like "Personal Guarantee of Shri. S.
@@ -217,21 +220,9 @@ public static partial class EntityCrossReferenceRules
 
     // ── Shared helpers ──────────────────────────────────────────────────────────────────────────────
 
-    /// <summary>The only litigation rows worth cross-referencing as a *current* adverse/informational
-    /// signal: MatchStatus=Probable/Uncertain rows aren't even vendor-confirmed to belong to this company
-    /// (LitigationRules never treats them as a confirmed adverse signal either), and a resolved case
-    /// (LitigationRules.IsPending's own closed-keyword definition — disposed/closed/dismissed/withdrawn/
-    /// settled) describes historical exposure, not something currently true. Excluded rows are simply not
-    /// considered — matching LitigationRules.Evaluate's own precedent of filtering to pending cases up
-    /// front rather than emitting a separate Historical finding for resolved ones.</summary>
-    private static IEnumerable<Litigation> ConfirmedPendingLitigations(AnalysisContext ctx) =>
-        ctx.Litigations.Where(l => l.MatchStatus == LitigationMatchStatus.Confirmed && LitigationRules.IsPending(l.CaseStatus));
-
-    private static string LitigationRef(IEnumerable<Litigation> cases) => JsonSerializer.Serialize(new
-    {
-        entityType = nameof(Litigation),
-        entityIds = cases.Select(l => l.LitigationId).OrderBy(id => id).ToArray()
-    });
+    /// <summary>Only a pending case is a *current* signal: a disposed one describes historical exposure, not something currently true.
+    /// The cases are the company's own (attribution decided them); the status buckets are the Litigation tab's.</summary>
+    private static IEnumerable<LitigationCase> PendingCases(AnalysisContext ctx) => ctx.Litigation.Cases.Where(LitigationEvidence.IsPending);
 
     /// <summary>Uppercase, collapse whitespace, strip trailing punctuation, strip a small set of common
     /// corporate suffixes — goes further than NameNormalizer.Normalize() on purpose (that one is used for

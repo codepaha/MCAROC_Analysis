@@ -21,7 +21,7 @@ if (!Directory.Exists(rootPath))
 var reader = new ExcelSheetReader();
 List<string[]> rows =
 [
-    ["Company", "Profile", "Directors", "Officers", "Assoc.", "Sharehold.", "FinYears", "Charges", "ChgEvents", "MSME", "GST", "EPFO", "Auditor", "Litig.", "Warnings", "Errors"]
+    ["Company", "Profile", "Directors", "Officers", "Assoc.", "Sharehold.", "FinYears", "Charges", "ChgEvents", "MSME", "GST", "EPFO", "Auditor", "Warnings", "Errors"]
 ];
 
 var allWarnings = new List<CompanyIssue>();
@@ -100,10 +100,6 @@ foreach (var dir in companyDirs)
         var auditorsResult = auditorsSheet is not null ? AuditorsParser.Parse(auditorsSheet, 0, 0, null) : new ParseResult<MCAROC_Analysis.Data.Entities.AuditorObservation>();
         Tally(auditorsResult);
 
-        var legalSheet = SheetAliases.Find(rocWorkbook, SheetAliases.LegalHistory);
-        var legalResult = legalSheet is not null ? LegalHistoryParser.Parse(legalSheet, 0, 0, null) : new ParseResult<MCAROC_Analysis.Data.Entities.Litigation>();
-        Tally(legalResult);
-
         rows.Add([
             companyName,
             companyResult.Items.Count > 0 ? "OK" : "MISSING",
@@ -118,14 +114,13 @@ foreach (var dir in companyDirs)
             gstOutput.Registrations.Items.Count.ToString(),
             epfoResult.Items.Count.ToString(),
             auditorsResult.Items.Count.ToString(),
-            legalResult.Items.Count.ToString(),
             warnings.ToString(),
             errors.ToString()
         ]);
     }
     catch (Exception ex)
     {
-        rows.Add([companyName, $"EXCEPTION: {ex.GetType().Name}: {ex.Message}", "", "", "", "", "", "", "", "", "", "", "", "", "", "1"]);
+        rows.Add([companyName, $"EXCEPTION: {ex.GetType().Name}: {ex.Message}", "", "", "", "", "", "", "", "", "", "", "", "", "1"]);
     }
 }
 

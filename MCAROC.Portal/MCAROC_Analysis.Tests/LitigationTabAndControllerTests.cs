@@ -1048,11 +1048,10 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
 
     // ── 9. Client-facing rendering: no reviewer gate ─────────────────────────
 
-    private static RequestDetailsViewModel ClientModel(LitigationTabViewModel lake, List<Litigation>? workbook = null) => new()
+    private static RequestDetailsViewModel ClientModel(LitigationTabViewModel lake) => new()
     {
         Request = new McaRequest { RequestId = 7, CompanyName = "Client View Co", RequestNumber = "REQ-CLIENT-1" },
         Documents = [],
-        Litigations = workbook ?? [],
         LitigationDataLake = lake
     };
 
@@ -1141,19 +1140,15 @@ public class LitigationTabAndControllerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RenderLitigationTab_Client_WorkbookFallbackShowsConfirmedOnly()
+    public async Task RenderLitigationTab_before_a_search_shows_no_workbook_register()
     {
-        var workbook = new List<Litigation>
-        {
-            new() { MatchStatus = LitigationMatchStatus.Confirmed, CaseNumber = "CONF-1", Court = "Delhi HC" },
-            new() { MatchStatus = LitigationMatchStatus.Probable, CaseNumber = "PROB-1", Court = "Delhi HC" },
-            new() { MatchStatus = LitigationMatchStatus.Uncertain, CaseNumber = "UNVER-1", Court = "Delhi HC" }
-        };
-        var html = await RenderTabAsync(ClientModel(new LitigationTabViewModel { Request = new McaRequest { CompanyName = "Client View Co" } }, workbook));
+        // A request's litigation comes only from the litigation service (owner, 2026-10-26): before a search completes there is no
+        // stand-in table from the MCA workbook and no financial-disputes section.
+        var html = await RenderTabAsync(ClientModel(new LitigationTabViewModel { Request = new McaRequest { CompanyName = "Client View Co" } }));
 
-        Assert.Contains("CONF-1", html);
-        Assert.DoesNotContain("PROB-1", html);
-        Assert.DoesNotContain("UNVER-1", html);
+        Assert.DoesNotContain("ingested MCA workbook", html);
+        Assert.DoesNotContain("Financial Disputes", html);
+        Assert.DoesNotContain("Total Litigations", html);
     }
 
     [Theory]

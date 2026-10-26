@@ -73,9 +73,6 @@ public sealed class WorkbookDetailsQuery(AppDbContext db, ILogger? logger = null
                 .OrderBy(x => x.Name).ToListAsync(ct);
             vm.AuditorObservations = await db.AuditorObservations.AsNoTracking().Where(x => x.IngestionRunId == runId)
                 .OrderByDescending(x => x.FinancialYear).ToListAsync(ct);
-            vm.Litigations = await db.Litigations.AsNoTracking().Where(x => x.IngestionRunId == runId).ToListAsync(ct);
-            vm.FinancialDisputeCases = await db.FinancialDisputeCases.AsNoTracking().Where(x => x.IngestionRunId == runId)
-                .OrderByDescending(x => x.DateOfDefault).ToListAsync(ct);
 
             // Phase 6 — the 12 additional workbook sheets.
             vm.Structure = await db.CompanyStructures.AsNoTracking().FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);

@@ -23,7 +23,6 @@ public static class SheetAliases
     public static readonly string[] EpfoAnnexure = ["Annexure - EPFO Establishments"];
     public static readonly string[] Auditors = ["Auditors' Comments-Standalone", "Auditors Comments-Standalone"];
     public static readonly string[] AuditorsConsolidated = ["Auditors' Comments-Consolidated", "Auditors Comments-Consolidated"];
-    public static readonly string[] LegalHistory = ["Legal History"];
 
     // Phase 6
     public static readonly string[] Structure = ["Structure"];
@@ -40,7 +39,6 @@ public static class SheetAliases
     public static readonly string[] RelatedPartyTransactions = ["Related Party Transactions"];
     public static readonly string[] CreditRatings = ["Credit Ratings"];
     public static readonly string[] UnacceptedRatings = ["Unaccepted Ratings"];
-    public static readonly string[] LegalCasesFinancialDispute = ["Legal Cases - Financial Dispute"];
 
     /// <summary>The optional sheets whose presence the orchestrator records per ingestion run — exactly
     /// the sheets a section parser reads in <c>IngestionOrchestrator.RunSectionParsers</c>, so every
@@ -54,10 +52,10 @@ public static class SheetAliases
     [
         Directors, OtherDirectorships, DirectorShareholding, MajorShareholding,
         StandaloneFinancialData, ConsolidatedFinancialData, Msme, Gst, GstAnnexure,
-        Epfo, EpfoAnnexure, Auditors, AuditorsConsolidated, LegalHistory, Structure,
+        Epfo, EpfoAnnexure, Auditors, AuditorsConsolidated, Structure,
         RelatedCorporates, Compliance, SecuritiesAllotment, Proprietorship,
         DirectorAssociationHistory, PeerComparison, Highlights, FinancialParametersAnnexure,
-        RelatedPartyTransactions, CreditRatings, UnacceptedRatings, LegalCasesFinancialDispute,
+        RelatedPartyTransactions, CreditRatings, UnacceptedRatings,
     ];
 
     /// <summary>The tracked sheets an LLP's export never has (#539): shareholding, allotment of securities and consolidated accounts are a

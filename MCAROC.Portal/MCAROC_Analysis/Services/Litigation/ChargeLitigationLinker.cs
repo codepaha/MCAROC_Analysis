@@ -24,7 +24,7 @@ public enum ChargeLitigationSignal
     MovableIdentifier
 }
 
-/// <summary>The case half of a link. <see cref="Source"/> is "Court records" (data-lake) or "MCA workbook".</summary>
+/// <summary>The case half of a link. <see cref="Source"/> is "Court records": the litigation service is the only source of cases.</summary>
 public sealed record LinkedLitigation(
     string Source, long? LitigationCaseId, long? LitigationId, string? CaseNumber, string? Court, string? Status, string? Parties, string? Forum);
 
@@ -69,15 +69,14 @@ public static partial class ChargeLitigationLinker
     public static ChargeLitigationSummary Build(
         IReadOnlyList<RocCharge> openCharges,
         IReadOnlyList<LitigationCase> cases,
-        IReadOnlyDictionary<long, LitigationOrderDocument> docsByOrderId,
-        IReadOnlyList<Litigation> workbookLitigations)
+        IReadOnlyDictionary<long, LitigationOrderDocument> docsByOrderId)
     {
         var links = new List<ChargeLitigationLink>();
         if (openCharges.Count == 0)
             return new ChargeLitigationSummary([], cases.Count, 0, 0, cases.Any(LitigationOrderAddressMatcher.IsNcltCase));
 
         links.AddRange(ImmovableAddressLinks(openCharges, cases, docsByOrderId));
-        links.AddRange(LenderRecoveryLinks(openCharges, cases, workbookLitigations));
+        links.AddRange(LenderRecoveryLinks(openCharges, cases));
         var identifiersByCharge = IdentifiersByCharge(openCharges);
         links.AddRange(MovableIdentifierLinks(openCharges, identifiersByCharge, cases, docsByOrderId));
 
@@ -87,7 +86,7 @@ public static partial class ChargeLitigationLinker
 
         return new ChargeLitigationSummary(
             links.OrderBy(l => l.ChargeNumber, StringComparer.OrdinalIgnoreCase).ThenBy(l => l.Signal).ToList(),
-            CasesScanned: cases.Count + workbookLitigations.Count,
+            CasesScanned: cases.Count,
             OrdersScanned: withText,
             OrdersWithoutText: orders.Count - withText,
             NcltOrdersSkipped: cases.Any(LitigationOrderAddressMatcher.IsNcltCase),
@@ -220,7 +219,7 @@ public static partial class ChargeLitigationLinker
 
     // ── Signal: the lender is litigating a recovery-type case against the company ─────────────────────────
     private static IEnumerable<ChargeLitigationLink> LenderRecoveryLinks(
-        IReadOnlyList<RocCharge> charges, IReadOnlyList<LitigationCase> cases, IReadOnlyList<Litigation> workbook)
+        IReadOnlyList<RocCharge> charges, IReadOnlyList<LitigationCase> cases)
     {
         var holders = charges
             .Select(c => (Charge: c, Norm: EntityCrossReferenceRules.NormalizeCompanyName(c.LatestChargeHolderRaw ?? "")))
@@ -236,17 +235,6 @@ public static partial class ChargeLitigationLinker
             foreach (var (charge, norm) in holders)
                 if (parties.Any(p => p.Contains(norm, StringComparison.Ordinal)))
                     yield return LenderLink(charge, ToLinked(c) with { Forum = forum });
-        }
-
-        foreach (var l in workbook.Where(l => l.MatchStatus == LitigationMatchStatus.Confirmed))
-        {
-            var forum = DossierComputations.IsDrt(l) ? "Debts Recovery Tribunal"
-                : RecoveryForum(l.CaseType, l.CaseCategory, l.Court);
-            if (forum is null || string.IsNullOrWhiteSpace(l.Litigants)) continue;
-            var normLitigants = EntityCrossReferenceRules.NormalizeCompanyName(l.Litigants);
-            foreach (var (charge, norm) in holders)
-                if (normLitigants.Contains(norm, StringComparison.Ordinal))
-                    yield return LenderLink(charge, new LinkedLitigation("MCA workbook", null, l.LitigationId, l.CaseNumber, l.Court, l.CaseStatus, l.Litigants, forum));
         }
     }
 

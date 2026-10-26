@@ -21,7 +21,8 @@ public class AnalysisOrchestrator(
     CalculationLedgerService calculationLedgerService,
     CalculationCheckRunnerService calculationCheckRunnerService,
     CalculationAiAuditOrchestrator calculationAiAuditOrchestrator,
-    ILogger<AnalysisOrchestrator> logger)
+    ILogger<AnalysisOrchestrator> logger,
+    MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderGate? readerGate = null)
 {
     private static readonly RuleThresholds Thresholds = RuleThresholds.Default;
 
@@ -114,23 +115,7 @@ public class AnalysisOrchestrator(
             var ctx = await BuildContextAsync(request, ingestionRunId, ct);
             var result = RuleEngine.Evaluate(ctx, Thresholds);
 
-            var findingEntities = result.Findings.Select(f => new AnalysisFinding
-            {
-                AnalysisRunId = run.AnalysisRunId,
-                RequestId = requestId,
-                Section = f.Section,
-                Severity = f.Severity,
-                TemporalStatus = f.TemporalStatus,
-                Code = f.Code,
-                Title = f.Title,
-                SummaryText = f.SummaryText,
-                MetricsJson = f.MetricsJson,
-                SupportingSignalsJson = f.SupportingSignalsJson,
-                SourceReferenceJson = f.SourceReferenceJson,
-                PeriodLabel = f.PeriodLabel,
-                ObservationDate = f.ObservationDate,
-                DisplayPriority = f.DisplayPriority
-            }).ToList();
+            var findingEntities = result.Findings.Select(f => ToEntity(f, run.AnalysisRunId, requestId)).ToList();
             db.AnalysisFindings.AddRange(findingEntities);
 
             await EnsureNotCancelledAsync(run.AnalysisRunId, requestId, ct);
@@ -143,9 +128,8 @@ public class AnalysisOrchestrator(
                     .SetProperty(a => a.WatchFindingsCount, result.Findings.Count(f => f.Severity == FindingSeverity.Watch))
                     .SetProperty(a => a.PositiveFindingsCount, result.Findings.Count(f => f.Severity == FindingSeverity.Positive))
                     .SetProperty(a => a.OverallReviewPriority, result.OverallReviewPriority)
-                    .SetProperty(a => a.DataSufficiencyNotesJson, result.DataSufficiencyNotes.Count > 0
-                        ? JsonSerializer.Serialize(result.DataSufficiencyNotes.Select(n => new { code = n.Code, reason = n.Reason }))
-                        : null), ct);
+                    .SetProperty(a => a.LitigationFindingsVersion, ctx.Litigation.LiveDataVersion)
+                    .SetProperty(a => a.DataSufficiencyNotesJson, SufficiencyJson(result)), ct);
 
             if (metadataUpdated == 0)
             {
@@ -344,6 +328,28 @@ public class AnalysisOrchestrator(
     /// The run is marked <b>Unchanged</b> for the save, not Detached: detaching a principal also detaches every dependent added under it, so the
     /// findings were silently dropped and every analysis since early October 2026 kept only its AI cross-section flags (no rule findings, and a
     /// review priority the dossier could not explain). It is detached after the save, as before, so no later save writes it either.</summary>
+    internal static AnalysisFinding ToEntity(FindingDraft f, long analysisRunId, long requestId) => new()
+    {
+        AnalysisRunId = analysisRunId,
+        RequestId = requestId,
+        Section = f.Section,
+        Severity = f.Severity,
+        TemporalStatus = f.TemporalStatus,
+        Code = f.Code,
+        Title = f.Title,
+        SummaryText = f.SummaryText,
+        MetricsJson = f.MetricsJson,
+        SupportingSignalsJson = f.SupportingSignalsJson,
+        SourceReferenceJson = f.SourceReferenceJson,
+        PeriodLabel = f.PeriodLabel,
+        ObservationDate = f.ObservationDate,
+        DisplayPriority = f.DisplayPriority
+    };
+
+    internal static string? SufficiencyJson(RuleEngineResult result) => result.DataSufficiencyNotes.Count > 0
+        ? JsonSerializer.Serialize(result.DataSufficiencyNotes.Select(n => new { code = n.Code, reason = n.Reason }))
+        : null;
+
     internal static async Task SaveFindingsWithoutWritingRunAsync(AppDbContext db, AnalysisRun run, CancellationToken ct)
     {
         db.Entry(run).State = EntityState.Unchanged;
@@ -398,31 +404,6 @@ public class AnalysisOrchestrator(
         }
     }
 
-    private async Task<AnalysisContext> BuildContextAsync(McaRequest request, long ingestionRunId, CancellationToken ct)
-    {
-        var companyProfile = await db.CompanyProfiles.FirstOrDefaultAsync(x => x.IngestionRunId == ingestionRunId, ct);
-        var directors = await db.Directors.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
-        var directorAssociations = await db.DirectorAssociations.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
-        var shareholdings = await db.Shareholdings.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
-        // The rule engine is standalone-only (Phase 6 added Consolidated rows to the same table).
-        var financialYears = await db.FinancialYearData
-            .Where(x => x.IngestionRunId == ingestionRunId && x.Basis == FinancialBasis.Standalone).ToListAsync(ct);
-        // AsSplitQuery on both parent+children loads: as one JOIN, every parent row is repeated for each child (a GST registration for each of
-        // its filings: up to ~1,600 per company in the 41-company sample), which made this load exceed the 30 s command timeout under load.
-        var charges = await db.RocCharges.AsSplitQuery().Include(c => c.Events).Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
-        var msmePayments = await db.MsmePayments.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
-        var gstRegistrations = await db.GstRegistrations.AsSplitQuery().Include(g => g.Filings).Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
-        var epfoContributions = await db.EpfoContributions.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
-        var epfoEstablishments = await db.EpfoEstablishments.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
-        var auditorObservations = await db.AuditorObservations
-            .Where(x => x.IngestionRunId == ingestionRunId && x.Basis == FinancialBasis.Standalone).ToListAsync(ct);
-        var litigations = await db.Litigations.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
-        var propertyExtractions = await PropertyParticulars.PropertyParticularsExtractionService.LoadCompletedAsync(
-            db, charges.SelectMany(c => c.Events), ct);
-
-        return AnalysisContext.Build(
-            request, companyProfile, directors, directorAssociations, shareholdings, financialYears, charges,
-            msmePayments, gstRegistrations, epfoContributions, auditorObservations, litigations, DateTime.UtcNow,
-            epfoEstablishments, propertyExtractions);
-    }
+    private Task<AnalysisContext> BuildContextAsync(McaRequest request, long ingestionRunId, CancellationToken ct) =>
+        AnalysisContextLoader.LoadAsync(db, readerGate, request, ingestionRunId, ct);
 }

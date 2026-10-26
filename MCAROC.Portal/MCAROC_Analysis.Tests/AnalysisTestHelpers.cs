@@ -23,7 +23,8 @@ public static class AnalysisTestHelpers
         List<GstRegistration>? gstRegistrations = null,
         List<EpfoContribution>? epfoContributions = null,
         List<AuditorObservation>? auditorObservations = null,
-        List<Litigation>? litigations = null,
+        List<LitigationCase>? litigationCases = null,
+        List<string>? litigationCompanyNames = null,
         DateTime? analysisDate = null,
         Client? client = null,
         List<EpfoEstablishment>? epfoEstablishments = null,
@@ -34,8 +35,24 @@ public static class AnalysisTestHelpers
         return AnalysisContext.Build(
             request, companyProfile, directors ?? [], directorAssociations ?? [], shareholdings ?? [],
             financialYears ?? [], charges ?? [], msmePayments ?? [], gstRegistrations ?? [],
-            epfoContributions ?? [], auditorObservations ?? [], litigations ?? [], analysisDate ?? AnalysisDate,
-            epfoEstablishments, propertyExtractions);
+            epfoContributions ?? [], auditorObservations ?? [], analysisDate ?? AnalysisDate,
+            epfoEstablishments, propertyExtractions,
+            // Cases given = a completed search returned them; none given = no search has completed.
+            litigationCases is null ? null
+                : new LitigationEvidence(true, litigationCases, litigationCompanyNames ?? [companyProfile?.CompanyName ?? request.CompanyName]));
+    }
+
+    /// <summary>A litigation-service case for rule tests: <paramref name="parties"/> is "petitioner vs. respondent".</summary>
+    public static LitigationCase Case(long id, string number, string? status, string parties, string? direction = null)
+    {
+        var sides = System.Text.RegularExpressions.Regex.Split(parties, @"\s+vs\.?\s+", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        static string Json(string? name) => name is null ? "[]" : System.Text.Json.JsonSerializer.Serialize(new[] { name.Trim() });
+        return new LitigationCase
+        {
+            LitigationCaseId = id, RequestId = 1, CaseNumber = number, CaseStatus = status, Direction = direction,
+            PetitionersJson = Json(sides.ElementAtOrDefault(0)), RespondentsJson = Json(sides.ElementAtOrDefault(1)),
+            AttributionOutcome = LitigationAttributionOutcome.Attributed
+        };
     }
 
     public static FinancialYearData Fy(

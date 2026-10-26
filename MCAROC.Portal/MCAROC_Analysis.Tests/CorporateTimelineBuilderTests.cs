@@ -298,24 +298,6 @@ public class CorporateTimelineBuilderTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Financial_dispute_default_and_judgement_are_two_separate_events()
-    {
-        await using var db = CreateContext();
-        var (requestId, ingestionRunId) = await SeedRequestAsync(db);
-        db.FinancialDisputeCases.Add(Tag(new FinancialDisputeCase
-        {
-            DateOfDefault = new DateOnly(2018, 1, 1), DateOfJudgement = new DateOnly(2020, 1, 1),
-            AmountUnderDefault = 12m, DisputeType = "Money claim", Verdict = "Decreed"
-        }, requestId, ingestionRunId));
-        await db.SaveChangesAsync();
-
-        var result = await new CorporateTimelineBuilder(db).BuildAsync(requestId);
-        Assert.Equal(2, result!.Count);
-        Assert.Contains(result, e => e.Title == "Financial dispute default" && e.Date == new DateOnly(2018, 1, 1));
-        Assert.Contains(result, e => e.Title == "Financial dispute judgement" && e.Date == new DateOnly(2020, 1, 1) && e.Detail == "Decreed");
-    }
-
-    [Fact]
     public async Task Gst_registration_and_cancellation_are_two_separate_events()
     {
         await using var db = CreateContext();

@@ -30,16 +30,16 @@ public class SheetCoverageTests
     [Fact]
     public void Absent_sheet_flips_the_empty_state_text_and_the_count()
     {
-        var legal = SheetAliases.CanonicalName(SheetAliases.LegalHistory);
+        var legal = SheetAliases.CanonicalName(SheetAliases.Compliance);
         var cov = SheetCoverage.From(Run($"[\"{legal}\"]"));
 
-        Assert.True(cov.WasAbsent(SheetAliases.LegalHistory));
+        Assert.True(cov.WasAbsent(SheetAliases.Compliance));
         Assert.False(cov.WasAbsent(SheetAliases.Directors));
         Assert.Equal(cov.TotalOptionalSheets - 1, cov.PresentOptionalSheets);
 
         Assert.Equal(
             $"This upload did not include “{legal}”.",
-            cov.EmptyState("present-but-empty", SheetAliases.LegalHistory));
+            cov.EmptyState("present-but-empty", SheetAliases.Compliance));
         Assert.Equal(
             "present-but-empty",
             cov.EmptyState("present-but-empty", SheetAliases.Directors));
