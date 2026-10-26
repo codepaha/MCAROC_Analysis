@@ -426,9 +426,18 @@ public sealed class AutoFetchJobService(
                     .SetProperty(j => j.Status, finalStatus)
                     .SetProperty(j => j.ProgressPercent, 100)
                     .SetProperty(j => j.StatusMessage, finalMessage)
+                    .SetProperty(j => j.FailureReason, filingsStageFailed ? filingsStageFailure : job.FailureReason)
                     .SetProperty(j => j.CompletedUtc, completedNow)
                     .SetProperty(j => j.HeartbeatUtc, completedNow)
                     .SetProperty(j => j.WarningsJson, warningsJson), ct);
+
+            job.Status = finalStatus;
+            job.ProgressPercent = 100;
+            job.StatusMessage = finalMessage;
+            if (filingsStageFailed) job.FailureReason = filingsStageFailure;
+            job.CompletedUtc = completedNow;
+            job.HeartbeatUtc = completedNow;
+            job.WarningsJson = warningsJson;
 
             if (completed == 0)
             {

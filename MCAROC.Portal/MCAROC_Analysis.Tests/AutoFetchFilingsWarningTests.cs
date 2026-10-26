@@ -1,18 +1,37 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using MCAROC_Analysis.Controllers;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.AutoFetch;
-using MCAROC_Analysis.Services.Excel;
-using MCAROC_Analysis.Services.McaFilings;
 using MCAROC_Analysis.Services.Chat;
+using MCAROC_Analysis.Services.Dossier;
+using MCAROC_Analysis.Services.E2e;
+using MCAROC_Analysis.Services.Excel;
+using MCAROC_Analysis.Services.LitigationData;
+using MCAROC_Analysis.Services.McaFilings;
+using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Abstractions;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.AspNetCore.Mvc.Razor;
+using Microsoft.AspNetCore.Mvc.Rendering;
+using Microsoft.AspNetCore.Mvc.ViewEngines;
+using Microsoft.AspNetCore.Mvc.ViewFeatures;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.ObjectPool;
 using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Tests;
@@ -54,21 +73,34 @@ public class AutoFetchFilingsWarningTests : IAsyncLifetime
             DownloadAttempts = 1
         });
 
-        // Handler returns error for docService (filings fail)
+        var handler = new TogglingDocHandler { FailFilings = true };
         var client = new ReferenceToolClient(
-            new HttpClient(new FailingDocHandler()),
+            new HttpClient(handler),
             options,
             new ReferenceToolSession(),
             new NoOpIntegrationHealthService(),
             NullLogger<ReferenceToolClient>.Instance);
 
         var storageReservations = new StorageReservationManager(db, Options.Create(new LargeArchiveUploadOptions()), NullLogger<StorageReservationManager>.Instance);
+        var autoFetchQueue = new AutoFetchQueue();
         var jobs = new AutoFetchJobService(
             db, client, options, new FileValidationService(new ExcelSheetReader()),
             null!, new AnalysisQueue(), new FilingProcessingQueue(), storageReservations,
             new FakeEnv(_tempDir), NullLogger<AutoFetchJobService>.Instance);
 
         var (requestId, jobId) = await SeedRequestPastIngestionAsync(db);
+
+        // Seed a pipeline run so we can assert the stage outcome on the run record
+        var pipelineRun = new PipelineRun
+        {
+            RequestId = requestId,
+            Outcome = PipelineOutcome.InProgress,
+            Trigger = PipelineRunTrigger.AutoFetch,
+            CorrelationId = "test-corr",
+            CreatedUtc = DateTime.UtcNow
+        };
+        db.PipelineRuns.Add(pipelineRun);
+        await db.SaveChangesAsync();
 
         await jobs.ProcessAsync(jobId, CancellationToken.None);
 
@@ -81,10 +113,64 @@ public class AutoFetchFilingsWarningTests : IAsyncLifetime
         Assert.Null(job.FilingsDocumentId);
         Assert.Null(job.FilingBatchId);
         Assert.Contains("Filings stage failed", job.WarningsJson);
+        Assert.False(string.IsNullOrWhiteSpace(job.FailureReason));
+        Assert.Contains("500", job.FailureReason);
 
         // Workbook ingestion and request status are preserved — request is not marked ExtractionFailed
         Assert.NotEqual(RequestStatus.ExtractionFailed, request.RequestStatus);
         Assert.NotNull(request.LatestCompletedIngestionRunId);
+
+        // Reconcile the pipeline run and check the run record
+        var snapshotReader = new PipelineSnapshotReader(db, new ConfigurationBuilder().Build(), Options.Create(new BprLitigationOptions()), options);
+        var reconciler = new PipelineReconciler(db, snapshotReader, TimeProvider.System, NullLogger<PipelineReconciler>.Instance);
+        await reconciler.ReconcileAsync(pipelineRun.PipelineRunId, CancellationToken.None);
+
+        var runRecordService = new RunRecordService(db);
+        var runRecord = await runRecordService.GetAsync(requestId, CancellationToken.None);
+        Assert.NotNull(runRecord);
+        Assert.Equal("CompletedWithWarnings", runRecord.Fetch?.Status);
+        Assert.Equal(job.FailureReason, runRecord.Fetch?.FailureReason);
+        var filingsStage = runRecord.Stages.FirstOrDefault(s => s.Stage == "Filings");
+        Assert.NotNull(filingsStage);
+        Assert.Equal("SucceededWithWarnings", filingsStage.State);
+        Assert.Equal("FILINGS_FETCH_FAILED", filingsStage.ReasonCode);
+        Assert.Equal(job.FailureReason, filingsStage.ReasonDetail);
+        Assert.Contains(runRecord.StagesWithWarnings, s => s.Stage == "Filings");
+
+        // Request page shows the warning
+        var vm = new RequestDetailsViewModel { Request = request, AutoFetchJob = job, Documents = [] };
+        var html = await RenderAutoFetchPanelAsync(vm);
+        Assert.Contains("alert alert-warning", html);
+        Assert.Contains(System.Text.Encodings.Web.HtmlEncoder.Default.Encode(job.FailureReason!), html);
+        Assert.Contains("Retry filings", html);
+
+        // Retry via /Requests/{id}/autofetch/retry
+        var httpContext = new DefaultHttpContext();
+        var controller = new AutoFetchController(db, jobs, autoFetchQueue, client, options)
+        {
+            ControllerContext = new ControllerContext { HttpContext = httpContext },
+            TempData = new TempDataDictionary(httpContext, new NullTempDataProvider())
+        };
+
+        var redirect = Assert.IsType<RedirectToActionResult>(await controller.Retry(requestId, CancellationToken.None));
+        Assert.Equal("Details", redirect.ActionName);
+
+        var requeuedJob = await db.AutoFetchJobs.AsNoTracking().SingleAsync(j => j.AutoFetchJobId == jobId);
+        Assert.Equal(AutoFetchJobStatus.Queued, requeuedJob.Status);
+        Assert.Null(requeuedJob.FailureReason);
+        Assert.NotNull(requeuedJob.IngestionRunId);
+        Assert.NotNull(requeuedJob.RocDocumentId);
+
+        // Second pass: filings succeed; retry runs only filings (ingestion is kept)
+        var priorIngestionRunId = requeuedJob.IngestionRunId;
+        handler.FailFilings = false;
+        await jobs.ProcessAsync(jobId, CancellationToken.None);
+
+        var retriedJob = await db.AutoFetchJobs.AsNoTracking().SingleAsync(j => j.AutoFetchJobId == jobId);
+        Assert.Equal(AutoFetchJobStatus.Completed, retriedJob.Status);
+        Assert.Equal(priorIngestionRunId, retriedJob.IngestionRunId);
+        Assert.NotNull(retriedJob.FilingsDocumentId);
+        Assert.Null(retriedJob.FailureReason);
     }
 
     /// <summary>True packaging-failure fixture: downloads succeed cleanly with valid PDFs, but the packaged
@@ -478,5 +564,95 @@ public class AutoFetchFilingsWarningTests : IAsyncLifetime
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
         }
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "MCAROC.Portal"))) dir = dir.Parent;
+        return dir?.FullName ?? throw new DirectoryNotFoundException("MCAROC.Portal not found in parent hierarchy");
+    }
+
+    private static IServiceProvider CreateRazorServices()
+    {
+        var services = new ServiceCollection();
+        var repoRoot = FindRepoRoot();
+        var webAppDir = Path.Combine(repoRoot, "MCAROC.Portal", "MCAROC_Analysis");
+        var webRoot = Path.Combine(webAppDir, "wwwroot");
+
+        var env = new TestRazorWebHostEnvironment
+        {
+            ApplicationName = "MCAROC_Analysis",
+            ContentRootPath = webAppDir,
+            WebRootPath = webRoot,
+            ContentRootFileProvider = new PhysicalFileProvider(webAppDir),
+            WebRootFileProvider = new PhysicalFileProvider(webRoot)
+        };
+        services.AddSingleton<IWebHostEnvironment>(env);
+        services.AddSingleton<ObjectPoolProvider, DefaultObjectPoolProvider>();
+        var diag = new DiagnosticListener("Microsoft.AspNetCore");
+        services.AddSingleton<DiagnosticSource>(diag);
+        services.AddSingleton<DiagnosticListener>(diag);
+        services.AddSingleton(System.Text.Encodings.Web.HtmlEncoder.Create(System.Text.Unicode.UnicodeRanges.All));
+        services.AddLogging();
+        services.AddControllersWithViews();
+
+        return services.BuildServiceProvider();
+    }
+
+    private static async Task<string> RenderAutoFetchPanelAsync(RequestDetailsViewModel model)
+    {
+        var sp = CreateRazorServices();
+        var viewEngine = sp.GetRequiredService<IRazorViewEngine>();
+        var tempDataProvider = sp.GetRequiredService<ITempDataProvider>();
+
+        var httpContext = new DefaultHttpContext { RequestServices = sp };
+        var routeData = new RouteData();
+        routeData.Values["controller"] = "Requests";
+        var actionContext = new ActionContext(httpContext, routeData, new ActionDescriptor());
+
+        var viewPath = "/Views/Requests/Details/_AutoFetchPanel.cshtml";
+        var viewResult = viewEngine.GetView(executingFilePath: null, viewPath: viewPath, isMainPage: false);
+        if (!viewResult.Success)
+            viewResult = viewEngine.FindView(actionContext, "Details/_AutoFetchPanel", isMainPage: false);
+
+        if (!viewResult.Success)
+            throw new InvalidOperationException($"Could not find view '{viewPath}'. Searched locations: {string.Join(", ", viewResult.SearchedLocations ?? [])}");
+
+        await using var writer = new StringWriter();
+        var viewDictionary = new ViewDataDictionary<RequestDetailsViewModel>(
+            new EmptyModelMetadataProvider(),
+            new ModelStateDictionary())
+        {
+            Model = model
+        };
+
+        var tempData = new TempDataDictionary(actionContext.HttpContext, tempDataProvider);
+        var viewContext = new ViewContext(
+            actionContext,
+            viewResult.View,
+            viewDictionary,
+            tempData,
+            writer,
+            new HtmlHelperOptions());
+
+        await viewResult.View.RenderAsync(viewContext);
+        return writer.ToString();
+    }
+
+    private sealed class NullTempDataProvider : ITempDataProvider
+    {
+        public IDictionary<string, object?> LoadTempData(HttpContext context) => new Dictionary<string, object?>();
+        public void SaveTempData(HttpContext context, IDictionary<string, object?> values) { }
+    }
+
+    private sealed class TestRazorWebHostEnvironment : IWebHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = "Development";
+        public string ApplicationName { get; set; } = "MCAROC_Analysis";
+        public string WebRootPath { get; set; } = string.Empty;
+        public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
+        public string ContentRootPath { get; set; } = string.Empty;
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }
