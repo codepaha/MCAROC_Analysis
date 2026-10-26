@@ -424,12 +424,9 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                         .ToListAsync(ct);
                     var orderDocByOrderId = orderDocs.ToDictionary(d => d.LitigationCaseOrderId);
 
-                    var companyProfile = vm.CompanyProfile;
-                    var epfoEsts = vm.EpfoEstablishments;
-                    var charges = vm.Charges.Where(c => c.SatisfactionDate == null).ToList();
-
-                    var addressPool = LitigationOrderAddressMatcher.BuildAddressPool(companyProfile, epfoEsts, charges);
-                    var propertyMatches = LitigationOrderAddressMatcher.MatchCases(addressPool, pagedCases, orderDocByOrderId);
+                    // Order text is no longer word-matched to the company's premises or charged property (#554): any number and any word made a "match"
+                    // (426 false links on one company). The properties each order names are read and compared field by field instead (#554 PR 3).
+                    var propertyMatches = new List<LitigationPropertyMatchResult>();
                     var propertyMatchesByOrderId = propertyMatches
                         .GroupBy(m => m.LitigationCaseOrderId)
                         .ToDictionary(g => g.Key, g => g.ToList());

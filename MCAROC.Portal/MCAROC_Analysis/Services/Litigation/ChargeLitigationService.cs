@@ -74,6 +74,20 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
     private async Task<CaseSetSource> SourceAsync(long requestId, CancellationToken ct) =>
         readerGate is null ? CaseSetSource.Legacy : await readerGate.ResolveChargeLinksAsync(requestId, ct);
 
+    /// <summary>The company's registered name and its former names (latest completed ingestion): what decides its side of a case.</summary>
+    public static async Task<List<string>> CompanyNamesAsync(AppDbContext db, long requestId, CancellationToken ct)
+    {
+        var r = await db.Requests.AsNoTracking().Where(x => x.RequestId == requestId)
+            .Select(x => new { x.CompanyName, x.LatestCompletedIngestionRunId }).FirstOrDefaultAsync(ct);
+        if (r is null) return [];
+        var names = new List<string> { r.CompanyName };
+        if (r.LatestCompletedIngestionRunId is { } runId)
+            names.AddRange(await db.CompanyNameHistories.AsNoTracking()
+                .Where(h => h.RequestId == requestId && h.IngestionRunId == runId && h.PreviousName != null && h.PreviousName != "")
+                .Select(h => h.PreviousName!).ToListAsync(ct));
+        return names.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
     public async Task<ChargeLitigationSummary> GetAsync(long requestId, CancellationToken ct = default)
     {
         var runId = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId)
@@ -114,7 +128,7 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
         }
 
         // Version/SnapshotId let a consumer that caches or stores its own output (the dossier) key on the evidence used.
-        var summary = ChargeLitigationLinker.Build(charges, cases, docs) with { SnapshotId = snapshotId, Version = version };
+        var summary = ChargeLitigationLinker.Build(charges, cases, docs, await CompanyNamesAsync(db, requestId, ct)) with { SnapshotId = snapshotId, Version = version };
 
         // The app cache is registered with a SizeLimit, so every entry must declare a size (see #331).
         cache.Set(key, summary, new MemoryCacheEntryOptions().SetAbsoluteExpiration(CacheFor).SetSize(1));

@@ -24,6 +24,17 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         The property situated at Plot No. A-36, Nayapalli, Bhubaneswar is under attachment.
         """;
 
+    private const string VehicleCharge = "Hypothecation of the truck Tata Prima bearing registration No. OD02AB1234";
+
+    /// <summary>The loader tests' link: a vehicle under the charge named in the order (the signal that still reads order text).</summary>
+    private const string OrderNamingVehicle = """
+        --- Page 1 (native) ---
+        IN THE HIGH COURT OF ORISSA AT CUTTACK
+        --- Page 2 (native) ---
+        ORDER
+        The truck bearing registration OD 02 AB 1234 shall not be transferred.
+        """;
+
     private const string OrderNotNamingProperty = """
         --- Page 1 (native) ---
         ORDER
@@ -49,51 +60,57 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
     private static Dictionary<long, LitigationOrderDocument> Docs(long orderId, string? text, FilingDocumentProcessingStatus status = FilingDocumentProcessingStatus.TextExtracted) =>
         new() { [orderId] = new LitigationOrderDocument { LitigationCaseOrderId = orderId, ExtractedText = text, TextExtractionStatus = status } };
 
+    private static readonly string[] CompanyNames = ["Coastal Projects Limited"];
+
     private static ChargeLitigationSummary Build(IReadOnlyList<RocCharge> charges, IReadOnlyList<LitigationCase> cases,
-        IReadOnlyDictionary<long, LitigationOrderDocument>? docs = null) =>
-        ChargeLitigationLinker.Build(charges, cases, docs ?? new Dictionary<long, LitigationOrderDocument>());
+        IReadOnlyDictionary<long, LitigationOrderDocument>? docs = null, IReadOnlyCollection<string>? companyNames = null) =>
+        ChargeLitigationLinker.Build(charges, cases, docs ?? new Dictionary<long, LitigationOrderDocument>(), companyNames ?? CompanyNames);
 
     // Ã¢â€â‚¬Ã¢â€â‚¬ signal: charged immovable property named in an order Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    /// <summary>#554: the order's words are no longer matched to the charged property — the properties an order names are read and compared
+    /// field by field instead. Even an order that does name the charged plot links nothing here.</summary>
     [Fact]
-    public void Order_naming_the_charged_property_links_its_case_with_page_and_excerpt()
+    public void Order_text_is_not_word_matched_to_the_charged_property()
     {
         var summary = Build([Charge(1, "CHG-1", "State Bank of India")], [Case(10, "WP(C) 11227/2019", orderId: 500)], Docs(500, OrderNamingProperty));
 
-        var link = Assert.Single(summary.Links);
-        Assert.Equal(ChargeLitigationSignal.ImmovableAddress, link.Signal);
-        Assert.Equal(1, link.ChargeId);
-        Assert.Equal(10, link.Case.LitigationCaseId);
-        Assert.Equal(2, link.PageNumber);
-        Assert.Contains("A-36", link.Excerpt);
-        Assert.Equal("Court records", link.Case.Source);
-        Assert.Equal(1, summary.ChargesWithLinks);
-        Assert.Equal(1, summary.CasesFor(ChargeLitigationSignal.ImmovableAddress));
-    }
-
-    [Fact]
-    public void Order_that_does_not_name_the_property_links_nothing_and_says_how_much_was_compared()
-    {
-        var summary = Build([Charge(1, "CHG-1", "State Bank of India")], [Case(10, "WP 1/2019", orderId: 500)], Docs(500, OrderNotNamingProperty));
-
         Assert.False(summary.HasAny);
         Assert.Equal(1, summary.OrdersScanned);
-        Assert.Equal(0, summary.OrdersWithoutText);
     }
 
+    /// <summary>The Godrej false positives (req 25, 2026-10-26): 426 "order names the charged property" links on 284 cases, from day numbers of
+    /// dates ("10", "20") read as plot numbers and words such as DATED, PRESENT and the company's own name read as localities.</summary>
     [Fact]
-    public void Same_property_on_several_pages_is_one_link_per_charge_and_case()
+    public void Dates_and_common_words_never_link_an_order_to_a_charged_property()
     {
-        const string twoPages = """
+        const string charge = "Exclusive charge through registered mortgage on land and building constructed/ to be constructed for projects - godrej two measuring "
+            + "with all present and future FSI, and immovable property viz land and building at sub-divided plot no.5 of plot no.75a and bearing old survey no.75a, "
+            + "dated 10 and 20 of the deed, Vikhroli, Mumbai";
+        const string order = """
             --- Page 1 (native) ---
-            The land at Plot No. A-36, Nayapalli, Bhubaneswar is attached.
-            --- Page 2 (native) ---
-            Plot No. A-36, Nayapalli, Bhubaneswar shall not be alienated.
+            DATED THIS THE 10TH DAY OF MARCH 2020. PRESENT: the Hon'ble Member. Godrej Projects Development Limited v. Vaibhav Saha.
+            The matter is listed on 20.04.2020 and that the counter affidavit be filed.
             """;
-        var summary = Build([Charge(1, "CHG-1", "State Bank of India")], [Case(10, "WP 1/2019", orderId: 500)], Docs(500, twoPages));
+        var summary = Build([Charge(1, "100496822", "HDFC Bank Limited", particulars: charge)], [Case(10, "CA 12195/2024", orderId: 500)], Docs(500, order),
+            ["Godrej Properties Limited"]);
 
-        var link = Assert.Single(summary.Links);
-        Assert.Equal(1, link.PageNumber);
-        Assert.Contains("more page", link.Explanation);
+        Assert.False(summary.HasAny);
+    }
+
+    /// <summary>The Coastal false positives: the company's registered office ("Plot 304/O, Road No. 78, Jubilee Hills, Hyderabad") printed in a
+    /// cause title is a party's address, not the charged property in dispute.</summary>
+    [Fact]
+    public void The_company_address_in_a_cause_title_is_not_the_charged_property()
+    {
+        const string charge = "Equitable mortgage of the office premises at Plot No. 304-O, Road No. 78, Film Nagar, Jubilee Hills, Hyderabad 500033";
+        const string order = """
+            --- Page 1 (native) ---
+            K T Govinde Gowda v. M/s Coastal Projects Ltd, rep. by its Managing Director, also at: Plot No.304/O Road, No.78, Filmnagar Jubilee Hills,
+            Hyderabad-500 033. The respondents are directed to file their reply.
+            """;
+        var summary = Build([Charge(1, "90080336", "State Bank of India", particulars: charge)], [Case(10, "WP 1085/2021", orderId: 500)], Docs(500, order));
+
+        Assert.False(summary.HasAny);
     }
 
     [Fact]
@@ -119,7 +136,7 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
 
         Assert.Equal(1, summary.OrdersScanned);
         Assert.Equal(1, summary.OrdersWithoutText);
-        Assert.Single(summary.Links);
+        Assert.Empty(summary.Links);
     }
 
     [Fact]
@@ -164,6 +181,32 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         Assert.Empty(Build([Charge(1, "CHG-1", "State Bank of India", particulars: null)], [other]).Links);
     }
 
+    /// <summary>A borrower suing the bank, with the company a co-respondent (Coastal: "K T Govinde Gowda v. IDBI Bank, Coastal Projects"), is not
+    /// the lender enforcing against the company.</summary>
+    [Fact]
+    public void Lender_on_the_same_side_as_the_company_is_not_linked()
+    {
+        var suit = Case(10, "SA 4/2021", court: "Debts Recovery Tribunal", act: "SARFAESI Act", petitioners: "[\"K T Govinde Gowda\"]",
+            respondents: "[\"State Bank of India\", \"Coastal Projects Limited\"]");
+        Assert.Empty(Build([Charge(1, "CHG-1", "State Bank of India", particulars: null)], [suit]).Links);
+    }
+
+    /// <summary>The lender's recovery case against another borrower ("SBI v. East Coast Carriers and others") is not a case against the company.</summary>
+    [Fact]
+    public void Lender_case_against_someone_else_is_not_linked()
+    {
+        var other = Case(10, "OA 12/2019", court: "Debts Recovery Tribunal", act: "RDB Act", petitioners: "[\"State Bank of India\"]",
+            respondents: "[\"M/s. East Coast Carriers Pvt Ltd\"]");
+        Assert.Empty(Build([Charge(1, "CHG-1", "State Bank of India", particulars: null)], [other]).Links);
+    }
+
+    [Fact]
+    public void Without_the_company_names_no_lender_link_is_guessed()
+    {
+        var sarfaesi = Case(10, "SA 99/2021", court: "Debts Recovery Tribunal", act: "SARFAESI Act 2002", petitioners: "[\"State Bank of India\"]");
+        Assert.Empty(Build([Charge(1, "CHG-1", "State Bank of India", particulars: null)], [sarfaesi], companyNames: []).Links);
+    }
+
     [Fact]
     public void Holder_name_too_short_to_trust_is_not_matched()
     {
@@ -176,10 +219,12 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
     {
         var sarfaesi = Case(11, "SA 99/2021", court: "Debts Recovery Tribunal", act: "SARFAESI", petitioners: "[\"State Bank of India\"]");
         var withOrder = Case(10, "WP 1/2019", orderId: 500);
-        var summary = Build([Charge(1, "CHG-1", "State Bank of India")], [withOrder, sarfaesi], Docs(500, OrderNamingProperty));
+        const string vehicleOrder = "--- Page 1 (native) ---\nThe Bank seized the truck bearing registration OD 02 AB 1234.";
+        var summary = Build([Charge(1, "CHG-1", "State Bank of India", particulars: VehicleCharge, propertyType: "Movable property (not being pledge)")],
+            [withOrder, sarfaesi], Docs(500, vehicleOrder));
 
         Assert.Equal(2, summary.ForCharge(1).Count);
-        Assert.Equal(1, summary.CasesFor(ChargeLitigationSignal.ImmovableAddress));
+        Assert.Equal(1, summary.CasesFor(ChargeLitigationSignal.MovableIdentifier));
         Assert.Equal(1, summary.CasesFor(ChargeLitigationSignal.LenderRecoveryCase));
         Assert.Equal(2, summary.LinkedCaseCount);
     }
@@ -250,7 +295,7 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         }
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var summary = ChargeLitigationLinker.Build(charges, cases, docs);
+        var summary = ChargeLitigationLinker.Build(charges, cases, docs, CompanyNames);
         sw.Stop();
 
         Assert.False(summary.HasAny);
@@ -285,7 +330,7 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
             RequestId = request.RequestId, IngestionRunId = run.IngestionRunId, RocChargeNumber = "CHG-900",
             LatestChargeHolderRaw = "State Bank of India", LatestChargeHolderNormalized = "STATE BANK OF INDIA", ChargeStatus = satisfied ? "Satisfied" : "Open",
             SatisfactionDate = satisfied ? new DateOnly(2020, 1, 1) : null,
-            Events = [new RocChargeEvent { RequestId = request.RequestId, IngestionRunId = run.IngestionRunId, SerialNumber = "1", EventType = ChargeEventType.Creation, PropertyType = "Immovable property", PropertyParticulars = Mortgage }]
+            Events = [new RocChargeEvent { RequestId = request.RequestId, IngestionRunId = run.IngestionRunId, SerialNumber = "1", EventType = ChargeEventType.Creation, PropertyType = "Movable property (not being pledge)", PropertyParticulars = VehicleCharge }]
         });
 
         var job = new LitigationSearchJob { RequestId = request.RequestId, KeywordsJson = "[]", Status = LitigationSearchJobStatus.Completed, CreatedUtc = DateTime.UtcNow, RawResponseHash = "h" + request.RequestId };
@@ -303,7 +348,7 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         db.LitigationOrderDocuments.Add(new LitigationOrderDocument
         {
             LitigationCaseOrderId = order.LitigationCaseOrderId, Status = LitigationOrderDocumentStatus.Downloaded, RetainedUntilUtc = DateTime.UtcNow.AddDays(7),
-            ExtractedText = OrderNamingProperty, TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted
+            ExtractedText = OrderNamingVehicle, TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted
         });
         await db.SaveChangesAsync();
         return request.RequestId;
@@ -323,7 +368,7 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
 
         var link = Assert.Single(first.Links);
         Assert.Equal("CHG-900", link.ChargeNumber);
-        Assert.Equal(ChargeLitigationSignal.ImmovableAddress, link.Signal);
+        Assert.Equal(ChargeLitigationSignal.MovableIdentifier, link.Signal);
         Assert.Same(first, second);
     }
 
@@ -349,7 +394,7 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
 
         // Extraction finishes: the text is published under the SAME snapshot.
         await db.LitigationOrderDocuments.Where(d => d.Order!.Case!.RequestId == requestId)
-            .ExecuteUpdateAsync(u => u.SetProperty(d => d.ExtractedText, OrderNamingProperty)
+            .ExecuteUpdateAsync(u => u.SetProperty(d => d.ExtractedText, OrderNamingVehicle)
                 .SetProperty(d => d.TextExtractionStatus, (FilingDocumentProcessingStatus?)FilingDocumentProcessingStatus.TextExtracted)
                 .SetProperty(d => d.ExtractedUtc, (DateTime?)DateTime.UtcNow));
 
@@ -419,7 +464,7 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         var before = await ChargeLitigationService.VersionAsync(db, requestId);
 
         await db.LitigationOrderDocuments.Where(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId)
-            .ExecuteUpdateAsync(u => u.SetProperty(d => d.ExtractedText, OrderNamingProperty)
+            .ExecuteUpdateAsync(u => u.SetProperty(d => d.ExtractedText, OrderNamingVehicle)
                 .SetProperty(d => d.TextExtractionStatus, (FilingDocumentProcessingStatus?)FilingDocumentProcessingStatus.TextExtracted)
                 .SetProperty(d => d.ExtractedUtc, (DateTime?)DateTime.UtcNow));
 
@@ -461,7 +506,7 @@ public class ChargeLitigationLinkerTests : IAsyncLifetime
         Assert.NotNull(report);
         var link = Assert.Single(report!.ChargeLinks!.Links);
         Assert.Equal("CHG-900", link.ChargeNumber);
-        Assert.Equal(ChargeLitigationSignal.ImmovableAddress, link.Signal);
+        Assert.Equal(ChargeLitigationSignal.MovableIdentifier, link.Signal);
 
         // and it reaches both deliverables
         var csv = System.Text.Encoding.UTF8.GetString(LitigationReportArtifacts.RenderCsv(report));

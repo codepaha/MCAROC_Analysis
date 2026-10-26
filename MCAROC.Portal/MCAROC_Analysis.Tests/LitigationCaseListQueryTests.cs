@@ -121,6 +121,9 @@ public class LitigationCaseListQueryTests(ITestOutputHelper output)
         seed.RocCharges.Add(new RocCharge { RequestId = request.RequestId, IngestionRunId = ingestion.IngestionRunId,
             RocChargeNumber = "UI-CHARGE", LatestChargeHolderRaw = "Opponent", ChargeStatus = "Open" });
         cases[0].CaseType = cases[27].CaseType = "Recovery suit";
+        // The charge holder brings the recovery suit against the company (#554: a lender link needs the company as respondent).
+        cases[0].PetitionersJson = cases[27].PetitionersJson = "[\"Opponent\"]";
+        cases[0].RespondentsJson = cases[27].RespondentsJson = "[\"Target Company\"]";
         await seed.SaveChangesAsync();
         using var cache = new MemoryCache(new MemoryCacheOptions());
         var chargeLinks = new ChargeLitigationService(read, cache);

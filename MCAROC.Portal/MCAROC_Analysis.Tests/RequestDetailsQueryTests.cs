@@ -124,9 +124,9 @@ public class RequestDetailsQueryTests : IAsyncLifetime
             ReportHash = hashB, RetrievedUtc = DateTime.UtcNow.AddDays(-1), Status = LitigationReportSnapshotStatus.Completed };
         seed.LitigationReportSnapshots.AddRange(snapshotA, snapshotB);
         var caseA = new LitigationCase { RequestId = id, CaseNumber = "A/1", Court = "Debts Recovery Tribunal",
-            CaseStatus = "Pending", PetitionersJson = "[\"STATE BANK OF INDIA\"]" };
+            CaseStatus = "Pending", PetitionersJson = "[\"STATE BANK OF INDIA\"]", RespondentsJson = "[\"Golden Master Ltd\"]" };
         var caseB = new LitigationCase { RequestId = id, CaseNumber = "B/1", Court = "Debts Recovery Tribunal",
-            CaseStatus = "Pending", PetitionersJson = "[\"STATE BANK OF INDIA\"]" };
+            CaseStatus = "Pending", PetitionersJson = "[\"STATE BANK OF INDIA\"]", RespondentsJson = "[\"Golden Master Ltd\"]" };
         seed.LitigationCases.AddRange(caseA, caseB);
         await seed.SaveChangesAsync();
         seed.LitigationCaseSourceReports.AddRange(
