@@ -2,6 +2,7 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using DocumentFormat.OpenXml.Validation;
 using WP = DocumentFormat.OpenXml.Drawing.Wordprocessing;
+using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.PreLoginReports;
 using Microsoft.AspNetCore.Hosting;
@@ -35,8 +36,10 @@ public class SbiLegalCasesTemplateTests
         string cnrNumber = "CNR1", string caseNo = "EXE/138/2026", string caseType = "EXE", string caseYear = "2026",
         string caseStage = "Appearance", string act = "Code of Civil Procedure/1", string dateOfFiling = "-",
         string state = "Haryana", string district = "Rohtak", string caseDetails = "SA Enterprises VS Northlay Foods Private Limited",
-        string dateOfHearing = "15-09-2026", string status = "PENDING") =>
-        new(category, court, cnrNumber, caseNo, caseType, caseYear, caseStage, act, dateOfFiling, state, district, caseDetails, dateOfHearing, status);
+        string dateOfHearing = "15-09-2026", string status = "PENDING",
+        PersonAttributionGrade? attributionGrade = null, string? attributionRule = null, string? attributionSignalsJson = null) =>
+        new(category, court, cnrNumber, caseNo, caseType, caseYear, caseStage, act, dateOfFiling, state, district, caseDetails, dateOfHearing, status,
+            AttributionGrade: attributionGrade, AttributionRule: attributionRule, AttributionSignalsJson: attributionSignalsJson);
 
     [Fact]
     public async Task No_cases_leaves_the_placeholder_card_and_stays_portrait()
@@ -209,6 +212,70 @@ public class SbiLegalCasesTemplateTests
         Assert.Equal(BorderValues.Single, cardRows[0].Elements<TableCell>().First().TableCellProperties?.TableCellBorders?.TopBorder?.Val?.Value);
         Assert.Equal(BorderValues.Single, cardRows[13].Elements<TableCell>().First().TableCellProperties?.TableCellBorders?.BottomBorder?.Val?.Value);
         Assert.NotNull(cardRows[0].Descendants<KeepNext>().FirstOrDefault());
+    }
+
+
+    [Fact]
+    public async Task Summary_table_shows_Unresolved_when_category_has_only_possible_cases()
+    {
+        var service = CreateService();
+        var cases = new[]
+        {
+            Case(category: "highcourt", court: "High Court of Delhi", caseNo: "HC/101/2026",
+                attributionGrade: PersonAttributionGrade.Possible, attributionRule: "possible-name-only")
+        };
+        var data = new InstaReportData(Company(), [], [], LegalCaseFileParser.ToInstaLegalCases(cases));
+
+        var result = await service.GenerateFromDataAsync("U12345MH2020PTC654321", PreLoginReportFormat.Sbi, data, CancellationToken.None);
+
+        using var doc = WordprocessingDocument.Open(new MemoryStream(result.Bytes), false);
+        var body = doc.MainDocumentPart!.Document.Body!;
+        var summary = body.Descendants<Table>().First(t => t.Elements<TableRow>().Skip(1).FirstOrDefault()?.Elements<TableCell>().Count() == 9);
+        var counts = summary.Elements<TableRow>().ElementAt(1).Elements<TableCell>().Select(c => c.InnerText).ToArray();
+
+        // High Court is index 1; it should show "Unresolved" because active cases exist but none are verified.
+        // Other buckets should show "0".
+        Assert.Equal(["0", "Unresolved", "0", "0", "0", "0", "0", "0", "0"], counts);
+
+        // Verify ToInstaLegalCases also didn't inflate the verified HighCourt bucket count
+        Assert.Equal(0, data.LegalCases!.HighCourt);
+    }
+
+    [Fact]
+    public async Task Cases_distinguish_verified_vs_possible_and_render_verified_first()
+    {
+        var service = CreateService();
+        var cases = new[]
+        {
+            Case(category: "district", court: "District Court, Delhi", caseNo: "POSSIBLE/001",
+                attributionGrade: PersonAttributionGrade.Possible, attributionRule: "possible-name-only"),
+            Case(category: "district", court: "District Court, Mumbai", caseNo: "VERIFIED/002",
+                attributionGrade: PersonAttributionGrade.Confirmed, attributionRule: "exact")
+        };
+        var data = new InstaReportData(Company(), [], [], LegalCaseFileParser.ToInstaLegalCases(cases));
+
+        var result = await service.GenerateFromDataAsync("U12345MH2020PTC654321", PreLoginReportFormat.Sbi, data, CancellationToken.None);
+
+        using var doc = WordprocessingDocument.Open(new MemoryStream(result.Bytes), false);
+        var body = doc.MainDocumentPart!.Document.Body!;
+        var text = body.InnerText;
+
+        // Verified should appear before Possible in the document body
+        var verifiedIndex = text.IndexOf("VERIFIED/002", StringComparison.Ordinal);
+        var possibleIndex = text.IndexOf("POSSIBLE/001", StringComparison.Ordinal);
+        Assert.True(verifiedIndex >= 0 && possibleIndex >= 0);
+        Assert.True(verifiedIndex < possibleIndex, "Verified case should precede Possible case");
+
+        // Verified case details prefix
+        Assert.Contains("[Verified (Confirmed) | Rule: exact]", text);
+        // Possible case details prefix and status suffix
+        Assert.Contains("[Possible (Unresolved) | Rule: possible-name-only]", text);
+        Assert.Contains("Status : PENDING (Possible (Unresolved))", text);
+
+        // Verify cards table structure remains exactly 30 rows (14 rows per card + 1 spacer row + nil borders)
+        var cards = body.Elements<Table>().First(t => t.InnerText.Contains("Sr No : 1", StringComparison.Ordinal));
+        var cardRows = cards.Elements<TableRow>().ToList();
+        Assert.Equal(30, cardRows.Count);
     }
 
     private sealed class TestEnvironment(string root) : IWebHostEnvironment

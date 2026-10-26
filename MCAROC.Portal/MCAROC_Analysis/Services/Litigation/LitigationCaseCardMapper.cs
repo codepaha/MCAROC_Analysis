@@ -58,7 +58,8 @@ public static class LitigationCaseCardMapper
         };
         card.CompanySide = LitigationCompanySides.Determine(card.Petitioners, card.Respondents, ctx.CompanyNames, c.Direction);
         card.Risk = LitigationBaselineRisk.Assess(new LitigationRiskInput(
-            c.Type, c.Court, c.CourtCategory, c.CaseType, c.Act, c.CaseStage, c.CaseClassification, c.ProceedingType, status, card.CompanySide, card.Petitioners));
+            c.Type, c.Court, c.CourtCategory, c.CaseType, c.Act, c.CaseStage, c.CaseClassification, c.ProceedingType, status, card.CompanySide, card.Petitioners,
+            c.AttributionGrade));
 
         foreach (var o in c.Orders.OrderByDescending(o => LitigationCaseAges.ParseDate(o.OrderDate) ?? DateOnly.MinValue))
         {

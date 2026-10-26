@@ -352,7 +352,8 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             var petitioners = LitigationPartyNames.Parse(c.PetitionersJson);
             var side = LitigationCompanySides.Determine(petitioners, LitigationPartyNames.Parse(c.RespondentsJson), targetNames, c.Direction);
             return LitigationCasePriority.Evaluate(new LitigationRiskInput(c.Type, c.Court, c.CourtCategory, c.CaseType, c.Act, c.CaseStage,
-                c.CaseClassification, c.ProceedingType, LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage), side, petitioners));
+                c.CaseClassification, c.ProceedingType, LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage), side, petitioners,
+                c.AttributionGrade));
         }
 
         /// <summary>The tier and trigger the case's own record gives it, which the model may confirm or raise but not lower.</summary>
@@ -361,7 +362,8 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
             var petitioners = LitigationPartyNames.Parse(c.PetitionersJson);
             var side = LitigationCompanySides.Determine(petitioners, LitigationPartyNames.Parse(c.RespondentsJson), targetNames, c.Direction);
             return LitigationBaselineRisk.Assess(new LitigationRiskInput(c.Type, c.Court, c.CourtCategory, c.CaseType, c.Act, c.CaseStage,
-                c.CaseClassification, c.ProceedingType, LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage), side, petitioners));
+                c.CaseClassification, c.ProceedingType, LitigationCaseStatusClassifier.Classify(c.CaseStatus, c.CaseStage), side, petitioners,
+                c.AttributionGrade));
         }
     }
 

@@ -1355,4 +1355,91 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
         Assert.Equal("Senior Analyst", decisions[0].DecidedBy);
         Assert.Equal(PreLoginAttributionAction.Accepted, decisions[0].Action);
     }
+
+    [Fact]
+    public async Task Suggest_mode_grade_change_regenerates_published_word_report_and_increments_version()
+    {
+        var env = new TestEnvironment();
+        var reportService = new PreLoginReportService(null!, env);
+        var filesToCleanup = new List<string>();
+
+        try
+        {
+            await using var db = Ctx();
+            var cases = new List<LegalCaseRecord>
+            {
+                new("district", "Saket Court", "CNR26", "CS/2600/2026", "CS", "2026", "PENDING", "-", "2026-02-01", "Delhi", "Delhi",
+                    "M/S EXACT TARGET LTD VS STATE OF DELHI", "2026-06-01", "Pending", CaseRowId: "C-26",
+                    Petitioner: "M/S EXACT TARGET LTD", Respondent: "STATE OF DELHI",
+                    AttributionGrade: PersonAttributionGrade.Possible, AttributionRule: "possible-name-only")
+            };
+            var (job, borrower, _) = await CreateJobWithTargetsAsync(db, "EXACT TARGET LTD", "Director One", cases);
+            job.Status = PreLoginReportJobStatus.Completed;
+
+            var reportsDir = Path.Combine(env.ContentRootPath, "App_Data", "PreLoginReports");
+            Directory.CreateDirectory(reportsDir);
+            var initialReportPath = Path.Combine(reportsDir, $"{job.PreLoginReportJobId}-v1-initial.docx");
+            var initialData = JsonSerializer.Deserialize<InstaReportData>(job.DataJson)!;
+            var initialReport = await reportService.GenerateFromDataAsync(job.Cin ?? "TESTCIN", PreLoginReportFormat.Sbi, initialData, CancellationToken.None);
+            await File.WriteAllBytesAsync(initialReportPath, initialReport.Bytes);
+            filesToCleanup.Add(initialReportPath);
+
+            job.ReportStoragePath = initialReportPath;
+            job.DataVersion = 1;
+            await db.SaveChangesAsync();
+
+            // Sanity check: initial report has Possible (Unresolved)
+            using (var doc = WordprocessingDocument.Open(initialReportPath, false))
+            {
+                var initialText = doc.MainDocumentPart!.Document.Body!.InnerText;
+                Assert.Contains("Possible (Unresolved)", initialText);
+                Assert.DoesNotContain("[Verified (Confirmed) | Rule: exact]", initialText);
+            }
+
+            var backfillService = new PreLoginAssignmentBackfillService(db);
+            await backfillService.BackfillJobAsync(job.PreLoginReportJobId);
+
+            var options = Microsoft.Extensions.Options.Options.Create(new PreLoginAttributionOptions { Mode = PreLoginAttributionMode.Suggest });
+            var attributionService = new PreLoginAttributionService(db, options, new ServiceCollection().BuildServiceProvider(), null, reportService, env);
+
+            // Execute attribution in Suggest mode. Case matches exact company rule -> upgraded to Confirmed with 0 auto-exclusions.
+            var result = await attributionService.CheckAttributionAsync(job.PreLoginReportJobId);
+            Assert.Equal(0, result.AutoExcluded);
+
+            await using var verifyDb = Ctx();
+            var updatedJob = await verifyDb.PreLoginReportJobs.FirstAsync(j => j.PreLoginReportJobId == job.PreLoginReportJobId);
+            Assert.Equal(2, updatedJob.DataVersion);
+            Assert.NotNull(updatedJob.ReportStoragePath);
+            Assert.NotEqual(initialReportPath, updatedJob.ReportStoragePath);
+            filesToCleanup.Add(updatedJob.ReportStoragePath);
+
+            // Stale initial file was cleaned up on commit, new file exists
+            Assert.False(File.Exists(initialReportPath));
+            Assert.True(File.Exists(updatedJob.ReportStoragePath));
+
+            // Verify controller download serves the new versioned file
+            var jobService = new PreLoginReportJobService(verifyDb, new PreLoginReportQueue(), reportService, env);
+            var controller = new AssignmentsController(verifyDb, jobService, attributionService);
+            var downloadResult = await controller.Download(updatedJob.BatchId, updatedJob.PreLoginReportJobId, CancellationToken.None);
+            var physicalFile = Assert.IsType<PhysicalFileResult>(downloadResult);
+            Assert.Equal(updatedJob.ReportStoragePath, physicalFile.FileName);
+
+            // Read the actual published docx bytes and assert upgraded attribution metadata
+            using (var doc = WordprocessingDocument.Open(updatedJob.ReportStoragePath, false))
+            {
+                var bodyText = doc.MainDocumentPart!.Document.Body!.InnerText;
+                Assert.Contains("CS/2600/2026", bodyText);
+                Assert.Contains("[Verified (Confirmed) | Rule: exact]", bodyText);
+                Assert.DoesNotContain("Possible (Unresolved)", bodyText);
+            }
+        }
+        finally
+        {
+            foreach (var f in filesToCleanup)
+            {
+                if (File.Exists(f)) { try { File.Delete(f); } catch { } }
+            }
+        }
+    }
+
 }

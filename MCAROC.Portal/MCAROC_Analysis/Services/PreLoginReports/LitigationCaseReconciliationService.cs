@@ -100,7 +100,10 @@ public static partial class LitigationCaseReconciliationService
                     Respondent: MergeField(match.Respondent, inc.Respondent),
                     IsExcludedFromReport: match.IsExcludedFromReport,
                     ExclusionReason: match.ExclusionReason,
-                    AnalystNote: match.AnalystNote
+                    AnalystNote: match.AnalystNote,
+                    AttributionGrade: match.AttributionGrade ?? inc.AttributionGrade,
+                    AttributionRule: match.AttributionRule ?? inc.AttributionRule,
+                    AttributionSignalsJson: match.AttributionSignalsJson ?? inc.AttributionSignalsJson
                 ));
             }
             else

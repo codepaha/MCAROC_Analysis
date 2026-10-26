@@ -105,4 +105,30 @@ public class LitigationCasePriorityTests
         Assert.True(Rate(caseType: "criminal").Score >= LitigationCasePriority.AThreshold);
         Assert.True(Rate(type: "ITAT").Score >= LitigationCasePriority.AThreshold);
     }
+
+    [Theory]
+    [InlineData(MCAROC_Analysis.Data.Entities.PersonAttributionGrade.Possible)]
+    [InlineData(MCAROC_Analysis.Data.Entities.PersonAttributionGrade.Excluded)]
+    public void Possible_or_excluded_attribution_grade_evaluates_to_lowest_priority_C(MCAROC_Analysis.Data.Entities.PersonAttributionGrade grade)
+    {
+        var input = new LitigationRiskInput(
+            Type: "NCLT",
+            Court: "NCLT",
+            CourtCategory: null,
+            CaseType: null,
+            Act: "Insolvency and Bankruptcy Code, 2016",
+            CaseStage: null,
+            CaseClassification: null,
+            ProceedingType: null,
+            Status: LitigationCaseStatusBucket.Pending,
+            Side: LitigationCompanySide.AgainstCompany,
+            Petitioners: [],
+            AttributionGrade: grade);
+
+        var result = LitigationCasePriority.Evaluate(input);
+        Assert.Equal(LitigationAnalysisPriority.C, result.Priority);
+        Assert.Equal(0, result.Score);
+        Assert.Contains("Unconfirmed case", result.Reasons);
+    }
+
 }

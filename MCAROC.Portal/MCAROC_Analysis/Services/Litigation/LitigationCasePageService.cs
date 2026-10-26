@@ -183,7 +183,7 @@ public sealed class LitigationCasePageService(
             .Select(c => new
             {
                 c.LitigationCaseId, c.CaseNumber, c.Court, c.CaseStatus, c.CaseStage, c.Type, c.CourtCategory, c.CaseType, c.Act, c.CaseClassification,
-                c.ProceedingType, c.PetitionersJson, c.RespondentsJson, c.Direction
+                c.ProceedingType, c.PetitionersJson, c.RespondentsJson, c.Direction, c.AttributionGrade
             }).ToListAsync(ct);
 
         var related = new List<RelatedLitigationCase>();
@@ -196,7 +196,8 @@ public sealed class LitigationCasePageService(
             var status = LitigationCaseStatusClassifier.Classify(o.CaseStatus, o.CaseStage);
             var side = LitigationCompanySides.Determine(petitioners, respondents, companyNames, o.Direction);
             var tier = LitigationBaselineRisk.Assess(new LitigationRiskInput(
-                o.Type, o.Court, o.CourtCategory, o.CaseType, o.Act, o.CaseStage, o.CaseClassification, o.ProceedingType, status, side, petitioners)).Tier;
+                o.Type, o.Court, o.CourtCategory, o.CaseType, o.Act, o.CaseStage, o.CaseClassification, o.ProceedingType, status, side, petitioners,
+                o.AttributionGrade)).Tier;
             related.Add(new RelatedLitigationCase(o.LitigationCaseId, o.CaseNumber, o.Court, status, tier, mine[shared]));
         }
         return related.OrderByDescending(r => r.Tier).ThenBy(r => r.LitigationCaseId).Take(10).ToList();

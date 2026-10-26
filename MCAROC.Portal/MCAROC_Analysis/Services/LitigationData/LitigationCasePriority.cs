@@ -26,6 +26,11 @@ public static partial class LitigationCasePriority
 
     public static LitigationCasePriorityResult Evaluate(LitigationRiskInput c)
     {
+        if (c.AttributionGrade is MCAROC_Analysis.Data.Entities.PersonAttributionGrade.Possible or MCAROC_Analysis.Data.Entities.PersonAttributionGrade.Excluded)
+        {
+            return new(0, LitigationAnalysisPriority.C, "Unconfirmed case - skipped for deep reading");
+        }
+
         var reasons = new List<string>();
         var byCompany = c.Side == LitigationCompanySide.ByCompany;
         var score = byCompany ? ByCompanyBase : AgainstBase;

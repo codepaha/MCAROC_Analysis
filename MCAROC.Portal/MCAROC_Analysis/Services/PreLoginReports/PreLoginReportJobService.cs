@@ -587,7 +587,12 @@ public sealed class PreLoginReportJobService(
                         var details = string.IsNullOrWhiteSpace(c.CaseDetails) || c.CaseDetails == "-"
                             ? originDisclosure
                             : $"{originDisclosure} | {c.CaseDetails}";
-                        return c with { CaseDetails = details };
+                        return c with
+                        {
+                            CaseDetails = details,
+                            AttributionGrade = PersonAttributionGrade.Possible,
+                            AttributionRule = "possible-name-only"
+                        };
                     }).ToList();
                 }
 

@@ -247,30 +247,27 @@ public sealed class PreLoginAttributionService(
         string? oldReportPath = null;
         string? newReportPath = null;
 
-        if (mode == PreLoginAttributionMode.Apply && autoExcluded > 0)
+        // #452: Synchronize attribution metadata (grade, rule, signals) to DataJson and republish versioned report on report-affecting changes
+        var scopeCaseMap = scopeCases.ToDictionary(sc => sc.Alias, StringComparer.OrdinalIgnoreCase);
+        if (TrySyncAttributionsToDataJson(job.DataJson, scopeCaseMap, syncExclusions: mode == PreLoginAttributionMode.Apply, out var updatedJson, out var updatedData, out var hasReportChanges, out var syncError))
         {
-            var autoExcludedScopeCases = scopeCases.Where(sc => sc.IsExcluded).ToList();
-            if (autoExcludedScopeCases.Count > 0)
+            if (hasReportChanges && updatedData != null)
             {
-                var exclusionMap = autoExcludedScopeCases.ToDictionary(sc => sc.Alias, sc => sc.ExclusionReason);
-                if (!TrySyncCasesToDataJson(job.DataJson, exclusionMap, isExcludedDefault: true, out var updatedJson, out var updatedData, out var syncError))
-                {
-                    logger?.LogError("Failed to synchronize {Count} automatic exclusions to DataJson for job {JobId}: {Error}", autoExcludedScopeCases.Count, jobId, syncError);
-                    db.ChangeTracker.Clear();
-                    throw new InvalidOperationException($"Failed to synchronize automatic exclusions to assignment DataJson for job {jobId}: {syncError}");
-                }
                 job.DataJson = updatedJson;
                 oldReportPath = job.ReportStoragePath;
-                if (updatedData != null)
+                newReportPath = await TryPublishReportAsync(job, updatedData, job.DataVersion + 1, ct);
+                if (newReportPath != null)
                 {
-                    newReportPath = await TryPublishReportAsync(job, updatedData, job.DataVersion + 1, ct);
-                    if (newReportPath != null)
-                    {
-                        job.ReportStoragePath = newReportPath;
-                    }
+                    job.ReportStoragePath = newReportPath;
                 }
                 job.DataVersion++;
             }
+        }
+        else if (mode == PreLoginAttributionMode.Apply && autoExcluded > 0)
+        {
+            logger?.LogError("Failed to synchronize automatic exclusions to DataJson for job {JobId}: {Error}", jobId, syncError);
+            db.ChangeTracker.Clear();
+            throw new InvalidOperationException($"Failed to synchronize automatic exclusions to assignment DataJson for job {jobId}: {syncError}");
         }
 
         await using var tx = db.Database.CurrentTransaction != null ? null : await db.Database.BeginTransactionAsync(ct);
@@ -1592,6 +1589,104 @@ public sealed class PreLoginAttributionService(
         out string? updatedJson,
         out string? errorMessage)
         => TrySyncCasesToDataJson(dataJson, exclusionMap, isExcludedDefault, out updatedJson, out _, out errorMessage);
+
+    private static bool TrySyncAttributionsToDataJson(
+        string? dataJson,
+        IReadOnlyDictionary<string, ModuleScopeCase> scopeCaseMap,
+        bool syncExclusions,
+        out string? updatedJson,
+        out InstaReportData? updatedData,
+        out bool hasReportAffectingChanges,
+        out string? errorMessage)
+    {
+        hasReportAffectingChanges = false;
+        if (string.IsNullOrWhiteSpace(dataJson))
+        {
+            updatedJson = null;
+            updatedData = null;
+            errorMessage = "Job DataJson is null or whitespace.";
+            return false;
+        }
+
+        InstaReportData? data;
+        try { data = JsonSerializer.Deserialize<InstaReportData>(dataJson); }
+        catch (Exception ex)
+        {
+            updatedJson = null;
+            updatedData = null;
+            errorMessage = $"Failed to deserialize DataJson: {ex.Message}";
+            return false;
+        }
+
+        if (data?.LegalCases?.Cases is null)
+        {
+            updatedJson = dataJson;
+            updatedData = data;
+            errorMessage = null;
+            return true;
+        }
+
+        var cases = data.LegalCases.Cases.ToList();
+        bool hasChanges = false;
+        for (int i = 0; i < cases.Count; i++)
+        {
+            var existing = cases[i];
+            if (scopeCaseMap.TryGetValue(existing.CaseRowId, out var sc))
+            {
+                var effectiveGrade = sc.AttributionGrade ?? InferGrade(sc.AttributionOutcome, sc.AttributionRule);
+                var newIsExcluded = syncExclusions ? sc.IsExcluded : existing.IsExcludedFromReport;
+                var newExclusionReason = syncExclusions && sc.IsExcluded ? (sc.ExclusionReason ?? existing.ExclusionReason) : existing.ExclusionReason;
+
+                if (existing.AttributionGrade != effectiveGrade ||
+                    existing.AttributionRule != sc.AttributionRule ||
+                    existing.AttributionSignalsJson != sc.AttributionSignalsJson ||
+                    existing.IsExcludedFromReport != newIsExcluded ||
+                    existing.ExclusionReason != newExclusionReason)
+                {
+                    hasChanges = true;
+                    cases[i] = existing with
+                    {
+                        AttributionGrade = effectiveGrade,
+                        AttributionRule = sc.AttributionRule,
+                        AttributionSignalsJson = sc.AttributionSignalsJson,
+                        IsExcludedFromReport = newIsExcluded,
+                        ExclusionReason = newExclusionReason
+                    };
+                }
+            }
+        }
+
+        var updatedLegalCases = LegalCaseFileParser.ToInstaLegalCases(cases) with { NextCaseRowIdIndex = data.LegalCases.NextCaseRowIdIndex };
+        if (hasChanges ||
+            data.LegalCases.SupremeCourt != updatedLegalCases.SupremeCourt ||
+            data.LegalCases.HighCourt != updatedLegalCases.HighCourt ||
+            data.LegalCases.DistrictCourt != updatedLegalCases.DistrictCourt ||
+            data.LegalCases.ConsumerForum != updatedLegalCases.ConsumerForum ||
+            data.LegalCases.ItatTax != updatedLegalCases.ItatTax ||
+            data.LegalCases.NcltNclat != updatedLegalCases.NcltNclat ||
+            data.LegalCases.DrtDrat != updatedLegalCases.DrtDrat ||
+            data.LegalCases.Rera != updatedLegalCases.Rera ||
+            data.LegalCases.NgtOthers != updatedLegalCases.NgtOthers)
+        {
+            hasChanges = true;
+        }
+
+        if (hasChanges)
+        {
+            updatedData = data with { LegalCases = updatedLegalCases };
+            updatedJson = JsonSerializer.Serialize(updatedData);
+            hasReportAffectingChanges = true;
+        }
+        else
+        {
+            updatedData = data;
+            updatedJson = dataJson;
+            hasReportAffectingChanges = false;
+        }
+
+        errorMessage = null;
+        return true;
+    }
 
     private static bool TrySyncCasesToDataJson(
         string? dataJson,

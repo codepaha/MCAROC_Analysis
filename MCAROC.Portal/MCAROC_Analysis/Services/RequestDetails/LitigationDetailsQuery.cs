@@ -357,7 +357,8 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                         .Select(c => new
                         {
                             c.LitigationCaseId, c.FilingDate, c.DecisionDate, c.CaseYear, c.Cnr, c.CaseNumber, c.CaseStatus, c.CaseStage,
-                            c.Type, c.Court, c.CourtCategory, c.CaseType, c.Act, c.CaseClassification, c.ProceedingType, c.PetitionersJson, c.RespondentsJson, c.Direction
+                            c.Type, c.Court, c.CourtCategory, c.CaseType, c.Act, c.CaseClassification, c.ProceedingType, c.PetitionersJson, c.RespondentsJson, c.Direction,
+                            c.AttributionGrade
                         })
                         .ToListAsync(ct);
                     var orderDatesOfCase = (await db.LitigationCaseOrders.AsNoTracking()
@@ -373,7 +374,8 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                         var rowSide = LitigationCompanySides.Determine(rowPetitioners, LitigationCaseCardMapper.ParseNames(r.RespondentsJson), companyNames, r.Direction);
                         litVm.ForumSummary.Add(LitigationCasePresentation.Resolve(r.Type, r.Court, r.CourtCategory), rowSide, rowStatus);
                         litVm.RiskProfile.Add(LitigationBaselineRisk.Assess(new LitigationRiskInput(
-                            r.Type, r.Court, r.CourtCategory, r.CaseType, r.Act, r.CaseStage, r.CaseClassification, r.ProceedingType, rowStatus, rowSide, rowPetitioners)));
+                            r.Type, r.Court, r.CourtCategory, r.CaseType, r.Act, r.CaseStage, r.CaseClassification, r.ProceedingType, rowStatus, rowSide, rowPetitioners,
+                            r.AttributionGrade)));
                     }
 
                     if (compact)

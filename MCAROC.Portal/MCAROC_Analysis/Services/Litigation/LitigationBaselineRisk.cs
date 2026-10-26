@@ -16,7 +16,8 @@ public sealed record LitigationRiskAssessment(LitigationRiskTier Tier, string Tr
 /// <summary>The fields of a litigation case the baseline tier is read from.</summary>
 public sealed record LitigationRiskInput(
     string? Type, string? Court, string? CourtCategory, string? CaseType, string? Act, string? CaseStage, string? CaseClassification,
-    string? ProceedingType, LitigationCaseStatusBucket Status, LitigationCompanySide Side, IReadOnlyList<string> Petitioners);
+    string? ProceedingType, LitigationCaseStatusBucket Status, LitigationCompanySide Side, IReadOnlyList<string> Petitioners,
+    MCAROC_Analysis.Data.Entities.PersonAttributionGrade? AttributionGrade = null);
 
 /// <summary>The forum a case sits in.</summary>
 public enum LitigationForum { SupremeCourt, HighCourt, DistrictCourt, Nclt, Nclat, Drt, Drat, Consumer, Itat, Cestat, Rera, Other }
@@ -62,6 +63,11 @@ public static partial class LitigationBaselineRisk
 
     public static LitigationRiskAssessment Assess(LitigationRiskInput c)
     {
+        if (c.AttributionGrade is MCAROC_Analysis.Data.Entities.PersonAttributionGrade.Possible or MCAROC_Analysis.Data.Entities.PersonAttributionGrade.Excluded)
+        {
+            return new(LitigationRiskTier.R0, "Unconfirmed case", "Possible match pending corroboration does not feed risk tiers.");
+        }
+
         var forum = ForumOf(c.Type, c.Court, c.CourtCategory);
         var text = string.Join(" ", new[] { c.CaseType, c.Act, c.CaseStage, c.CaseClassification, c.ProceedingType }
             .Where(s => !string.IsNullOrWhiteSpace(s))).ToLowerInvariant();

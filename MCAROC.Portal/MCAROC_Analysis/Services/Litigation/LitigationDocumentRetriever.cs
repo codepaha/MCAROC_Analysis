@@ -162,7 +162,7 @@ public class LitigationDocumentRetriever(AppDbContext db, ChatRetrievalOptions o
     /// <summary>#489: passages only from the company's cases (<c>LitigationAttribution.IsShown</c> in SQL): an order of a case that is not the company's, or is
     /// still being judged, is never quoted.</summary>
     private const string ShownCasesSql =
-        "SELECT lc.LitigationCaseId FROM LitigationCases lc WHERE lc.RequestId = @requestId AND (lc.AttributionOutcome IS NULL OR lc.AttributionOutcome = 'Attributed')";
+        "SELECT lc.LitigationCaseId FROM LitigationCases lc WHERE lc.RequestId = @requestId AND (lc.AttributionOutcome IS NULL OR lc.AttributionOutcome = 'Attributed') AND (lc.AttributionGrade IS NULL OR lc.AttributionGrade = 'Confirmed' OR lc.AttributionGrade = 'Probable')";
 
     private const string WideColumns = """
         c.LitigationOrderChunkId, c.RequestId, c.LitigationOrderDocumentId, c.LitigationCaseOrderId, c.LitigationCaseId,
