@@ -270,6 +270,8 @@ public static class PipelineDecider
         if (job is null || !job.IncludeFilings) return Skip(PipelineStageSkipKind.Neutral, "NO_FILINGS_REQUESTED");
         if (job.Status == AutoFetchJobStatus.Failed)
             return job.RocDocumentId is null ? Waiting("AWAITING_FETCH") : Attention("FILINGS_FETCH_FAILED", job.FailureReason, job.JobId);
+        if (job.Status == AutoFetchJobStatus.CompletedWithWarnings && !string.IsNullOrWhiteSpace(job.FailureReason))
+            return Warn("FILINGS_FETCH_FAILED", job.FailureReason, job.JobId);
         if (job.IsTerminal) return Skip(PipelineStageSkipKind.Warning, "NO_FILINGS_AVAILABLE", "The reference tool listed no filings to download.");
         // Once the main export is done the job keeps running to fetch filing documents — the same worker,
         // the same heartbeat, just a phase Fetch itself no longer reports on (it already returned Ok once

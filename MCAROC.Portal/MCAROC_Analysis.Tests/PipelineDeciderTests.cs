@@ -107,6 +107,23 @@ public sealed class PipelineDeciderTests
         Assert.Equal("FILINGS_FETCH_FAILED", d.Stages[PipelineStage.Filings].ReasonCode);
     }
 
+    [Fact]
+    public void CompletedWithWarnings_filings_stage_preserves_failure_reason_and_outcome_is_complete_with_warnings()
+    {
+        var s = AutoDone() with
+        {
+            AutoFetch = new AutoFetchFacts(5, AutoFetchJobStatus.CompletedWithWarnings, 7, true, null, "docService failed: 500 Internal Server Error"),
+            Filings = null
+        };
+        var d = PipelineDecider.Decide(s, PolicyOff);
+
+        Assert.Equal(PipelineOutcome.CompleteWithWarnings, d.Outcome);
+        Assert.True(d.CoreReady);
+        Assert.Equal(PipelineStageStateKind.SucceededWithWarnings, State(d, PipelineStage.Filings));
+        Assert.Equal("FILINGS_FETCH_FAILED", d.Stages[PipelineStage.Filings].ReasonCode);
+        Assert.Equal("docService failed: 500 Internal Server Error", d.Stages[PipelineStage.Filings].ReasonDetail);
+    }
+
     private static PipelineSnapshot AutoBeforeExport(AutoFetchJobStatus status, LifecycleFacts? lifecycle) => new()
     {
         RequestId = 1, Cin = "U45203OR1995PLC003982", RequestStatus = RequestStatus.Created, RefreshGateEnabled = true,
