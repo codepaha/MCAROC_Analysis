@@ -276,16 +276,24 @@ public sealed class PreLoginAttributionService(
             await db.SaveChangesAsync(ct);
             if (tx != null) await tx.CommitAsync(ct);
 
-            if (newReportPath != null && !string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+            if (newReportPath != null && !string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase))
             {
-                try { File.Delete(oldReportPath); } catch { }
+                var fullOld = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(oldReportPath);
+                if (File.Exists(fullOld))
+                {
+                    try { File.Delete(fullOld); } catch { }
+                }
             }
         }
         catch (Exception ex)
         {
-            if (newReportPath != null && File.Exists(newReportPath))
+            if (newReportPath != null)
             {
-                try { File.Delete(newReportPath); } catch { }
+                var fullNew = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(newReportPath);
+                if (File.Exists(fullNew))
+                {
+                    try { File.Delete(fullNew); } catch { }
+                }
             }
             logger?.LogError(ex, "Transaction failed saving attribution results for job {JobId}", jobId);
             if (tx != null) await tx.RollbackAsync(ct);
@@ -604,9 +612,13 @@ public sealed class PreLoginAttributionService(
 
                 if (rowsAffected == 0)
                 {
-                    if (newReportPath != null && File.Exists(newReportPath))
+                    if (newReportPath != null)
                     {
-                        try { File.Delete(newReportPath); } catch { }
+                        var fullNew = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(newReportPath);
+                        if (File.Exists(fullNew))
+                        {
+                            try { File.Delete(fullNew); } catch { }
+                        }
                     }
                     if (tx != null) await tx.RollbackAsync(ct);
                     db.ChangeTracker.Clear();
@@ -617,9 +629,13 @@ public sealed class PreLoginAttributionService(
 
                 if (tx != null) await tx.CommitAsync(ct);
 
-                if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+                if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase))
                 {
-                    try { File.Delete(oldReportPath); } catch { }
+                    var fullOld = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(oldReportPath);
+                    if (File.Exists(fullOld))
+                    {
+                        try { File.Delete(fullOld); } catch { }
+                    }
                 }
 
                 return openSuggestions.Count;
@@ -1361,9 +1377,13 @@ public sealed class PreLoginAttributionService(
 
                 if (rowsAffected == 0)
                 {
-                    if (newReportPath != null && File.Exists(newReportPath))
+                    if (newReportPath != null)
                     {
-                        try { File.Delete(newReportPath); } catch { }
+                        var fullNew = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(newReportPath);
+                        if (File.Exists(fullNew))
+                        {
+                            try { File.Delete(fullNew); } catch { }
+                        }
                     }
                     if (tx != null) await tx.RollbackAsync(ct);
                     db.ChangeTracker.Clear();
@@ -1374,18 +1394,26 @@ public sealed class PreLoginAttributionService(
 
                 if (tx != null) await tx.CommitAsync(ct);
 
-                if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+                if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase))
                 {
-                    try { File.Delete(oldReportPath); } catch { }
+                    var fullOld = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(oldReportPath);
+                    if (File.Exists(fullOld))
+                    {
+                        try { File.Delete(fullOld); } catch { }
+                    }
                 }
 
                 return true;
             }
             catch (Exception ex)
             {
-                if (newReportPath != null && File.Exists(newReportPath))
+                if (newReportPath != null)
                 {
-                    try { File.Delete(newReportPath); } catch { }
+                    var fullNew = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(newReportPath);
+                    if (File.Exists(fullNew))
+                    {
+                        try { File.Delete(fullNew); } catch { }
+                    }
                 }
                 logger?.LogError(ex, "Transaction failed saving accepted suggestion {ScopeCaseId} for job {JobId}", scopeCaseId, job.PreLoginReportJobId);
                 if (tx != null) await tx.RollbackAsync(ct);
@@ -1513,9 +1541,13 @@ public sealed class PreLoginAttributionService(
 
                 if (rowsAffected == 0)
                 {
-                    if (newReportPath != null && File.Exists(newReportPath))
+                    if (newReportPath != null)
                     {
-                        try { File.Delete(newReportPath); } catch { }
+                        var fullNew = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(newReportPath);
+                        if (File.Exists(fullNew))
+                        {
+                            try { File.Delete(fullNew); } catch { }
+                        }
                     }
                     if (tx != null) await tx.RollbackAsync(ct);
                     db.ChangeTracker.Clear();
@@ -1526,18 +1558,26 @@ public sealed class PreLoginAttributionService(
 
                 if (tx != null) await tx.CommitAsync(ct);
 
-                if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase) && File.Exists(oldReportPath))
+                if (!string.IsNullOrWhiteSpace(oldReportPath) && !string.Equals(oldReportPath, newReportPath, StringComparison.OrdinalIgnoreCase))
                 {
-                    try { File.Delete(oldReportPath); } catch { }
+                    var fullOld = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(oldReportPath);
+                    if (File.Exists(fullOld))
+                    {
+                        try { File.Delete(fullOld); } catch { }
+                    }
                 }
 
                 return true;
             }
             catch (Exception ex)
             {
-                if (newReportPath != null && File.Exists(newReportPath))
+                if (newReportPath != null)
                 {
-                    try { File.Delete(newReportPath); } catch { }
+                    var fullNew = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(newReportPath);
+                    if (File.Exists(fullNew))
+                    {
+                        try { File.Delete(fullNew); } catch { }
+                    }
                 }
                 logger?.LogError(ex, "Transaction failed saving undone exclusion {ScopeCaseId} for job {JobId}", scopeCaseId, job.PreLoginReportJobId);
                 if (tx != null) await tx.RollbackAsync(ct);
@@ -1573,13 +1613,13 @@ public sealed class PreLoginAttributionService(
 
         var generated = await _reports.GenerateFromDataAsync(identifier, format, updatedData, ct);
 
-        var directory = Path.Combine(_environment.ContentRootPath, "App_Data", "PreLoginReports");
+        var directory = MCAROC_Analysis.Services.Storage.StoragePathHelper.GetPreLoginReportsDir();
         Directory.CreateDirectory(directory);
         var attemptId = Guid.NewGuid().ToString("N");
         var versionedFileName = $"{job.PreLoginReportJobId}-v{nextVersion}-{attemptId}-{generated.FileName}";
         var newReportPath = Path.Combine(directory, versionedFileName);
         await File.WriteAllBytesAsync(newReportPath, generated.Bytes, ct);
-        return newReportPath;
+        return MCAROC_Analysis.Services.Storage.StoragePathHelper.ToRelativePath(newReportPath);
     }
 
     private static bool TrySyncCasesToDataJson(

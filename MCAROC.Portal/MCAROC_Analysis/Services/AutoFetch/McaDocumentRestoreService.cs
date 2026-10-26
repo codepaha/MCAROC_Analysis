@@ -34,16 +34,20 @@ public sealed class McaDocumentRestoreService(
     IHostEnvironment env,
     IOptions<ReferenceToolOptions> options,
     TimeProvider timeProvider,
-    ILogger<McaDocumentRestoreService> logger)
+    ILogger<McaDocumentRestoreService> logger,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null)
 {
     private readonly ReferenceToolOptions _opts = options.Value;
+    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
+        pathResolver ?? (env is IWebHostEnvironment webEnv ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(webEnv, null) : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default);
 
     public async Task<DocumentRestoreResult> RestoreDocumentAsync(McaFilingDocument document, CancellationToken ct = default)
     {
         // 1. Check if document is retired
-        if (document.RetiredUtc == null && !string.IsNullOrWhiteSpace(document.StoragePath) && File.Exists(document.StoragePath))
+        var fullExistingPath = _pathResolver.ResolveFullPath(document.StoragePath);
+        if (document.RetiredUtc == null && !string.IsNullOrWhiteSpace(fullExistingPath) && File.Exists(fullExistingPath))
         {
-            return new DocumentRestoreResult(DocumentRestoreStatus.NotRetired, document.StoragePath, null);
+            return new DocumentRestoreResult(DocumentRestoreStatus.NotRetired, fullExistingPath, null);
         }
 
         if (string.IsNullOrWhiteSpace(document.SourceAwsPath))
@@ -103,7 +107,7 @@ public sealed class McaDocumentRestoreService(
         }
 
         // 4. Determine destination path
-        var documentsDir = FilingStoragePaths.DocumentsDir(env.ContentRootPath, document.RequestId, document.BatchId, document.FilingId);
+        var documentsDir = FilingStoragePaths.DocumentsDir(document.RequestId, document.BatchId, document.FilingId, _pathResolver);
         Directory.CreateDirectory(documentsDir);
         var targetDocFile = $"{Guid.NewGuid():N}.pdf";
         var destinationPath = Path.Combine(documentsDir, targetDocFile);
@@ -134,14 +138,15 @@ public sealed class McaDocumentRestoreService(
             }
 
             // 6. Update database record
+            var relativePath = _pathResolver.ToRelativePath(destinationPath);
             var rowsUpdated = await db.McaFilingDocuments
                 .Where(d => d.FilingDocumentId == document.FilingDocumentId)
                 .ExecuteUpdateAsync(s => s
-                    .SetProperty(d => d.StoragePath, destinationPath)
+                    .SetProperty(d => d.StoragePath, relativePath)
                     .SetProperty(d => d.RetiredUtc, (DateTime?)null)
                     .SetProperty(d => d.UpdatedAt, now), ct);
 
-            document.StoragePath = destinationPath;
+            document.StoragePath = relativePath;
             document.RetiredUtc = null;
             document.UpdatedAt = now;
 

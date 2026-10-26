@@ -24,9 +24,12 @@ public class RequestsUploadController(
     ChunkStreamingService chunkStreamingService,
     FinalizationRecoveryService finalizationService,
     IWebHostEnvironment env,
-    ILogger<RequestsUploadController> logger) : ControllerBase
+    ILogger<RequestsUploadController> logger,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null) : ControllerBase
 {
     private readonly LargeArchiveUploadOptions _opts = options.Value;
+    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
+        pathResolver ?? (env != null ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(env, null) : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default);
 
     [HttpPost("initiate")]
     [ValidateAntiForgeryToken]
@@ -58,8 +61,8 @@ public class RequestsUploadController(
             return StatusCode(StatusCodes.Status429TooManyRequests, slotResult.Error ?? "Another large upload is currently in progress.");
 
         // 2. Resolve paths and reserve volume storage capacity
-        var stagingDir = Path.Combine(env.ContentRootPath, "App_Data", "Requests", requestId.ToString(), "mca-filings", "staging", sessionId.ToString());
-        var destDir = Path.Combine(env.ContentRootPath, "App_Data", "Uploads", requestId.ToString(), "original");
+        var stagingDir = Path.Combine(_pathResolver.GetDataRoot(), "Requests", requestId.ToString(), "mca-filings", "staging", sessionId.ToString());
+        var destDir = _pathResolver.GetUploadsDir(requestId);
         var stagingPartPath = Path.Combine(stagingDir, "archive.part");
         var destZipPath = Path.Combine(destDir, $"{sessionId:N}.zip");
 
@@ -87,8 +90,8 @@ public class RequestsUploadController(
             NextExpectedOffset = 0,
             ExpectedFullSha256 = request.ExpectedFullSha256.Trim().ToLowerInvariant(),
             Status = LargeArchiveUploadSessionStatus.Uploading,
-            StagingFilePath = stagingPartPath,
-            DestinationStoragePath = destZipPath,
+            StagingFilePath = _pathResolver.ToRelativePath(stagingPartPath),
+            DestinationStoragePath = _pathResolver.ToRelativePath(destZipPath),
             CreatedUtc = DateTime.UtcNow,
             LastHeartbeatUtc = DateTime.UtcNow,
             ExpiresUtc = DateTime.UtcNow.Add(_opts.SessionLifetime)
@@ -192,11 +195,12 @@ public class RequestsUploadController(
 
         try
         {
-            if (System.IO.File.Exists(session.StagingFilePath))
-                System.IO.File.Delete(session.StagingFilePath);
+            var fullStagingPath = _pathResolver.ResolveFullPath(session.StagingFilePath);
+            if (System.IO.File.Exists(fullStagingPath))
+                System.IO.File.Delete(fullStagingPath);
 
-            var dir = Path.GetDirectoryName(session.StagingFilePath);
-            if (Directory.Exists(dir))
+            var dir = Path.GetDirectoryName(fullStagingPath);
+            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
                 Directory.Delete(dir, recursive: true);
         }
         catch { /* best effort */ }

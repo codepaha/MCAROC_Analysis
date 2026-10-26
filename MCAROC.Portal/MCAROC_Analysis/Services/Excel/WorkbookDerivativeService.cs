@@ -15,8 +15,11 @@ public class WorkbookDerivativeService(
     AppDbContext db,
     IWebHostEnvironment env,
     FileValidationService fileValidation,
-    ILogger<WorkbookDerivativeService> logger) : IWorkbookDerivativeService
+    ILogger<WorkbookDerivativeService> logger,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null) : IWorkbookDerivativeService
 {
+    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
+        pathResolver ?? (env != null ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(env, null) : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default);
     public const int CurrentSanitizerVersion = 1;
 
     /// <summary>
@@ -51,7 +54,7 @@ public class WorkbookDerivativeService(
             existing.Status == DocumentDerivativeStatus.Ready &&
             existing.SanitizerVersion == CurrentSanitizerVersion &&
             existing.RawFileHash == doc.FileHash &&
-            File.Exists(existing.StoragePath))
+            File.Exists(_pathResolver.ResolveFullPath(existing.StoragePath)))
         {
             return existing;
         }
@@ -94,7 +97,7 @@ public class WorkbookDerivativeService(
             existing.Status == DocumentDerivativeStatus.Ready &&
             existing.SanitizerVersion == CurrentSanitizerVersion &&
             existing.RawFileHash == doc.FileHash &&
-            File.Exists(existing.StoragePath))
+            File.Exists(_pathResolver.ResolveFullPath(existing.StoragePath)))
         {
             return existing;
         }
@@ -104,7 +107,7 @@ public class WorkbookDerivativeService(
             var now = DateTime.UtcNow;
             var canClaim = existing.Status == DocumentDerivativeStatus.Failed ||
                            (existing.Status == DocumentDerivativeStatus.Pending && existing.LeaseExpiresUtc.HasValue && existing.LeaseExpiresUtc.Value < now) ||
-                           (existing.Status == DocumentDerivativeStatus.Ready && (!File.Exists(existing.StoragePath) || existing.RawFileHash != doc.FileHash));
+                           (existing.Status == DocumentDerivativeStatus.Ready && (!File.Exists(_pathResolver.ResolveFullPath(existing.StoragePath)) || existing.RawFileHash != doc.FileHash));
 
             if (canClaim)
             {
@@ -143,15 +146,16 @@ public class WorkbookDerivativeService(
         string ext,
         CancellationToken ct)
     {
-        var derivativesDir = Path.Combine(env.ContentRootPath, "App_Data", "Uploads", doc.RequestId.ToString(), "derivatives");
+        var derivativesDir = _pathResolver.GetDerivativesDir(doc.RequestId);
         Directory.CreateDirectory(derivativesDir);
         var generationPath = Path.Combine(derivativesDir, $"{doc.DocumentId}_sanitized.{workerToken:N}{ext}");
 
         try
         {
-            if (string.IsNullOrWhiteSpace(doc.StoragePath) || !File.Exists(doc.StoragePath))
+            var fullDocPath = _pathResolver.ResolveFullPath(doc.StoragePath);
+            if (string.IsNullOrWhiteSpace(fullDocPath) || !File.Exists(fullDocPath))
             {
-                logger.LogWarning("Source document file not found at {StoragePath} for Document {DocumentId}", doc.StoragePath, doc.DocumentId);
+                logger.LogWarning("Source document file not found at {StoragePath} for Document {DocumentId}", fullDocPath, doc.DocumentId);
                 var failureTime = DateTime.UtcNow;
                 var sourceMissingRows = await db.RequestDocumentDerivatives
                     .Where(d => d.DerivativeId == derivativeId
@@ -171,7 +175,7 @@ public class WorkbookDerivativeService(
                 return await db.RequestDocumentDerivatives.AsNoTracking().FirstOrDefaultAsync(d => d.DerivativeId == derivativeId, ct);
             }
 
-            File.Copy(doc.StoragePath, generationPath, overwrite: true);
+            File.Copy(fullDocPath, generationPath, overwrite: true);
 
             ExcelMetadataSanitizer.SanitizeWorkbook(generationPath);
 
@@ -227,7 +231,7 @@ public class WorkbookDerivativeService(
                          && d.LeaseExpiresUtc > completionTime)
                 .ExecuteUpdateAsync(u => u
                     .SetProperty(d => d.Status, DocumentDerivativeStatus.Ready)
-                    .SetProperty(d => d.StoragePath, generationPath)
+                    .SetProperty(d => d.StoragePath, _pathResolver.ToRelativePath(generationPath))
                     .SetProperty(d => d.FileSize, fileInfo.Length)
                     .SetProperty(d => d.FileHash, fileHash)
                     .SetProperty(d => d.ErrorMessage, (string?)null)
@@ -279,7 +283,7 @@ public class WorkbookDerivativeService(
 
     public async Task<int> CleanupOrphanGenerationsAsync(long requestId, TimeSpan? olderThan = null, CancellationToken ct = default)
     {
-        var derivativesDir = Path.Combine(env.ContentRootPath, "App_Data", "Uploads", requestId.ToString(), "derivatives");
+        var derivativesDir = _pathResolver.GetDerivativesDir(requestId);
         if (!Directory.Exists(derivativesDir)) return 0;
 
         var threshold = DateTime.UtcNow - (olderThan ?? TimeSpan.FromHours(1));
@@ -288,25 +292,33 @@ public class WorkbookDerivativeService(
             .Select(d => d.StoragePath)
             .ToListAsync(ct);
 
-        var activeSet = new HashSet<string>(activePaths, StringComparer.OrdinalIgnoreCase);
-        var deletedCount = 0;
+        var activeSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in activePaths)
+        {
+            if (string.IsNullOrWhiteSpace(p)) continue;
+            var fullPath = _pathResolver.ResolveFullPath(p);
+            activeSet.Add(Path.GetFullPath(fullPath));
+        }
 
+        var deletedCount = 0;
         var files = Directory.GetFiles(derivativesDir);
         foreach (var file in files)
         {
-            if (activeSet.Contains(file)) continue;
+            var normalizedFile = Path.GetFullPath(file);
+            if (!_pathResolver.IsContained(normalizedFile, derivativesDir)) continue;
+            if (activeSet.Contains(normalizedFile)) continue;
 
-            var fileInfo = new FileInfo(file);
+            var fileInfo = new FileInfo(normalizedFile);
             if (fileInfo.LastWriteTimeUtc < threshold)
             {
                 try
                 {
-                    File.Delete(file);
+                    File.Delete(normalizedFile);
                     deletedCount++;
                 }
                 catch (Exception ex)
                 {
-                    logger.LogWarning(ex, "Failed to delete orphan derivative file {File}", file);
+                    logger.LogWarning(ex, "Failed to delete orphan derivative file {File}", normalizedFile);
                 }
             }
         }

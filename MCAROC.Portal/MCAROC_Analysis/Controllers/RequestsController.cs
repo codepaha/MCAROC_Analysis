@@ -21,6 +21,7 @@ using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.AnalystAccess;
 using MCAROC_Analysis.Services.PropertyParticulars;
 using MCAROC_Analysis.Services.CompanyMaster;
+using MCAROC_Analysis.Services.Storage;
 
 namespace MCAROC_Analysis.Controllers;
 
@@ -46,8 +47,10 @@ public partial class RequestsController(
     FullTextSearchStatus? fullTextStatus = null,
     MCAROC_Analysis.Services.AutoFetch.McaDocumentRestoreService? documentRestore = null,
     MCAROC_Analysis.Services.LitigationModule.Reading.LitigationReaderGate? readerGate = null,
-    MCAROC_Analysis.Services.LitigationModule.Freshness.ICourtRefreshStatusService? courtRefreshStatus = null) : Controller
+    MCAROC_Analysis.Services.LitigationModule.Freshness.ICourtRefreshStatusService? courtRefreshStatus = null,
+    IStoragePathResolver? pathResolver = null) : Controller
 {
+    private readonly IStoragePathResolver _pathResolver = pathResolver ?? (env != null ? new StoragePathResolver(env, null) : StoragePathHelper.Default);
     [HttpGet("/Requests")]
     public async Task<IActionResult> Index([FromQuery] RequestListFilterCriteria filters)
     {
@@ -436,7 +439,7 @@ public partial class RequestsController(
 
         var ext = Path.GetExtension(file.FileName);
         var storedFileName = $"{doc.DocumentId}{ext}";
-        var uploadsDir = Path.Combine(env.ContentRootPath, "App_Data", "Uploads", requestId.ToString(), "original");
+        var uploadsDir = _pathResolver.GetUploadsDir(requestId);
         Directory.CreateDirectory(uploadsDir);
         var fullPath = Path.Combine(uploadsDir, storedFileName);
 
@@ -453,7 +456,7 @@ public partial class RequestsController(
         }
 
         doc.StoredFileName = storedFileName;
-        doc.StoragePath = fullPath;
+        doc.StoragePath = _pathResolver.ToRelativePath(fullPath);
         await db.SaveChangesAsync();
 
         if ((ext.Equals(".xls", StringComparison.OrdinalIgnoreCase) || ext.Equals(".xlsx", StringComparison.OrdinalIgnoreCase)) && derivativeService != null)
@@ -736,7 +739,7 @@ public partial class RequestsController(
 
         var ext = Path.GetExtension(file.FileName);
         var storedFileName = $"{document.DocumentId}{ext}";
-        var uploadsDir = Path.Combine(env.ContentRootPath, "App_Data", "Uploads", requestId.ToString(), "original");
+        var uploadsDir = _pathResolver.GetUploadsDir(requestId);
         Directory.CreateDirectory(uploadsDir);
         var fullPath = Path.Combine(uploadsDir, storedFileName);
 
@@ -753,7 +756,7 @@ public partial class RequestsController(
         }
 
         document.StoredFileName = storedFileName;
-        document.StoragePath = fullPath;
+        document.StoragePath = _pathResolver.ToRelativePath(fullPath);
         if (validateAsExcel)
         {
             var openCheck = fileValidation.ValidateOpens(fullPath);
@@ -845,7 +848,8 @@ public partial class RequestsController(
             targetDoc = canonical;
         }
 
-        if (string.IsNullOrWhiteSpace(targetDoc.StoragePath) || !System.IO.File.Exists(targetDoc.StoragePath))
+        var resolvedPath = _pathResolver.ResolveFullPath(targetDoc.StoragePath);
+        if (string.IsNullOrWhiteSpace(resolvedPath) || !System.IO.File.Exists(resolvedPath))
         {
             if (documentRestore != null && (targetDoc.RetiredUtc != null || !string.IsNullOrEmpty(targetDoc.SourceAwsPath)))
             {
@@ -853,7 +857,8 @@ public partial class RequestsController(
                 var restoreResult = await documentRestore.RestoreDocumentAsync(targetDoc, ct);
                 if (restoreResult.Status == MCAROC_Analysis.Services.AutoFetch.DocumentRestoreStatus.Success && !string.IsNullOrEmpty(restoreResult.RestoredPath))
                 {
-                    targetDoc.StoragePath = restoreResult.RestoredPath;
+                    targetDoc.StoragePath = _pathResolver.ToRelativePath(restoreResult.RestoredPath);
+                    resolvedPath = _pathResolver.ResolveFullPath(targetDoc.StoragePath);
                 }
                 else
                 {
@@ -871,7 +876,7 @@ public partial class RequestsController(
 
         try
         {
-            await using var stream = new FileStream(targetDoc.StoragePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, useAsync: true);
+            await using var stream = new FileStream(resolvedPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, useAsync: true);
             var buffer = new byte[5];
             var bytesRead = await stream.ReadAsync(buffer.AsMemory(0, 5), ct);
             // 0x25, 0x50, 0x44, 0x46, 0x2D == "%PDF-"
@@ -887,7 +892,7 @@ public partial class RequestsController(
             return (null, null);
         }
 
-        return (doc, targetDoc.StoragePath);
+        return (doc, resolvedPath);
     }
 
     [HttpGet("/Requests/{requestId:long}/documents/{docId:long}/view")]
@@ -1070,15 +1075,15 @@ public partial class RequestsController(
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, "Sanitized download is currently unavailable for this document.");
             }
 
-            if (!System.IO.File.Exists(derivative.StoragePath))
+            var fullDerivativePath = _pathResolver.ResolveFullPath(derivative.StoragePath);
+            if (!System.IO.File.Exists(fullDerivativePath))
             {
-                logger?.LogError("Sanitized derivative storage path missing on disk: {Path}", derivative.StoragePath);
+                logger?.LogError("Sanitized derivative storage path missing on disk: {Path}", fullDerivativePath);
                 return NotFound();
             }
 
-            var expectedDerivativesDir = Path.GetFullPath(Path.Combine(env.ContentRootPath, "App_Data", "Uploads", requestId.ToString(), "derivatives")) + Path.DirectorySeparatorChar;
-            var fullDerivativePath = Path.GetFullPath(derivative.StoragePath);
-            if (!fullDerivativePath.StartsWith(expectedDerivativesDir, StringComparison.OrdinalIgnoreCase))
+            var expectedDerivativesDir = _pathResolver.GetDerivativesDir(requestId);
+            if (!_pathResolver.IsContained(fullDerivativePath, expectedDerivativesDir))
             {
                 logger?.LogError("Path traversal detected on derivative {Path} for Request {RequestId}", fullDerivativePath, requestId);
                 return NotFound();
@@ -1088,15 +1093,15 @@ public partial class RequestsController(
         }
         else
         {
-            if (string.IsNullOrWhiteSpace(doc.StoragePath) || !System.IO.File.Exists(doc.StoragePath))
+            var fullStoragePath = _pathResolver.ResolveFullPath(doc.StoragePath);
+            if (string.IsNullOrWhiteSpace(fullStoragePath) || !System.IO.File.Exists(fullStoragePath))
             {
                 logger?.LogError("Storage path missing or file not found on disk for Document {DocId}", docId);
                 return NotFound();
             }
 
-            var expectedUploadsDir = Path.GetFullPath(Path.Combine(env.ContentRootPath, "App_Data", "Uploads", requestId.ToString())) + Path.DirectorySeparatorChar;
-            var fullStoragePath = Path.GetFullPath(doc.StoragePath);
-            if (!fullStoragePath.StartsWith(expectedUploadsDir, StringComparison.OrdinalIgnoreCase))
+            var expectedUploadsDir = Path.Combine(_pathResolver.GetDataRoot(), "Uploads", requestId.ToString());
+            if (!_pathResolver.IsContained(fullStoragePath, expectedUploadsDir))
             {
                 logger?.LogError("Path traversal detected on document {Path} for Request {RequestId}", fullStoragePath, requestId);
                 return NotFound();

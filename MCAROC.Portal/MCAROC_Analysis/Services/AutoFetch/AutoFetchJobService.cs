@@ -42,7 +42,8 @@ public sealed class AutoFetchJobService(
     CompanyRefreshService? refresh = null,
     CompanyUnlockService? unlock = null,
     IdentityResolutionService? identity = null,
-    IOptions<LargeArchiveUploadOptions>? uploadOptions = null)
+    IOptions<LargeArchiveUploadOptions>? uploadOptions = null,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null)
 {
     /// <summary>Fallback per-file size estimate used when the registry gives no declared size for a
     /// document or an attachment — only for sizing the up-front storage reservation and the plan-time
@@ -51,6 +52,8 @@ public sealed class AutoFetchJobService(
     private const long FallbackPerFileEstimateBytes = 2_000_000L; // 2 MB
     private readonly ReferenceToolOptions _opts = options.Value;
     private readonly ArchiveSafetyLimits _archiveLimits = uploadOptions?.Value is { } u ? ArchiveSafetyLimits.FromOptions(u) : ArchiveSafetyLimits.Default;
+    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
+        pathResolver ?? MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
     private static readonly TimeSpan ProgressFlushInterval = TimeSpan.FromSeconds(2);
 
     // ── Creation ───────────────────────────────────────────────────────────────────────────────────
@@ -930,7 +933,7 @@ public sealed class AutoFetchJobService(
 
         var ext = Path.GetExtension(originalFileName);
         var storedFileName = $"{document.DocumentId}{ext}";
-        var uploadsDir = Path.Combine(env.ContentRootPath, "App_Data", "Uploads", requestId.ToString(), "original");
+        var uploadsDir = _pathResolver.GetUploadsDir(requestId);
         Directory.CreateDirectory(uploadsDir);
         var fullPath = Path.Combine(uploadsDir, storedFileName);
         if (File.Exists(fullPath)) File.Delete(fullPath);
@@ -940,7 +943,7 @@ public sealed class AutoFetchJobService(
             document.FileHash = Convert.ToHexString(await SHA256.HashDataAsync(hashStream, ct));
 
         document.StoredFileName = storedFileName;
-        document.StoragePath = fullPath;
+        document.StoragePath = _pathResolver.ToRelativePath(fullPath);
         if (validateAsExcel)
         {
             var openCheck = fileValidation.ValidateOpens(fullPath);

@@ -141,7 +141,8 @@ public static class ChargeForms
         var missing = false;
         foreach (var d in documents)
         {
-            var fields = await XfaFormReader.ReadSidecarAsync(d.ExtractedTextPath!, ct);
+            var resolvedTextPath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(d.ExtractedTextPath);
+            var fields = await XfaFormReader.ReadSidecarAsync(resolvedTextPath, ct);
             if (fields is null) { missing = true; continue; }
             if (FromFields(d.FilingDocumentId, fields) is { } form) forms.Add(form);
         }
@@ -178,18 +179,25 @@ public class ChargeFormBackfill(IServiceScopeFactory scopes, ILogger<ChargeFormB
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var documents = await ChargeForms.Candidates(db, batchId).Select(d => new { d.ExtractedTextPath, d.StoragePath }).ToListAsync(ct);
-        var todo = documents.Where(d => !File.Exists(XfaFormReader.SidecarPath(d.ExtractedTextPath!))
-            || !File.Exists(EmbeddedFiles.SidecarPath(d.ExtractedTextPath!))).ToList();
+        var todo = documents
+            .Select(d => new
+            {
+                ResolvedTextPath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(d.ExtractedTextPath),
+                ResolvedStoragePath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(d.StoragePath)
+            })
+            .Where(d => !string.IsNullOrEmpty(d.ResolvedTextPath) &&
+                (!File.Exists(XfaFormReader.SidecarPath(d.ResolvedTextPath))
+                 || !File.Exists(EmbeddedFiles.SidecarPath(d.ResolvedTextPath)))).ToList();
         var saved = 0;
         await Parallel.ForEachAsync(todo, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, async (d, token) =>
         {
             IReadOnlyList<XfaField> fields = [];
             IReadOnlyList<EmbeddedFileHash> embedded = [];
-            if (!string.IsNullOrEmpty(d.StoragePath) && File.Exists(d.StoragePath))
+            if (!string.IsNullOrEmpty(d.ResolvedStoragePath) && File.Exists(d.ResolvedStoragePath))
             {
                 try
                 {
-                    using var pdf = PdfDocument.Open(d.StoragePath);
+                    using var pdf = PdfDocument.Open(d.ResolvedStoragePath);
                     fields = XfaFormReader.ReadFields(pdf) ?? [];
                     embedded = EmbeddedFiles.Read(pdf);
                 }
@@ -199,10 +207,10 @@ public class ChargeFormBackfill(IServiceScopeFactory scopes, ILogger<ChargeFormB
                 }
             }
             // Only the missing one is written: a saved sidecar is never overwritten with a re-read.
-            if (!File.Exists(XfaFormReader.SidecarPath(d.ExtractedTextPath!)))
-                await XfaFormReader.WriteSidecarAsync(d.ExtractedTextPath!, fields, token);
-            if (!File.Exists(EmbeddedFiles.SidecarPath(d.ExtractedTextPath!)))
-                await EmbeddedFiles.WriteSidecarAsync(d.ExtractedTextPath!, embedded, token);
+            if (!File.Exists(XfaFormReader.SidecarPath(d.ResolvedTextPath)))
+                await XfaFormReader.WriteSidecarAsync(d.ResolvedTextPath, fields, token);
+            if (!File.Exists(EmbeddedFiles.SidecarPath(d.ResolvedTextPath)))
+                await EmbeddedFiles.WriteSidecarAsync(d.ResolvedTextPath, embedded, token);
             Interlocked.Increment(ref saved);
         });
         if (saved > 0) logger.LogInformation("Saved charge-form fields for {Count} document(s) of batch {BatchId}", saved, batchId);

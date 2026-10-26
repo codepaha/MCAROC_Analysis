@@ -317,8 +317,9 @@ public static class NameChangeCertificateLoader
             string text;
             try
             {
-                if (!File.Exists(d.ExtractedTextPath)) continue;
-                text = await File.ReadAllTextAsync(d.ExtractedTextPath!, ct);
+                var fullTextPath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(d.ExtractedTextPath);
+                if (!File.Exists(fullTextPath)) continue;
+                text = await File.ReadAllTextAsync(fullTextPath, ct);
             }
             catch (IOException) { continue; }
             foreach (var change in NameChangeCertificateReader.Read(text, d.FilingDocumentId))

@@ -8,6 +8,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
+using MCAROC_Analysis.Services.Storage;
+
 namespace MCAROC_Analysis.Controllers;
 
 /// <summary>Request-scoped litigation endpoints: BPR search triggering, status polling, safe order PDF
@@ -17,9 +19,11 @@ public class LitigationController(
     IWebHostEnvironment env,
     IOptions<BprLitigationOptions> bprOptions,
     LitigationStartService starter,
-    ILogger<LitigationController>? logger = null) : Controller
+    ILogger<LitigationController>? logger = null,
+    IStoragePathResolver? pathResolver = null) : Controller
 {
     private readonly BprLitigationOptions _opts = bprOptions.Value;
+    private readonly IStoragePathResolver _pathResolver = pathResolver ?? StoragePathHelper.Default;
 
     /// <summary>Starts an evidence-only LIT-05 run, or returns the already-active run. The response is
     /// deliberately lifecycle metadata; completed case/portfolio output is read from the persisted endpoint.
@@ -219,11 +223,10 @@ public class LitigationController(
         if (doc is null || doc.Status != LitigationOrderDocumentStatus.Downloaded || string.IsNullOrWhiteSpace(doc.StoragePath))
             return NotFound("Order document not found or not downloaded.");
 
-        var expectedDir = Path.GetFullPath(
-            Path.Combine(env.ContentRootPath, "App_Data", "Requests", id.ToString(), "litigation-orders")) + Path.DirectorySeparatorChar;
+        var expectedDir = _pathResolver.GetLitigationOrdersDir(id);
 
-        var fullPath = Path.GetFullPath(doc.StoragePath);
-        if (!fullPath.StartsWith(expectedDir, StringComparison.OrdinalIgnoreCase))
+        var fullPath = _pathResolver.ResolveFullPath(doc.StoragePath);
+        if (!_pathResolver.IsContained(fullPath, expectedDir))
         {
             logger?.LogError(
                 "Path traversal detected on litigation order document {Id} for Request {RequestId}",
@@ -274,16 +277,15 @@ public class LitigationController(
             })
             .ToListAsync(ct);
 
-        var expectedDir = Path.GetFullPath(
-            Path.Combine(env.ContentRootPath, "App_Data", "Requests", id.ToString(), "litigation-orders")) + Path.DirectorySeparatorChar;
+        var expectedDir = _pathResolver.GetLitigationOrdersDir(id);
 
         var entries = new List<LitigationOrderArchiveEntry>();
         foreach (var d in documents)
         {
             if (string.IsNullOrWhiteSpace(d.StoragePath)) continue;
 
-            var fullPath = Path.GetFullPath(d.StoragePath);
-            if (!fullPath.StartsWith(expectedDir, StringComparison.OrdinalIgnoreCase))
+            var fullPath = _pathResolver.ResolveFullPath(d.StoragePath);
+            if (!_pathResolver.IsContained(fullPath, expectedDir))
             {
                 logger?.LogError(
                     "Path traversal detected on litigation order document {Id} for Request {RequestId}",
@@ -299,7 +301,7 @@ public class LitigationController(
         if (entries.Count == 0)
             return NotFound(caseId is null ? "No currently retained litigation order PDFs are available for this request." : "No retained order PDFs are available for this case.");
 
-        var zipDir = Path.Combine(env.ContentRootPath, "App_Data", "Requests", id.ToString(), "litigation-orders", "_zip");
+        var zipDir = Path.Combine(_pathResolver.GetLitigationOrdersDir(id), "_zip");
         Directory.CreateDirectory(zipDir);
         var zipPath = Path.Combine(zipDir, $"{Guid.NewGuid():N}.zip");
 

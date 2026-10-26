@@ -32,10 +32,14 @@ public sealed class FilingReclassifier(AppDbContext db, ILogger<FilingReclassifi
         {
             var d = x.Doc;
             string? text = null;
-            if (d.ExtractedTextPath is { } path && File.Exists(path))
+            if (d.ExtractedTextPath is { } path)
             {
-                try { text = await File.ReadAllTextAsync(path, ct); }
-                catch (IOException ex) { logger.LogWarning(ex, "Could not read the text of document {DocumentId}; classified by its name only", d.FilingDocumentId); }
+                var fullTextPath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(path);
+                if (File.Exists(fullTextPath))
+                {
+                    try { text = await File.ReadAllTextAsync(fullTextPath, ct); }
+                    catch (IOException ex) { logger.LogWarning(ex, "Could not read the text of document {DocumentId}; classified by its name only", d.FilingDocumentId); }
+                }
             }
             var r = FilingClassifier.Classify(x.OuterCategoryFolder ?? "", d.SourceFolder ?? "", d.OriginalFileName, text);
             if (r.Category != d.Category || r.FormType != d.FormType || r.Confidence != d.ClassificationConfidence || r.Method != d.ClassificationMethod)

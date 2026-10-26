@@ -82,9 +82,17 @@ public class DossierCache(AppDbContext db, DossierAssembler assembler, IMemoryCa
                 + $":{await PropertyParticulars.PropertyParticularsExtractionService.VersionAsync(db, requestId, ct)}"
                 + $":{await PropertyParticulars.ChargeInstrumentExtractionService.VersionAsync(db, requestId, ct)}");
 
-        var dir = Path.Combine(contentRootPath, "App_Data", "Dossiers", requestId.ToString());
+        var dir = Path.Combine(MCAROC_Analysis.Services.Storage.StoragePathHelper.GetDataRoot(), "Dossiers", requestId.ToString());
         if (Directory.Exists(dir))
+        {
             foreach (var file in Directory.EnumerateFiles(dir, "*.pdf"))
                 File.Delete(file);
+        }
+        var legacyDir = Path.Combine(contentRootPath, "App_Data", "Dossiers", requestId.ToString());
+        if (Directory.Exists(legacyDir) && !string.Equals(dir, legacyDir, StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var file in Directory.EnumerateFiles(legacyDir, "*.pdf"))
+                File.Delete(file);
+        }
     }
 }

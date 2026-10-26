@@ -48,6 +48,7 @@ public sealed class LitigationOrderDocumentService
     private readonly BprLitigationOptions _opts;
     private readonly IWebHostEnvironment env;
     private readonly ILogger<LitigationOrderDocumentService> logger;
+    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver;
 
     public LitigationOrderDocumentService(
         AppDbContext db,
@@ -58,7 +59,8 @@ public sealed class LitigationOrderDocumentService
         LitigationOrderChunkingQueue chunkingQueue,
         IOptions<BprLitigationOptions> options,
         IWebHostEnvironment env,
-        ILogger<LitigationOrderDocumentService> logger)
+        ILogger<LitigationOrderDocumentService> logger,
+        MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null)
     {
         this.db = db;
         _sourceClients = sourceClients;
@@ -69,6 +71,7 @@ public sealed class LitigationOrderDocumentService
         _opts = options.Value;
         this.env = env;
         this.logger = logger;
+        _pathResolver = pathResolver ?? (env != null ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(env, null) : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default);
     }
 
     internal LitigationOrderDocumentService(
@@ -149,7 +152,7 @@ public sealed class LitigationOrderDocumentService
         var myLeaseToken = document.LeaseToken!.Value;
         var attemptCount = document.AttemptCount;
         var requestId = document.Order.Case.RequestId;
-        var directory = Path.Combine(env.ContentRootPath, "App_Data", "Requests", requestId.ToString(), "litigation-orders");
+        var directory = _pathResolver.GetLitigationOrdersDir(requestId);
 
         // Set only once the file is actually written — the finally block below deletes it if (and only if)
         // this attempt never successfully published it, covering both "lost the lease-guarded race" and any
@@ -266,7 +269,7 @@ public sealed class LitigationOrderDocumentService
             // frees the unique (LitigationCaseOrderId, Version) index slot so an archived copy at currentVer can be inserted.
             var claimed = await LeaseGuarded(orderDocumentId, myLeaseToken).ExecuteUpdateAsync(s => s
                 .SetProperty(d => d.Status, LitigationOrderDocumentStatus.Downloaded)
-                .SetProperty(d => d.StoragePath, myPath)
+                .SetProperty(d => d.StoragePath, _pathResolver.ToRelativePath(myPath))
                 .SetProperty(d => d.FileSizeBytes, fileBytes.LongLength)
                 .SetProperty(d => d.FileHash, fileHash)
                 .SetProperty(d => d.ContentHash, contentHash)
