@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MCAROC_Analysis.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261026150418_AddLitigationOrderPropertyReadings")]
+    [Migration("20261026164749_AddLitigationOrderPropertyReadings")]
     partial class AddLitigationOrderPropertyReadings
     {
         /// <inheritdoc />
@@ -27,6 +27,23 @@ namespace MCAROC_Analysis.Migrations
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
             modelBuilder.HasSequence("CaseObservationIds", "litigation");
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AiDailyCallCount", b =>
+                {
+                    b.Property<string>("Purpose")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateOnly>("Day")
+                        .HasColumnType("date");
+
+                    b.Property<int>("Calls")
+                        .HasColumnType("int");
+
+                    b.HasKey("Purpose", "Day");
+
+                    b.ToTable("AiDailyCallCounts");
+                });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AiUsageRecord", b =>
                 {

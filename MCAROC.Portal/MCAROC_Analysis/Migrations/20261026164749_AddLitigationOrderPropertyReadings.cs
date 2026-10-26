@@ -12,6 +12,19 @@ namespace MCAROC_Analysis.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
+                name: "AiDailyCallCounts",
+                columns: table => new
+                {
+                    Purpose = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    Day = table.Column<DateOnly>(type: "date", nullable: false),
+                    Calls = table.Column<int>(type: "int", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AiDailyCallCounts", x => new { x.Purpose, x.Day });
+                });
+
+            migrationBuilder.CreateTable(
                 name: "LitigationOrderPropertyReadings",
                 columns: table => new
                 {
@@ -73,6 +86,9 @@ namespace MCAROC_Analysis.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropTable(
+                name: "AiDailyCallCounts");
+
             migrationBuilder.DropTable(
                 name: "LitigationOrderPropertyReadings");
         }

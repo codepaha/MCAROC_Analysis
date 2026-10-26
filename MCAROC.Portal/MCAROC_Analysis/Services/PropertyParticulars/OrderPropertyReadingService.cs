@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
+using MCAROC_Analysis.Services.AiUsage;
 using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.LitigationData.Attribution;
 using Microsoft.Data.SqlClient;
@@ -119,48 +120,60 @@ public sealed class OrderPropertyReadingService(
     {
         var token = Guid.NewGuid();
         var now = DateTime.UtcNow;
+        // Claiming is not an attempt: AttemptCount counts calls made (below), so waiting for the daily limit never uses up retries.
         var claimed = await db.LitigationOrderPropertyReadings
             .Where(x => x.LitigationOrderPropertyReadingId == readingId && x.Status == LitigationOrderPropertyReadingStatus.Pending
                 && (x.NextAttemptUtc == null || x.NextAttemptUtc <= now))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(x => x.Status, LitigationOrderPropertyReadingStatus.InProgress)
-                .SetProperty(x => x.AttemptCount, x => x.AttemptCount + 1)
                 .SetProperty(x => x.LeaseToken, token)
                 .SetProperty(x => x.LeaseExpiresUtc, now.AddSeconds(LeaseSeconds)), ct);
         if (claimed == 0) return;
         var row = await db.LitigationOrderPropertyReadings.AsNoTracking().SingleAsync(x => x.LitigationOrderPropertyReadingId == readingId, ct);
 
-        // Same input as an order already read: take that reading, no call.
-        var same = await db.LitigationOrderPropertyReadings.AsNoTracking()
-            .Where(x => x.InputHash == row.InputHash && x.PromptVersion == row.PromptVersion && x.Status == LitigationOrderPropertyReadingStatus.Completed
-                && x.LitigationOrderPropertyReadingId != readingId)
-            .OrderBy(x => x.LitigationOrderPropertyReadingId).FirstOrDefaultAsync(ct);
-        if (same is not null)
-        {
-            await PublishAsync(readingId, token, LitigationOrderPropertyReadingStatus.Completed, same.RawResponseJson, same.ResultJson,
-                same.RejectedFieldsJson, null, same.LitigationOrderPropertyReadingId, ct);
-            return;
-        }
-
-        if (await CallsTodayAsync(ct) >= options.Value.MaxCallsPerDay)
-        {
-            await DeferAsync(row, token, Ist.NextMidnightUtc(DateTime.UtcNow), "Daily limit of order property readings reached; continues tomorrow.", ct);
-            return;
-        }
-
+        // The input as it is now: the order's text, the case or the company's names may have changed since the row was scheduled. Everything
+        // below (reuse, the call, what is published) is for this input, and the row is bound to it.
         var document = await db.LitigationOrderDocuments.AsNoTracking().Include(d => d.Order!).ThenInclude(o => o.Case!)
             .SingleOrDefaultAsync(d => d.LitigationOrderDocumentId == row.LitigationOrderDocumentId, ct);
         if (document?.ExtractedText is null)
         {
-            await PublishAsync(readingId, token, LitigationOrderPropertyReadingStatus.Failed, null, null, null, "The order's text is no longer stored.", null, ct);
+            await PublishAsync(readingId, token, LitigationOrderPropertyReadingStatus.Failed, row.InputHash, row.PagesSentJson, null, null, null,
+                "The order's text is no longer stored.", null, ct);
             return;
         }
         var input = BuildInput(document, document.Order!.Case!, await ChargeLitigationService.CompanyNamesAsync(db, row.RequestId, ct));
+        var pagesJson = JsonSerializer.Serialize(input.Pages.Select(p => p.Number));
         if (input.Pages.Count == 0)
         {
-            await PublishAsync(readingId, token, LitigationOrderPropertyReadingStatus.NoPropertyPages, null, null, null, null, null, ct);
+            await PublishAsync(readingId, token, LitigationOrderPropertyReadingStatus.NoPropertyPages, input.InputHash, pagesJson, null, null, null, null, null, ct);
             return;
         }
+        if (input.InputHash != row.InputHash
+            && await db.LitigationOrderPropertyReadings.Where(x => x.LitigationOrderPropertyReadingId == readingId && x.LeaseToken == token)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.InputHash, input.InputHash).SetProperty(x => x.PagesSentJson, pagesJson), ct) == 0)
+            return;   // lease lost
+
+        // Same input as an order already read: take that reading, no call.
+        var same = await db.LitigationOrderPropertyReadings.AsNoTracking()
+            .Where(x => x.InputHash == input.InputHash && x.PromptVersion == OrderPropertiesAi.PromptVersion && x.Status == LitigationOrderPropertyReadingStatus.Completed
+                && x.LitigationOrderPropertyReadingId != readingId)
+            .OrderBy(x => x.LitigationOrderPropertyReadingId).FirstOrDefaultAsync(ct);
+        if (same is not null)
+        {
+            await PublishAsync(readingId, token, LitigationOrderPropertyReadingStatus.Completed, input.InputHash, pagesJson, same.RawResponseJson, same.ResultJson,
+                same.RejectedFieldsJson, null, same.LitigationOrderPropertyReadingId, ct);
+            return;
+        }
+
+        // A real call: reserved against today's limit first, and counted whatever its outcome.
+        if (!await AiDailyCallBudget.TryReserveAsync(db, AiUsagePurposes.OrderProperties, options.Value.MaxCallsPerDay, DateTime.UtcNow, ct))
+        {
+            await DeferAsync(row, token, Ist.NextMidnightUtc(DateTime.UtcNow), "Daily limit of order property readings reached; continues tomorrow.", ct);
+            return;
+        }
+        var attempts = row.AttemptCount + 1;
+        await db.LitigationOrderPropertyReadings.Where(x => x.LitigationOrderPropertyReadingId == readingId && x.LeaseToken == token)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.AttemptCount, attempts), ct);
 
         PropertyParticularsAiCallResult response;
         try
@@ -173,34 +186,30 @@ public sealed class OrderPropertyReadingService(
         }
         if (!response.Success)
         {
-            await FailOrRetryAsync(row, token, response.FailureReason ?? "The call failed.", ct);
+            await FailOrRetryAsync(row, attempts, token, response.FailureReason ?? "The call failed.", ct);
             return;
         }
 
         var validation = OrderPropertiesAi.Validate(response.RawResponse, input.Pages);
         await PublishAsync(readingId, token,
             validation.IsAccepted ? LitigationOrderPropertyReadingStatus.Completed : LitigationOrderPropertyReadingStatus.Failed,
-            response.RawResponse, validation.Result is null ? null : OrderPropertiesAi.Serialize(validation.Result),
+            input.InputHash, pagesJson, response.RawResponse, validation.Result is null ? null : OrderPropertiesAi.Serialize(validation.Result),
             validation.RejectedFields.Count == 0 ? null : JsonSerializer.Serialize(validation.RejectedFields), validation.FailureReason, null, ct);
         if (validation.RejectedFields.Count > 0)
             logger.LogInformation("Order property reading {Id}: {Count} ungrounded value(s) dropped.", readingId, validation.RejectedFields.Count);
     }
 
-    /// <summary>Calls started today (IST): readings that were claimed and not answered from another reading.</summary>
-    private async Task<int> CallsTodayAsync(CancellationToken ct)
-    {
-        var since = Ist.StartOfTodayUtc(DateTime.UtcNow);
-        return await db.LitigationOrderPropertyReadings.AsNoTracking().CountAsync(x => x.ReusedFromReadingId == null && x.AttemptCount > 0
-            && ((x.CompletedUtc != null && x.CompletedUtc >= since && x.RawResponseJson != null) || x.Status == LitigationOrderPropertyReadingStatus.InProgress), ct);
-    }
-
-    private async Task PublishAsync(long readingId, Guid token, LitigationOrderPropertyReadingStatus status, string? raw, string? result, string? rejected,
-        string? failure, long? reusedFrom, CancellationToken ct)
+    /// <summary>Publishes under the lease, with the input that was actually processed (its hash and the pages sent), so a result is only ever
+    /// stored, and later reused, under the input it was read from.</summary>
+    private async Task PublishAsync(long readingId, Guid token, LitigationOrderPropertyReadingStatus status, string inputHash, string? pagesJson,
+        string? raw, string? result, string? rejected, string? failure, long? reusedFrom, CancellationToken ct)
     {
         var published = await db.LitigationOrderPropertyReadings
             .Where(x => x.LitigationOrderPropertyReadingId == readingId && x.LeaseToken == token && x.Status == LitigationOrderPropertyReadingStatus.InProgress)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(x => x.Status, status)
+                .SetProperty(x => x.InputHash, inputHash)
+                .SetProperty(x => x.PagesSentJson, pagesJson)
                 .SetProperty(x => x.RawResponseJson, raw)
                 .SetProperty(x => x.ResponseHash, string.IsNullOrWhiteSpace(raw) ? null : PropertyParticularsAi.ComputeHash(raw))
                 .SetProperty(x => x.ResultJson, result)
@@ -214,16 +223,16 @@ public sealed class OrderPropertyReadingService(
         if (published == 0) logger.LogInformation("Order property reading {Id} lease lost; result not published.", readingId);
     }
 
-    private async Task FailOrRetryAsync(LitigationOrderPropertyReading row, Guid token, string reason, CancellationToken ct)
+    /// <param name="attempts">Calls made for this reading, this one included.</param>
+    private async Task FailOrRetryAsync(LitigationOrderPropertyReading row, int attempts, Guid token, string reason, CancellationToken ct)
     {
-        // row was read after the claim, so AttemptCount already includes this attempt.
-        if (row.AttemptCount < options.Value.MaxAttempts)
+        if (attempts < options.Value.MaxAttempts)
         {
-            await DeferAsync(row, token, DateTime.UtcNow.AddSeconds(10 * Math.Pow(3, row.AttemptCount - 1)), reason, ct);
+            await DeferAsync(row, token, DateTime.UtcNow.AddSeconds(10 * Math.Pow(3, attempts - 1)), reason, ct);
             return;
         }
-        await PublishAsync(row.LitigationOrderPropertyReadingId, token, LitigationOrderPropertyReadingStatus.Failed, null, null, null,
-            reason.Length > 1000 ? reason[..1000] : reason, null, ct);
+        await PublishAsync(row.LitigationOrderPropertyReadingId, token, LitigationOrderPropertyReadingStatus.Failed, row.InputHash, row.PagesSentJson,
+            null, null, null, reason.Length > 1000 ? reason[..1000] : reason, null, ct);
     }
 
     private async Task DeferAsync(LitigationOrderPropertyReading row, Guid token, DateTime next, string reason, CancellationToken ct) =>

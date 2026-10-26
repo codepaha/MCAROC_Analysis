@@ -187,6 +187,49 @@ public class OrderPropertiesAiTests
     private static (LitigationCaseOrder, LitigationOrderDocument) Order(long id, string date) =>
         (new LitigationCaseOrder { LitigationCaseOrderId = id, OrderDate = date, OrderType = "Order" }, new LitigationOrderDocument { LitigationOrderDocumentId = 100 + id });
 
+    private static AiProperty Unit(string unit, string? building, string? project, string? city, string? pin = null) =>
+        new(PropertyAssetClass.Immovable, PropertyKind.Premises, null, unit, null, building, project, [], null, [], [], null, null, null, city, null, pin);
+
+    private static AiProperty Land(string survey, string? village, string? city) =>
+        new(PropertyAssetClass.Immovable, PropertyKind.Land, null, null, null, null, null, [], null, [new SurveyNumberGroup("Survey", null, [survey])], [],
+            village, null, null, city, null, null);
+
+    /// <summary>Review of #557: flat 101, Tower A in two different projects or cities is two assets; one's attachment must not show against the other.</summary>
+    [Theory]
+    [InlineData("Project X", "Delhi", "Project Y", "Mumbai")]
+    [InlineData("Project X", "Delhi", "Project Y", "Delhi")]
+    [InlineData("Project X", "Delhi", "Project X", "Mumbai")]
+    public void The_same_unit_and_building_in_another_project_or_place_stays_separate(string projectA, string cityA, string projectB, string cityB)
+    {
+        var attached = new OrderProperty(1, OrderPropertyRole.Attached, OrderPropertyRelation.Unknown, null,
+            [new OrderPropertyDirection(OrderPropertyDirectionKind.Attachment, "flat 101 is attached")], Unit("101", "Tower A", projectA, cityA));
+        var disputed = new OrderProperty(1, OrderPropertyRole.Disputed, OrderPropertyRelation.SoldByTarget, OrderPropertyIssue.Refund, [], Unit("101", "Tower A", projectB, cityB));
+        var readings = new Dictionary<long, LitigationOrderPropertyReading> { [101] = Reading(101, attached), [102] = Reading(102, disputed) };
+
+        var props = CaseOrderProperties.Build([Order(1, "01-01-2025"), Order(2, "01-02-2025")], readings);
+
+        Assert.Equal(2, props.Properties.Count);
+        var disputedEntry = Assert.Single(props.Properties, p => p.Role == OrderPropertyRole.Disputed);
+        Assert.Empty(disputedEntry.Directions);                                // the attachment stays with its own asset
+    }
+
+    [Fact]
+    public void A_survey_number_in_common_is_one_property_only_in_the_same_village()
+    {
+        Assert.False(CaseOrderProperties.SameProperty(Land("75A", null, "Mumbai"), Land("75A", null, "Mumbai")));      // a city is not enough
+        Assert.False(CaseOrderProperties.SameProperty(Land("75A", "Kirol", "Mumbai"), Land("75A", "Vikhroli", "Mumbai")));
+        Assert.True(CaseOrderProperties.SameProperty(Land("75A", "Kirol", "Mumbai"), Land("75A", "Kirol", null)));
+        Assert.False(CaseOrderProperties.SameProperty(Land("75A", "Kirol", "Mumbai"), Land("76", "Kirol", "Mumbai")));
+    }
+
+    [Fact]
+    public void A_unit_matches_only_with_its_building_or_project_and_no_conflicting_place()
+    {
+        Assert.True(CaseOrderProperties.SameProperty(Unit("1804", null, "Godrej Alpine", "Mangalore"), Unit("1804", null, "Godrej Alpine", null)));
+        Assert.False(CaseOrderProperties.SameProperty(Unit("1804", null, null, "Mangalore"), Unit("1804", null, null, "Mangalore")));      // no building or project
+        Assert.False(CaseOrderProperties.SameProperty(Unit("1804", null, "Godrej Alpine", null, "575001"), Unit("1804", null, "Godrej Alpine", null, "400079")));
+    }
+
     [Fact]
     public void The_same_property_in_two_orders_is_one_entry_and_party_addresses_are_left_out()
     {

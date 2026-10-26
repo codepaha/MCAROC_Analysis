@@ -25,6 +25,23 @@ namespace MCAROC_Analysis.Migrations
 
             modelBuilder.HasSequence("CaseObservationIds", "litigation");
 
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AiDailyCallCount", b =>
+                {
+                    b.Property<string>("Purpose")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateOnly>("Day")
+                        .HasColumnType("date");
+
+                    b.Property<int>("Calls")
+                        .HasColumnType("int");
+
+                    b.HasKey("Purpose", "Day");
+
+                    b.ToTable("AiDailyCallCounts");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.AiUsageRecord", b =>
                 {
                     b.Property<long>("AiUsageRecordId")

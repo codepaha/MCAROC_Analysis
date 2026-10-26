@@ -1,6 +1,7 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services;
+using MCAROC_Analysis.Services.AiUsage;
 using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.Pipeline;
@@ -39,10 +40,13 @@ public class OrderPropertyReadingServiceTests : IAsyncLifetime
     private sealed class FakeClient : IPropertyParticularsAiClient
     {
         public List<string> Prompts { get; } = [];
-        public Task<PropertyParticularsAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct)
+        public bool Fail { get; init; }
+        public TimeSpan Delay { get; init; }
+        public async Task<PropertyParticularsAiCallResult> CallAsync(string prompt, int timeoutSeconds, CancellationToken ct)
         {
             lock (Prompts) Prompts.Add(prompt);
-            return Task.FromResult(new PropertyParticularsAiCallResult(true, Answer, null));
+            if (Delay > TimeSpan.Zero) await Task.Delay(Delay, ct);
+            return Fail ? new PropertyParticularsAiCallResult(false, string.Empty, "service unavailable") : new PropertyParticularsAiCallResult(true, Answer, null);
         }
     }
 
@@ -54,6 +58,7 @@ public class OrderPropertyReadingServiceTests : IAsyncLifetime
         await TestDatabase.MigrateAsync(db);
         // Readings are global work: start every test from none, so one test's rows are not another's to schedule or reuse.
         await db.LitigationOrderPropertyReadings.ExecuteDeleteAsync();
+        await db.AiDailyCallCounts.Where(x => x.Purpose == AiUsagePurposes.OrderProperties).ExecuteDeleteAsync();
     }
 
     public Task DisposeAsync() => Task.CompletedTask;
@@ -189,5 +194,125 @@ public class OrderPropertyReadingServiceTests : IAsyncLifetime
         Assert.Empty(await service.ScheduleAsync(default, requestId));
         var reader = new PipelineSnapshotReader(db, none, Options.Create(new BprLitigationOptions()), Options.Create(new ReferenceToolOptions()));
         Assert.True((await reader.ReadAsync(requestId, default))!.LitigationSearch!.OrdersFullyProcessed);
+    }
+
+    private static string FlatOrder(int flat) => $"""
+        --- Page 1 (native) ---
+        The plaintiff booked flat no.{flat} having super built up area of 1200 sq. ft. in the project Godrej Alpine at Padavu Village, Mangalore.
+        """;
+
+    /// <summary>Review of #557: with a limit of one, the first reading is made (it does not count itself) and the next one waits for tomorrow.</summary>
+    [Fact]
+    public async Task With_a_limit_of_one_the_first_reading_is_made_and_the_next_waits_for_tomorrow()
+    {
+        await using var db = CreateContext();
+        var (requestId, docs) = await SeedAsync(db, (FlatOrder(101), LitigationAttributionOutcome.Attributed), (FlatOrder(102), LitigationAttributionOutcome.Attributed));
+        var client = new FakeClient();
+        var service = Service(db, client, maxCallsPerDay: 1);
+
+        foreach (var id in await service.ScheduleAsync(default, requestId)) await service.ProcessAsync(id, default);
+
+        Assert.Single(client.Prompts);
+        Assert.Equal(1, await AiDailyCallBudget.CallsOnAsync(db, AiUsagePurposes.OrderProperties, DateTime.UtcNow, default));
+        var waiting = (await ReadingOf(db, docs[1]))!;
+        Assert.Equal(LitigationOrderPropertyReadingStatus.Pending, waiting.Status);
+        Assert.Equal(Ist.NextMidnightUtc(DateTime.UtcNow), waiting.NextAttemptUtc);
+        Assert.Equal(0, waiting.AttemptCount);                                   // waiting for the limit is not an attempt
+    }
+
+    /// <summary>A failed call is a call: it counts against the limit, and so does its retry.</summary>
+    [Fact]
+    public async Task A_failed_call_and_its_retry_both_count_against_the_limit()
+    {
+        await using var db = CreateContext();
+        var (requestId, docs) = await SeedAsync(db, (FlatOrder(201), LitigationAttributionOutcome.Attributed));
+        var client = new FakeClient { Fail = true };
+        var service = Service(db, client, maxCallsPerDay: 2);
+        var id = Assert.Single(await service.ScheduleAsync(default, requestId));
+
+        for (var i = 0; i < 3; i++)
+        {
+            await service.ProcessAsync(id, default);
+            await db.LitigationOrderPropertyReadings.Where(x => x.LitigationOrderPropertyReadingId == id && x.Status == LitigationOrderPropertyReadingStatus.Pending)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.NextAttemptUtc, (DateTime?)null));   // the retry is due now, not after its back-off
+        }
+
+        Assert.Equal(2, client.Prompts.Count);                                   // the third attempt is past the limit
+        Assert.Equal(2, await AiDailyCallBudget.CallsOnAsync(db, AiUsagePurposes.OrderProperties, DateTime.UtcNow, default));
+        var row = (await ReadingOf(db, docs[0]))!;
+        Assert.Equal(2, row.AttemptCount);
+        Assert.Equal(LitigationOrderPropertyReadingStatus.Pending, row.Status);
+    }
+
+    [Fact]
+    public async Task Concurrent_readings_never_pass_the_limit_between_them()
+    {
+        await using var seed = CreateContext();
+        var (requestId, _) = await SeedAsync(seed, Enumerable.Range(301, 8).Select(n => (FlatOrder(n), (LitigationAttributionOutcome?)LitigationAttributionOutcome.Attributed)).ToArray());
+        var client = new FakeClient { Delay = TimeSpan.FromMilliseconds(200) };
+        var due = await Service(seed, client, maxCallsPerDay: 3).ScheduleAsync(default, requestId);
+
+        await Parallel.ForEachAsync(due, new ParallelOptions { MaxDegreeOfParallelism = 8 }, async (id, ct) =>
+        {
+            await using var db = CreateContext();
+            await Service(db, client, maxCallsPerDay: 3).ProcessAsync(id, ct);
+        });
+
+        Assert.Equal(8, due.Count);
+        Assert.Equal(3, client.Prompts.Count);
+        Assert.Equal(3, await AiDailyCallBudget.CallsOnAsync(seed, AiUsagePurposes.OrderProperties, DateTime.UtcNow, default));
+    }
+
+    [Fact]
+    public async Task The_limit_starts_again_at_IST_midnight()
+    {
+        await using var db = CreateContext();
+        const string purpose = "test-midnight";
+        await db.AiDailyCallCounts.Where(x => x.Purpose == purpose).ExecuteDeleteAsync();
+        var beforeMidnight = new DateTime(2026, 10, 26, 18, 29, 0, DateTimeKind.Utc);     // 23:59 IST
+        var afterMidnight = new DateTime(2026, 10, 26, 18, 31, 0, DateTimeKind.Utc);      // 00:01 IST, the next day
+
+        Assert.True(await AiDailyCallBudget.TryReserveAsync(db, purpose, 1, beforeMidnight, default));
+        Assert.False(await AiDailyCallBudget.TryReserveAsync(db, purpose, 1, beforeMidnight, default));
+        Assert.True(await AiDailyCallBudget.TryReserveAsync(db, purpose, 1, afterMidnight, default));
+    }
+
+    /// <summary>Review of #557: the order's text changes between scheduling and reading. The reading is of the new text and stored under its
+    /// hash, so an order with the old text reads its own text instead of reusing a result read from another.</summary>
+    [Fact]
+    public async Task A_reading_is_bound_to_the_input_it_actually_read()
+    {
+        await using var db = CreateContext();
+        const string textB = """
+            --- Page 1 (native) ---
+            The respondent mortgaged the land bearing Survey No. 75A admeasuring 900 sq. m at Kirol, Mumbai.
+            --- Page 2 (native) ---
+            Flat no.1804 having super built up area of 3282 sq. ft. in the project Godrej Alpine at Padavu Village, Mangalore.
+            """;
+        var (requestId, docs) = await SeedAsync(db, (PropertyOrder, LitigationAttributionOutcome.Attributed));
+        var client = new FakeClient();
+        var service = Service(db, client);
+        var id = Assert.Single(await service.ScheduleAsync(default, requestId));
+        var hashA = (await ReadingOf(db, docs[0]))!.InputHash;
+
+        await db.LitigationOrderDocuments.Where(d => d.LitigationOrderDocumentId == docs[0]).ExecuteUpdateAsync(s => s.SetProperty(d => d.ExtractedText, textB));
+        await service.ProcessAsync(id, default);
+
+        var read = (await ReadingOf(db, docs[0]))!;
+        Assert.NotEqual(hashA, read.InputHash);
+        Assert.Equal("[1,2]", read.PagesSentJson);
+        Assert.Contains("Survey No. 75A", Assert.Single(client.Prompts));
+
+        // Another order with text A: no reading of A exists, so it is read itself rather than given B's result.
+        await using var db2 = CreateContext();
+        var (requestId2, docs2) = await SeedAsync(db2, (PropertyOrder, LitigationAttributionOutcome.Attributed));
+        var service2 = Service(db2, client);
+        foreach (var next in await service2.ScheduleAsync(default, requestId2)) await service2.ProcessAsync(next, default);
+
+        var readA = (await ReadingOf(db2, docs2[0]))!;
+        Assert.Equal(hashA, readA.InputHash);
+        Assert.Null(readA.ReusedFromReadingId);
+        Assert.Equal(2, client.Prompts.Count);
+        Assert.Equal("[2]", readA.PagesSentJson);
     }
 }

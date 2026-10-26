@@ -20,8 +20,9 @@ public sealed record CaseOrderProperty(AiProperty Property, string Description, 
 public sealed record CaseUnidentifiedProperty(long LitigationOrderDocumentId, string? OrderDate, int Page, OrderPropertyRole Role, string Quote);
 
 /// <summary>The properties a case's orders name, read from the stored readings (#554). Party addresses are left out: they say where a party
-/// is, not what is in dispute. The same property named in several orders is one entry, matched on its identifying values (survey numbers,
-/// unit and building, project, place), so an order that adds an area or a direction enriches the entry rather than repeating it.</summary>
+/// is, not what is in dispute. The same property named in several orders is one entry (<see cref="SameProperty"/>), so an order that adds an
+/// area or a direction enriches the entry rather than repeating it; two properties that only share a common token stay apart, so one asset's
+/// attachment never shows against another.</summary>
 public sealed record CaseOrderProperties(
     IReadOnlyList<CaseOrderProperty> Properties, IReadOnlyList<CaseUnidentifiedProperty> Unidentified, int OrdersRead, int OrdersPending)
 {
@@ -34,7 +35,7 @@ public sealed record CaseOrderProperties(
     public static CaseOrderProperties Build(IReadOnlyList<(LitigationCaseOrder Order, LitigationOrderDocument Document)> orders,
         IReadOnlyDictionary<long, LitigationOrderPropertyReading> readings)
     {
-        var groups = new List<(string Key, List<(OrderProperty P, OrderPropertyMention M)> Items)>();
+        var groups = new List<List<(OrderProperty P, OrderPropertyMention M)>>();
         var unidentified = new List<CaseUnidentifiedProperty>();
         int read = 0, pending = 0;
         foreach (var (order, document) in orders)
@@ -47,40 +48,63 @@ public sealed record CaseOrderProperties(
             {
                 var mention = new OrderPropertyMention(order.LitigationCaseOrderId, document.LitigationOrderDocumentId, order.OrderDate, order.OrderType, p.Page,
                     p.Property.SourceText ?? "", p.Role, p.Relation, p.Issue, p.Directions);
-                var key = Key(p.Property);
-                var group = groups.FirstOrDefault(g => g.Key == key);
-                if (group.Items is null) groups.Add((key, [(p, mention)]));
-                else group.Items.Add((p, mention));
+                // Joins a group only when it is the same property as every member: compared to all of them, never chained through one.
+                var group = groups.FirstOrDefault(g => g.All(i => SameProperty(i.P.Property, p.Property)));
+                if (group is null) groups.Add([(p, mention)]);
+                else group.Add((p, mention));
             }
             unidentified.AddRange((result.Unidentified ?? []).Select(u => new CaseUnidentifiedProperty(document.LitigationOrderDocumentId, order.OrderDate, u.Page, u.Role, u.Quote)));
         }
 
         var properties = groups.Select(g =>
         {
-            var fullest = g.Items.OrderByDescending(i => Richness(i.P.Property)).First().P;
-            var role = g.Items.Select(i => i.P.Role).OrderBy(Weight).First();
-            var relation = g.Items.Select(i => i.P.Relation).FirstOrDefault(r => r != OrderPropertyRelation.Unknown, OrderPropertyRelation.Unknown);
-            var issue = g.Items.Select(i => i.P.Issue).FirstOrDefault(i => i is not null);
-            return new CaseOrderProperty(fullest.Property, Describe(fullest.Property), role, relation, issue, g.Items.Select(i => i.M).ToList());
+            var fullest = g.OrderByDescending(i => Richness(i.P.Property)).First().P;
+            var role = g.Select(i => i.P.Role).OrderBy(Weight).First();
+            var relation = g.Select(i => i.P.Relation).FirstOrDefault(r => r != OrderPropertyRelation.Unknown, OrderPropertyRelation.Unknown);
+            var issue = g.Select(i => i.P.Issue).FirstOrDefault(i => i is not null);
+            return new CaseOrderProperty(fullest.Property, Describe(fullest.Property), role, relation, issue, g.Select(i => i.M).ToList());
         }).OrderBy(p => Weight(p.Role)).ToList();
         return new CaseOrderProperties(properties, unidentified, read, pending);
     }
 
-    /// <summary>The property in one line, in the same words as a charged property is described.</summary>
-    /// <summary>An order's property is always immovable, so the asset class is not repeated.</summary>
+    /// <summary>The property in one line, in the same words as a charged property is described. An order's property is always immovable,
+    /// so the asset class is not repeated.</summary>
     public static string Describe(AiProperty p) =>
         PropertyReading.Summarize(PropertyReading.FromAi(new PropertyParticularsAiResult([p]), 0).Items[0] with { AssetClasses = [] });
 
-    /// <summary>The identifying values, upper case with no spaces or punctuation: survey numbers if any, else unit + building/project, else the place.</summary>
-    internal static string Key(AiProperty p)
+    /// <summary>Whether two order properties are the same asset. Nothing they both state may differ (unit, building, project, village, city,
+    /// PIN, or survey numbers of the same scheme with none in common), and they must share an identity a place or building backs:
+    /// <list type="bullet">
+    /// <item>the same unit in the same building or project;</item>
+    /// <item>a survey/CTS/khasra number in common in the same village or PIN (survey numbers repeat across villages, so a city is not enough);</item>
+    /// <item>for a building or project with no unit or survey number, the same name in the same village, city or PIN.</item>
+    /// </list></summary>
+    public static bool SameProperty(AiProperty a, AiProperty b)
     {
-        static string N(string? s) => new((s ?? "").Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
-        var surveys = p.SurveyNumbers.SelectMany(g => g.Numbers.Select(n => g.Scheme + ":" + N(n))).OrderBy(x => x, StringComparer.Ordinal).ToList();
-        var place = N(p.Village ?? p.City ?? p.Localities.FirstOrDefault());
-        if (surveys.Count > 0) return "S|" + string.Join(",", surveys) + "|" + place;
-        if (p.UnitNumber is not null) return "U|" + N(p.UnitNumber) + "|" + N(p.Building ?? p.Project);
-        return "P|" + N(p.Project ?? p.Building) + "|" + place;
+        if (Conflict(a.UnitNumber, b.UnitNumber) || Conflict(a.Building, b.Building) || Conflict(a.Project, b.Project)
+            || Conflict(a.Village, b.Village) || Conflict(a.City, b.City) || Conflict(a.Pin, b.Pin))
+            return false;
+        var surveysA = Surveys(a);
+        var surveysB = Surveys(b);
+        foreach (var scheme in surveysA.Keys.Intersect(surveysB.Keys))
+            if (!surveysA[scheme].Overlaps(surveysB[scheme])) return false;
+
+        var sameVillageOrPin = Same(a.Village, b.Village) || Same(a.Pin, b.Pin);
+        if (a.UnitNumber is not null && b.UnitNumber is not null)
+            return Same(a.UnitNumber, b.UnitNumber) && (Same(a.Building, b.Building) || Same(a.Project, b.Project));
+        if (surveysA.Count > 0 && surveysB.Count > 0)
+            return surveysA.Keys.Intersect(surveysB.Keys).Any() && sameVillageOrPin;
+        if (a.UnitNumber is null && b.UnitNumber is null && surveysA.Count == 0 && surveysB.Count == 0)
+            return (Same(a.Project, b.Project) || Same(a.Building, b.Building)) && (sameVillageOrPin || Same(a.City, b.City));
+        return false;   // one names a unit or survey number the other does not: not enough to say they are one asset
     }
+
+    private static string N(string? s) => new((s ?? "").Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
+    private static bool Same(string? a, string? b) => a is not null && b is not null && N(a).Length > 0 && N(a) == N(b);
+    private static bool Conflict(string? a, string? b) => a is not null && b is not null && N(a).Length > 0 && N(b).Length > 0 && N(a) != N(b);
+
+    private static Dictionary<string, HashSet<string>> Surveys(AiProperty p) =>
+        p.SurveyNumbers.GroupBy(g => g.Scheme).ToDictionary(g => g.Key, g => g.SelectMany(x => x.Numbers).Select(N).ToHashSet());
 
     private static int Richness(AiProperty p) =>
         (p.UnitNumber is null ? 0 : 1) + (p.Building is null ? 0 : 1) + (p.Project is null ? 0 : 1) + p.SurveyNumbers.Count + p.Areas.Count

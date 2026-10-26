@@ -100,6 +100,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<LitigationOrderClassification> LitigationOrderClassifications => Set<LitigationOrderClassification>();
     public DbSet<PropertyParticularsExtraction> PropertyParticularsExtractions => Set<PropertyParticularsExtraction>();
     public DbSet<LitigationOrderPropertyReading> LitigationOrderPropertyReadings => Set<LitigationOrderPropertyReading>();
+    public DbSet<AiDailyCallCount> AiDailyCallCounts => Set<AiDailyCallCount>();
     public DbSet<ChargeInstrumentExtraction> ChargeInstrumentExtractions => Set<ChargeInstrumentExtraction>();
     public DbSet<LitigationPortfolioAiAnalysis> LitigationPortfolioAiAnalyses => Set<LitigationPortfolioAiAnalysis>();
 
@@ -540,6 +541,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // NoAction, same as LitigationCaseAiAnalysis → LitigationCase: the classification is an audit record of
             // what the model was shown and said, and must never be silently deleted with (or block) its source row.
             e.HasOne<LitigationOrderDocument>().WithMany().HasForeignKey(x => x.LitigationOrderDocumentId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<AiDailyCallCount>(e =>
+        {
+            e.HasKey(x => new { x.Purpose, x.Day });
+            e.Property(x => x.Purpose).HasMaxLength(64);
         });
 
         modelBuilder.Entity<LitigationOrderPropertyReading>(e =>
