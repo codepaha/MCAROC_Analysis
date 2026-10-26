@@ -64,8 +64,16 @@ public sealed class VertexPropertyParticularsAiClient : IPropertyParticularsAiCl
                     config.Temperature = 0;
                     config.MaxOutputTokens = 32_000;
                 }
+                // Reading an order's properties: the same pages must give the same reading, so a refresh never flips a match.
+                var orderProperties = prompt.StartsWith(OrderPropertiesAi.PromptMarker, StringComparison.Ordinal);
+                if (orderProperties)
+                {
+                    config.Temperature = 0;
+                    config.MaxOutputTokens = 16_000;
+                }
                 var response = await _client.Models.GenerateContentAsync(PropertyParticularsAi.ModelId, prompt, config, innerCt);
-                AiUsageLog.RecordGeneration(AiUsagePurposes.PropertyParticulars, PropertyParticularsAi.ModelId, response.UsageMetadata);
+                AiUsageLog.RecordGeneration(orderProperties ? AiUsagePurposes.OrderProperties : AiUsagePurposes.PropertyParticulars,
+                    PropertyParticularsAi.ModelId, response.UsageMetadata);
                 return response.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text ?? string.Empty;
             }, TimeSpan.FromSeconds(timeoutSeconds), ct);
             return timedOut

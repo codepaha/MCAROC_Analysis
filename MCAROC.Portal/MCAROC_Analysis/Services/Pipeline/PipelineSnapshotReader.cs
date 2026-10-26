@@ -127,6 +127,13 @@ public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOpt
             var ordersFullyProcessed = orderDocs.All(d =>
                 d.Status is LitigationOrderDocumentStatus.Expired or LitigationOrderDocumentStatus.NotPublished
                 || (d.Status == LitigationOrderDocumentStatus.Downloaded && d.ChunkingStatus is ChunkingStatus.Chunked or ChunkingStatus.Failed));
+            // #554: the properties each order names are read before the litigation stage moves on, so the report and dossier carry them.
+            var readingOptions = new MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyReadingOptions
+            {
+                Enabled = !bool.TryParse(config[$"{MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyReadingOptions.SectionName}:Enabled"], out var enabled) || enabled
+            };
+            if (ordersFullyProcessed && MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyReadingService.IsActiveFor(readingOptions, config))
+                ordersFullyProcessed = !await OrderPropertiesOutstandingAsync(requestId, ct);
             var staleCutoff = DateTime.UtcNow.AddDays(-5);
             var hasStalledOrderDownload = orderDocs.Any(d => d.Status == LitigationOrderDocumentStatus.Pending && d.CreatedUtc <= staleCutoff);
 
@@ -180,4 +187,14 @@ public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOpt
             CourtAgentsEnabled = config.GetValue<bool>("LitigationPortals:Agents:Enabled")
         };
     }
+
+    /// <summary>A downloaded order with text, on a case the request shows, whose property reading has not finished (or not started).</summary>
+    private Task<bool> OrderPropertiesOutstandingAsync(long requestId, CancellationToken ct) =>
+        db.LitigationOrderDocuments.AsNoTracking().AnyAsync(d => d.Order!.Case!.RequestId == requestId
+            && d.Status == LitigationOrderDocumentStatus.Downloaded && d.TextExtractionStatus == FilingDocumentProcessingStatus.TextExtracted
+            && d.ExtractedText != null && d.Order.CollapsedIntoOrderId == null && !d.Order.IsSuperseded && d.Order.Case.MergedIntoCaseId == null
+            && (d.Order.Case.AttributionOutcome == null || d.Order.Case.AttributionOutcome == LitigationAttributionOutcome.Attributed)
+            && !db.LitigationOrderPropertyReadings.Any(r => r.LitigationOrderDocumentId == d.LitigationOrderDocumentId
+                && (r.Status == LitigationOrderPropertyReadingStatus.Completed || r.Status == LitigationOrderPropertyReadingStatus.Failed
+                    || r.Status == LitigationOrderPropertyReadingStatus.NoPropertyPages)), ct);
 }

@@ -19,7 +19,8 @@ public sealed record LitigationIdentityEvidence(
 /// <summary>Everything the standalone page of one litigation case shows.</summary>
 public sealed record LitigationCasePage(
     McaRequest Request, LitigationCaseCardViewModel Card, DateTime RetrievedUtc, IReadOnlyList<ChargeLitigationLink> ChargeLinks,
-    IReadOnlyList<RelatedLitigationCase> RelatedCases, LitigationIdentityEvidence Identity, CaseAttributionNote? Attribution = null);
+    IReadOnlyList<RelatedLitigationCase> RelatedCases, LitigationIdentityEvidence Identity, CaseAttributionNote? Attribution = null,
+    MCAROC_Analysis.Services.PropertyParticulars.CaseOrderProperties? OrderProperties = null);
 
 /// <summary>#489: why the case is, or is not, the company's. <see cref="Counted"/> false: set aside, opened from the set-aside list, shown with its reason.</summary>
 public sealed record CaseAttributionNote(bool Counted, LitigationAttributionOutcome? Outcome, string? Rule, string? Party, string? Reason);
@@ -57,6 +58,15 @@ public sealed class LitigationCasePageService(
         var orderIds = theCase.Orders.Select(o => o.LitigationCaseOrderId).ToList();
         var orderDocs = (await db.LitigationOrderDocuments.AsNoTracking().Where(d => orderIds.Contains(d.LitigationCaseOrderId)).ToListAsync(ct))
             .GroupBy(d => d.LitigationCaseOrderId).ToDictionary(g => g.Key, g => g.First());
+        // #554: the properties the case's orders name, from the stored readings.
+        var readingDocIds = orderDocs.Values.Select(d => d.LitigationOrderDocumentId).ToList();
+        var readings = await db.LitigationOrderPropertyReadings.AsNoTracking().Where(r => readingDocIds.Contains(r.LitigationOrderDocumentId))
+            .ToDictionaryAsync(r => r.LitigationOrderDocumentId, ct);
+        var orderProperties = MCAROC_Analysis.Services.PropertyParticulars.CaseOrderProperties.Build(
+            theCase.Orders.Where(o => o.CollapsedIntoOrderId == null && !o.IsSuperseded).OrderBy(o => o.LitigationCaseOrderId)
+                .Where(o => orderDocs.TryGetValue(o.LitigationCaseOrderId, out var d) && d.Status == LitigationOrderDocumentStatus.Downloaded && d.ExtractedText != null)
+                .Select(o => (o, orderDocs[o.LitigationCaseOrderId])).ToList(),
+            readings);
 
         // Order text is no longer word-matched to the company's premises or charged property (#554): any number and any word made a "match"
         // (426 false links on one company). The properties each order names are read and compared field by field instead (#554 PR 3).
@@ -89,7 +99,8 @@ public sealed class LitigationCasePageService(
 
         var identity = await IdentityEvidenceAsync(request, companyProfile, theCase, orderDocs, companyNames, ct);
         return new LitigationCasePage(request, card, snapshot.RetrievedUtc, links, await RelatedAsync(inReport, card, companyNames, ct), identity,
-            new CaseAttributionNote(counted, theCase.AttributionOutcome, theCase.AttributionRule, theCase.AttributionParty, theCase.AttributionReason));
+            new CaseAttributionNote(counted, theCase.AttributionOutcome, theCase.AttributionRule, theCase.AttributionParty, theCase.AttributionReason),
+            orderProperties);
     }
 
     /// <summary>Where an old link to a merged duplicate goes: the surviving case of the same request. Only when the case page is served from the module (plan section 12.6,

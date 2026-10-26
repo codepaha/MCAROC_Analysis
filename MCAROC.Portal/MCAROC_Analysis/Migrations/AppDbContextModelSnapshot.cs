@@ -4333,6 +4333,96 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("LitigationOrderDocuments");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationOrderPropertyReading", b =>
+                {
+                    b.Property<long>("LitigationOrderPropertyReadingId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("LitigationOrderPropertyReadingId"));
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("CompletedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("InputHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime?>("LeaseExpiresUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("LeaseToken")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("LitigationOrderDocumentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("NextAttemptUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("PagesSentJson")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<string>("PromptVersion")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("RawResponseJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("RejectedFieldsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ResponseHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("ResultJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long?>("ReusedFromReadingId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("LitigationOrderPropertyReadingId");
+
+                    b.HasIndex("LitigationOrderDocumentId")
+                        .IsUnique();
+
+                    b.HasIndex("RequestId", "Status");
+
+                    b.HasIndex("Status", "NextAttemptUtc");
+
+                    b.HasIndex("InputHash", "PromptVersion", "Status");
+
+                    b.ToTable("LitigationOrderPropertyReadings");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationPartyVerdict", b =>
                 {
                     b.Property<long>("LitigationPartyVerdictId")
@@ -8171,6 +8261,17 @@ namespace MCAROC_Analysis.Migrations
                         .IsRequired();
 
                     b.Navigation("Order");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationOrderPropertyReading", b =>
+                {
+                    b.HasOne("MCAROC_Analysis.Data.Entities.LitigationOrderDocument", "Document")
+                        .WithMany()
+                        .HasForeignKey("LitigationOrderDocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Document");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LitigationPortfolioAiAnalysis", b =>

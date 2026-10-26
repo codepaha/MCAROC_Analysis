@@ -99,6 +99,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<LitigationCaseAiAnalysis> LitigationCaseAiAnalyses => Set<LitigationCaseAiAnalysis>();
     public DbSet<LitigationOrderClassification> LitigationOrderClassifications => Set<LitigationOrderClassification>();
     public DbSet<PropertyParticularsExtraction> PropertyParticularsExtractions => Set<PropertyParticularsExtraction>();
+    public DbSet<LitigationOrderPropertyReading> LitigationOrderPropertyReadings => Set<LitigationOrderPropertyReading>();
     public DbSet<ChargeInstrumentExtraction> ChargeInstrumentExtractions => Set<ChargeInstrumentExtraction>();
     public DbSet<LitigationPortfolioAiAnalysis> LitigationPortfolioAiAnalyses => Set<LitigationPortfolioAiAnalysis>();
 
@@ -539,6 +540,25 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // NoAction, same as LitigationCaseAiAnalysis → LitigationCase: the classification is an audit record of
             // what the model was shown and said, and must never be silently deleted with (or block) its source row.
             e.HasOne<LitigationOrderDocument>().WithMany().HasForeignKey(x => x.LitigationOrderDocumentId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<LitigationOrderPropertyReading>(e =>
+        {
+            e.HasKey(x => x.LitigationOrderPropertyReadingId);
+            // One reading per order document: the idempotency key concurrent schedulers race on.
+            e.HasIndex(x => x.LitigationOrderDocumentId).IsUnique();
+            e.HasIndex(x => new { x.InputHash, x.PromptVersion, x.Status });
+            e.HasIndex(x => new { x.Status, x.NextAttemptUtc });
+            e.HasIndex(x => new { x.RequestId, x.Status });
+            e.Property(x => x.InputHash).HasMaxLength(64).IsRequired();
+            e.Property(x => x.PromptVersion).HasMaxLength(20).IsRequired();
+            e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.PagesSentJson).HasMaxLength(2000);
+            e.Property(x => x.ResponseHash).HasMaxLength(64);
+            e.Property(x => x.FailureReason).HasMaxLength(1000);
+            e.Ignore(x => x.IsTerminal);
+            e.HasOne(x => x.Document).WithMany().HasForeignKey(x => x.LitigationOrderDocumentId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<PropertyParticularsExtraction>(e =>
