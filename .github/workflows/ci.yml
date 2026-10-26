@@ -90,11 +90,12 @@ jobs:
     # "Database already exists" from inside EF's own MigrateAsync, for ~100s across ~27 tests — the
     # signature of a persistent colliding process, not a short creation race the applock already
     # handles). Fix: this job never touches the shared MCAROC_Analysis_Test name at all — every run gets
-    # its own catalog, so no other process (CI or local) can ever collide with it again. cancel-in-progress
-    # stays false so an active validation is allowed to finish.
-    concurrency:
-      group: mcaroc-self-hosted-sqlexpress-tests
-      cancel-in-progress: false
+    # its own catalog, so no other process (CI or local) can ever collide with it again.
+    # No job-level concurrency group: a group lets GitHub keep only ONE waiting job, so every push or merge
+    # cancelled the job already queued for another PR. With the per-run catalog above nothing is shared, and
+    # the single self-hosted runner still takes one job at a time — jobs wait in GitHub's queue, oldest first.
+    # (A new push to the same PR or to main still supersedes that ref's older run: see the workflow-level
+    # concurrency at the top.)
     env:
       # Unique per run+attempt, never reused — a re-run of the same run gets a fresh attempt number, so
       # a prior attempt's (possibly still-cleaning-up) database is never revisited either.
@@ -117,7 +118,7 @@ jobs:
         # MCAROC_RECON_FIXTURES points SourceReconciliationTests at the two real .xls workbooks on
         # this runner. Override the location with the repo variable RECON_FIXTURES_DIR; the tests
         # skip (never fail) if the files are absent. MCAROC_TEST_CONNECTION (job env, above) points
-        # every test in this run at its own run-scoped database — see the concurrency block's comment.
+        # every test in this run at its own run-scoped database — see the job's comment.
         env:
           MCAROC_RECON_FIXTURES: ${{ vars.RECON_FIXTURES_DIR || 'E:\Downloads' }}
         run: dotnet test MCAROC.Portal/MCAROC_Analysis.Tests/MCAROC_Analysis.Tests.csproj --no-build --configuration Release --filter "FullyQualifiedName~SourceReconciliation|FullyQualifiedName~DossierFontsTests|FullyQualifiedName~DossierPdfComposerTests"
