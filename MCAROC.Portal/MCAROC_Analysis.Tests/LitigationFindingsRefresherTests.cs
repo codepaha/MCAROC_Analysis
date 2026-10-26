@@ -3,7 +3,11 @@ using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.Analysis.Rules;
 using MCAROC_Analysis.Services.LitigationModule.Refresh;
+using MCAROC_Analysis.Services.Dossier;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MCAROC_Analysis.Tests;
@@ -147,6 +151,56 @@ public sealed class LitigationFindingsRefresherTests : IAsyncLifetime
         // Nothing moved since: nothing to do.
         Assert.DoesNotContain(requestId, await Refresher(db).DueAsync(int.MaxValue, default));
         Assert.False(await Refresher(db).RefreshAsync(requestId, default));
+    }
+
+    /// <summary>#551 review (P2): a search that completes with nothing to report changes no finding, but it retires the "search has not
+    /// completed" note. The note, the version and the dossier cache must follow anyway.</summary>
+    [Fact]
+    public async Task A_search_completing_with_no_cases_retires_the_not_completed_note_and_clears_the_dossier_cache()
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedAnalysedRequestAsync(db);
+        Assert.True(await Refresher(db).RefreshAsync(requestId, default));   // before any search: the "not completed" notes are recorded
+        await using (var read = CreateContext())
+            Assert.Contains("has not completed yet", (await read.AnalysisRuns.SingleAsync(a => a.AnalysisRunId == runId)).DataSufficiencyNotesJson);
+        var findingsBefore = await db.AnalysisFindings.AsNoTracking().Where(f => f.AnalysisRunId == runId).Select(f => f.FindingId).OrderBy(id => id).ToListAsync();
+
+        // A rendered dossier is on disk; the search then completes and returns nothing.
+        var root = Path.Combine(Path.GetTempPath(), "lfr-" + Guid.NewGuid().ToString("N"));
+        var pdf = Path.Combine(root, "App_Data", "Dossiers", requestId.ToString(), "executive-1-1-nl.pdf");
+        Directory.CreateDirectory(Path.GetDirectoryName(pdf)!);
+        await File.WriteAllTextAsync(pdf, "pdf");
+        await SeedSearchAsync(db, requestId);
+        try
+        {
+            using var memory = new MemoryCache(new MemoryCacheOptions());
+            await using var cacheDb = CreateContext();
+            var refresher = new LitigationFindingsRefresher(db, NullLogger<LitigationFindingsRefresher>.Instance, null,
+                new DossierCache(cacheDb, new DossierAssembler(cacheDb), memory), new Env(root));
+
+            Assert.True(await refresher.RefreshAsync(requestId, default));
+
+            await using var read = CreateContext();
+            var run = await read.AnalysisRuns.SingleAsync(a => a.AnalysisRunId == runId);
+            Assert.DoesNotContain("has not completed yet", run.DataSufficiencyNotesJson ?? "");
+            Assert.Equal(await RequestLiveData.ReadAsync(read, requestId, default), run.LitigationFindingsVersion);
+            // No finding changed, so none was replaced.
+            Assert.Equal(findingsBefore, await read.AnalysisFindings.Where(f => f.AnalysisRunId == runId).Select(f => f.FindingId).OrderBy(id => id).ToListAsync());
+            Assert.False(File.Exists(pdf));
+            Assert.DoesNotContain(requestId, await Refresher(db).DueAsync(int.MaxValue, default));
+            Assert.False(await Refresher(db).RefreshAsync(requestId, default));   // genuinely identical now: a no-op
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private sealed class Env(string contentRoot) : IWebHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = "Test";
+        public string ApplicationName { get; set; } = "Tests";
+        public string WebRootPath { get; set; } = contentRoot;
+        public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
+        public string ContentRootPath { get; set; } = contentRoot;
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 
     [Fact]

@@ -45,7 +45,13 @@ public sealed class LitigationFindingsRefresher(
         var run = await db.AnalysisRuns.AsNoTracking()
             .Where(a => a.RequestId == requestId && a.IngestionRunId == ingestionRunId
                 && (a.Status == AnalysisRunStatus.Completed || a.Status == AnalysisRunStatus.CompletedWithErrors))
-            .OrderByDescending(a => a.RunNumber).Select(a => new { a.AnalysisRunId, a.LitigationFindingsVersion }).FirstOrDefaultAsync(ct);
+            .OrderByDescending(a => a.RunNumber)
+            .Select(a => new
+            {
+                a.AnalysisRunId, a.LitigationFindingsVersion, a.OverallReviewPriority, a.DataSufficiencyNotesJson,
+                a.CriticalFindingsCount, a.ReviewFindingsCount, a.WatchFindingsCount, a.PositiveFindingsCount
+            })
+            .FirstOrDefaultAsync(ct);
         if (run is null) return false;
 
         var ctx = await AnalysisContextLoader.LoadAsync(db, readerGate, request, ingestionRunId, ct);
@@ -55,8 +61,15 @@ public sealed class LitigationFindingsRefresher(
         var stored = await db.AnalysisFindings
             .Where(f => f.AnalysisRunId == run.AnalysisRunId && !f.Code.StartsWith(AnalysisOrchestrator.AiCrossSectionCodePrefix))
             .ToListAsync(ct);
-        var changed = !stored.Select(Key).OrderBy(k => k, StringComparer.Ordinal)
+        var findingsChanged = !stored.Select(Key).OrderBy(k => k, StringComparer.Ordinal)
             .SequenceEqual(result.Findings.Select(Key).OrderBy(k => k, StringComparer.Ordinal), StringComparer.Ordinal);
+        // The run's own metadata is compared on its own: a search that completes with nothing to report changes no finding, but it does retire
+        // the "search has not completed" note, and that must not stay marked current.
+        var (critical, review, watch, positive) = (Count(FindingSeverity.Critical), Count(FindingSeverity.Review), Count(FindingSeverity.Watch), Count(FindingSeverity.Positive));
+        var notes = AnalysisOrchestrator.SufficiencyJson(result);
+        var metadataChanged = run.OverallReviewPriority != result.OverallReviewPriority || run.DataSufficiencyNotesJson != notes
+            || run.CriticalFindingsCount != critical || run.ReviewFindingsCount != review || run.WatchFindingsCount != watch || run.PositiveFindingsCount != positive;
+        var changed = findingsChanged || metadataChanged;
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         // Only the version this pass started from may be replaced: another pass that got there first wins.
@@ -65,7 +78,7 @@ public sealed class LitigationFindingsRefresher(
             .ExecuteUpdateAsync(s => s.SetProperty(a => a.LitigationFindingsVersion, version), ct);
         if (claimed == 0) { await tx.RollbackAsync(ct); return false; }
 
-        if (changed)
+        if (findingsChanged)
         {
             var narratives = stored.GroupBy(Key).ToDictionary(g => g.Key, g => (g.First().WhyThisMatters, g.First().RecommendedReview));
             db.AnalysisFindings.RemoveRange(stored);
@@ -76,22 +89,24 @@ public sealed class LitigationFindingsRefresher(
                 db.AnalysisFindings.Add(entity);
             }
             await db.SaveChangesAsync(ct);
+        }
+        if (metadataChanged)
             await db.AnalysisRuns.Where(a => a.AnalysisRunId == run.AnalysisRunId)
                 .ExecuteUpdateAsync(s => s
-                    .SetProperty(a => a.CriticalFindingsCount, result.Findings.Count(f => f.Severity == FindingSeverity.Critical))
-                    .SetProperty(a => a.ReviewFindingsCount, result.Findings.Count(f => f.Severity == FindingSeverity.Review))
-                    .SetProperty(a => a.WatchFindingsCount, result.Findings.Count(f => f.Severity == FindingSeverity.Watch))
-                    .SetProperty(a => a.PositiveFindingsCount, result.Findings.Count(f => f.Severity == FindingSeverity.Positive))
+                    .SetProperty(a => a.CriticalFindingsCount, critical)
+                    .SetProperty(a => a.ReviewFindingsCount, review)
+                    .SetProperty(a => a.WatchFindingsCount, watch)
+                    .SetProperty(a => a.PositiveFindingsCount, positive)
                     .SetProperty(a => a.OverallReviewPriority, result.OverallReviewPriority)
-                    .SetProperty(a => a.DataSufficiencyNotesJson, AnalysisOrchestrator.SufficiencyJson(result)), ct);
-        }
+                    .SetProperty(a => a.DataSufficiencyNotesJson, notes), ct);
         await tx.CommitAsync(ct);
 
         if (changed)
         {
             logger.LogInformation("Findings of analysis run {AnalysisRunId} (request {RequestId}) re-evaluated at litigation version {Version}: {Count} rule finding(s), priority {Priority}",
                 run.AnalysisRunId, requestId, version, result.Findings.Count, result.OverallReviewPriority);
-            // The dossier prints the review priority and the findings; its caches are keyed on the analysis run, which did not change.
+            // The dossier prints the review priority, the findings and the data-sufficiency notes; its caches are keyed on the analysis run,
+            // which did not change.
             if (dossierCache is not null && env is not null)
             {
                 try { await dossierCache.InvalidateForRequestAsync(requestId, env.ContentRootPath, ct); }
@@ -99,6 +114,8 @@ public sealed class LitigationFindingsRefresher(
             }
         }
         return changed;
+
+        int Count(FindingSeverity severity) => result.Findings.Count(f => f.Severity == severity);
     }
 
     private static string Key(FindingDraft f) => Key(f.Code, f.Severity, f.SummaryText, f.SourceReferenceJson, f.MetricsJson);
