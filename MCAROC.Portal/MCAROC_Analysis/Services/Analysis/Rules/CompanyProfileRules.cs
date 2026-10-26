@@ -37,17 +37,19 @@ public static class CompanyProfileRules
             });
 
             var compliance = ComplianceStatusNormalizer.Normalize(profile.ComplianceStatus);
-            outcomes.Add(compliance switch
-            {
-                NormalizedComplianceStatus.Unknown => RuleEvaluationOutcome.NotEvaluated(
-                    ComplianceNonCompliantCode, $"ComplianceStatus '{profile.ComplianceStatus}' did not match a known state."),
-                NormalizedComplianceStatus.NonCompliant => RuleEvaluationOutcome.Triggered(new FindingDraft(
-                    FindingSection.CompanyProfile, FindingSeverity.Review, TemporalStatus.Current,
-                    ComplianceNonCompliantCode, "Non-Compliant Status",
-                    $"Compliance status is recorded as '{profile.ComplianceStatus}'.",
-                    MetricsJson: JsonSerializer.Serialize(new { complianceStatus = profile.ComplianceStatus }))),
-                _ => RuleEvaluationOutcome.NotTriggered()
-            });
+            // An LLP's export has no "Active Compliance" row (#539): nothing to assess, rather than an unrecognised state. One it does report is assessed.
+            if (!(ctx.Request.EntityType == EntityType.LLP && string.IsNullOrWhiteSpace(profile.ComplianceStatus)))
+                outcomes.Add(compliance switch
+                {
+                    NormalizedComplianceStatus.Unknown => RuleEvaluationOutcome.NotEvaluated(
+                        ComplianceNonCompliantCode, $"ComplianceStatus '{profile.ComplianceStatus}' did not match a known state."),
+                    NormalizedComplianceStatus.NonCompliant => RuleEvaluationOutcome.Triggered(new FindingDraft(
+                        FindingSection.CompanyProfile, FindingSeverity.Review, TemporalStatus.Current,
+                        ComplianceNonCompliantCode, "Non-Compliant Status",
+                        $"Compliance status is recorded as '{profile.ComplianceStatus}'.",
+                        MetricsJson: JsonSerializer.Serialize(new { complianceStatus = profile.ComplianceStatus }))),
+                    _ => RuleEvaluationOutcome.NotTriggered()
+                });
         }
 
         if (ctx.LatestFinancialYear is null)

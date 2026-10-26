@@ -32,14 +32,14 @@ public class AmountToggleCoverageTests
     private const string LabelMarker = "data-amount-unit-label=\"";
 
     /// <summary>Exact per-file counts from the audited inventory
-    /// (<c>docs/c5b-amount-call-site-inventory.md</c>) — every one of the 43 crore-amount value sites
-    /// and 21 unit-label sites found by direct line-by-line inspection of these six views.</summary>
+    /// (<c>docs/c5b-amount-call-site-inventory.md</c>) — every one of the 49 crore-amount value sites
+    /// and 25 unit-label sites found by direct line-by-line inspection of these six views.</summary>
     private static readonly (string File, int AmountSites, int LabelSites)[] Expected =
     [
         ("_ChargeDrawer.cshtml", 9, 0),
         ("_ChargesTab.cshtml", 6, 4),
         ("_ComplianceTab.cshtml", 10, 4),
-        ("_CorporateTab.cshtml", 12, 8),
+        ("_CorporateTab.cshtml", 18, 12),   // +6 amounts, +4 labels: the LLP contribution fields (#539)
         ("_FinancialStatement.cshtml", 1, 1),
         ("_FinancialsTab.cshtml", 5, 4),
     ];

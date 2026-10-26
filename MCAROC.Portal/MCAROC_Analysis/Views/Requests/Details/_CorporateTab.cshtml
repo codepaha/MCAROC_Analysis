@@ -5,6 +5,9 @@
     var currentDirectors = Model.Directors.Where(d => d.CessationDate is null).ToList();
     var formerDirectors = Model.Directors.Where(d => d.CessationDate is not null).ToList();
     var relByType = Model.RelatedCorporates.GroupBy(x => x.RelationshipType).ToList();
+    // An LLP (#539): designated partners, partners' contributions and an LLPIN in place of directors, shareholding and a CIN.
+    var w = Model.Wording;
+    var llp = w.IsLlp;
 
     static bool IsValidEmailFormat(string address) =>
         System.Net.Mail.MailAddress.TryCreate(address, out _);
@@ -12,12 +15,14 @@
     var sections = new (string Label, string Id, int? Count)[]
     {
         ("Overview", "overview", null),
-        ("Management", "management", Model.Directors.Count + Model.CompanyOfficers.Count),
-        ("Director Network", "network", Model.DirectorAssociations.Count + Model.ProprietorshipAssociations.Count),
-        ("Ownership", "ownership", Model.Shareholdings.Count),
+        (llp ? "Partners" : "Management", "management", Model.Directors.Count + Model.CompanyOfficers.Count),
+        (llp ? "Partner Network" : "Director Network", "network", Model.DirectorAssociations.Count + Model.ProprietorshipAssociations.Count),
+        (llp ? "Contributions" : "Ownership", "ownership", llp ? Model.LlpContributions.Count : Model.Shareholdings.Count),
         ("Group Entities", "group", Model.RelatedCorporates.Count + Model.RelatedPartyTransactions.Count),
         ("Capital", "capital", Model.SecurityAllotments.Count),
-    };
+    }
+    // An LLP's export has no group-entity or allotment sheets: those tabs show only when something was read.
+    .Where(s => !llp || s.Id is not ("group" or "capital") || s.Count > 0).ToArray();
 }
 
 <ul class="nav mca-subtabs" data-mca-sections="corporate" role="tablist">
@@ -41,16 +46,25 @@
             <div class="mca-kv">
                 <div><dt>Company Name</dt><dd>@cp.CompanyName</dd></div>
                 <div><dt>Status</dt><dd>@Or(cp.CompanyStatus)</dd></div>
-                <div><dt>CIN</dt><dd>@(cp.Cin ?? r.Cin ?? r.Llpin ?? "—")</dd></div>
+                <div><dt>@w.Identifier</dt><dd>@((llp ? cp.Llpin ?? r.Llpin : cp.Cin) ?? r.Cin ?? r.Llpin ?? "—")</dd></div>
                 <div><dt>PAN</dt><dd>@(cp.Pan ?? r.Pan ?? "—")</dd></div>
-                <div><dt>Compliance Status</dt><dd>@Or(cp.ComplianceStatus)</dd></div>
+                @if (!llp) { <div><dt>Compliance Status</dt><dd>@Or(cp.ComplianceStatus)</dd></div> }
                 <div><dt>Incorporated</dt><dd>@D(cp.IncorporationDate)</dd></div>
-                <div><dt>Date of Last AGM</dt><dd>@D(cp.LastAgmDate)</dd></div>
-                <div><dt>Authorised Capital</dt><dd><partial name="Details/_Amount" model="new AmountViewModel(cp.AuthorisedCapital)" /></dd></div>
-                <div><dt>Paid-up Capital</dt><dd><partial name="Details/_Amount" model="new AmountViewModel(cp.PaidUpCapital)" /></dd></div>
-                <div><dt>Type of Entity</dt><dd>@Or(cp.EntityType)</dd></div>
-                <div><dt>Listing Status</dt><dd>@Or(cp.ListingStatus)</dd></div>
-                <div><dt>LEI Status</dt><dd>@Or(cp.LeiStatus)</dd></div>
+                @if (llp)
+                {
+                    <div><dt>Obligation of Contribution</dt><dd><partial name="Details/_Amount" model="new AmountViewModel(cp.LlpObligationOfContributionCrore)" /></dd></div>
+                    <div><dt>Contribution Received</dt><dd><partial name="Details/_Amount" model="new AmountViewModel(cp.LlpContributionReceivedCrore)" /></dd></div>
+                    <div><dt>Type of Entity</dt><dd>@Or(cp.EntityType)</dd></div>
+                }
+                else
+                {
+                    <div><dt>Date of Last AGM</dt><dd>@D(cp.LastAgmDate)</dd></div>
+                    <div><dt>Authorised Capital</dt><dd><partial name="Details/_Amount" model="new AmountViewModel(cp.AuthorisedCapital)" /></dd></div>
+                    <div><dt>Paid-up Capital</dt><dd><partial name="Details/_Amount" model="new AmountViewModel(cp.PaidUpCapital)" /></dd></div>
+                    <div><dt>Type of Entity</dt><dd>@Or(cp.EntityType)</dd></div>
+                    <div><dt>Listing Status</dt><dd>@Or(cp.ListingStatus)</dd></div>
+                    <div><dt>LEI Status</dt><dd>@Or(cp.LeiStatus)</dd></div>
+                }
                 <div><dt>Industry / Segment</dt><dd>@Or(cp.Industry)@(string.IsNullOrEmpty(cp.Segment) ? "" : $" · {cp.Segment}")</dd></div>
                 <div>
                     <dt>MCA Sum of Charges</dt>
@@ -210,12 +224,12 @@
         @await Html.PartialAsync("Details/_KeyIndicators", Model.KeyMetrics.Where(g => g.Title == "Directors").ToList())
 
         <div class="mca-section">
-            <h3>Current Directors <span class="mca-count">@currentDirectors.Count</span></h3>
+            <h3>Current @w.Directors <span class="mca-count">@currentDirectors.Count</span></h3>
             @if (currentDirectors.Count > 0)
             {
                 @await Html.PartialAsync("Details/_DirectorTable", currentDirectors)
             }
-            else { <p class="text-muted mb-0">@Model.SheetCoverage.EmptyState("No current directors on record.", SheetAliases.Directors)</p> }
+            else { <p class="text-muted mb-0">@Model.SheetCoverage.EmptyState($"No current {w.Directors.ToLowerInvariant()} on record.", SheetAliases.Directors)</p> }
         </div>
 
         @if (Model.CompanyOfficers.Count > 0)
@@ -258,7 +272,7 @@
         @if (formerDirectors.Count > 0)
         {
             <div class="mca-section">
-                <h3>Former Directors <span class="mca-count">@formerDirectors.Count</span></h3>
+                <h3>Former @w.Directors <span class="mca-count">@formerDirectors.Count</span></h3>
                 @await Html.PartialAsync("Details/_DirectorTable", formerDirectors)
             </div>
         }
@@ -301,7 +315,7 @@
             @if (Model.DirectorAssociations.Count > 0)
             {
                 <div class="pi-table-wrap"><table class="pi-results-table">
-                    <thead><tr><th>Director</th><th>Connected Company</th><th>CIN</th><th>Type</th><th class="text-end">Paid-up (<span data-amount-unit-label="suffix">Cr</span>)</th><th class="text-end">Charges (<span data-amount-unit-label="suffix">Cr</span>)</th><th>Status</th><th>Active Compliance</th><th>Incorporated</th><th>Appointed</th><th>Ceased</th></tr></thead>
+                    <thead><tr><th>@(llp ? "Partner" : "Director")</th><th>Connected Company</th><th>CIN / LLPIN</th><th>Type</th><th class="text-end">Paid-up / Contribution (<span data-amount-unit-label="suffix">Cr</span>)</th><th class="text-end">Charges (<span data-amount-unit-label="suffix">Cr</span>)</th><th>Status</th><th>Active Compliance</th><th>Incorporated</th><th>Appointed</th><th>Ceased</th></tr></thead>
                     <tbody>
                     @foreach (var a in Model.DirectorAssociations.OrderBy(a => a.ConnectedCompanyRaw))
                     {
@@ -352,6 +366,42 @@
 
     @* ── Ownership ── *@
     <div class="tab-pane fade mca-subtab-panel" id="sec-corporate-ownership" role="tabpanel">
+        @if (llp)
+        {
+            @* An LLP's partners' and body corporates' contributions (#539), in place of a shareholding. *@
+            var lst = Model.Structure;
+            <div class="mca-highlight-grid" style="margin-bottom:22px;">
+                <div class="pi-metric"><span>Designated Partners</span><strong>@(lst?.LlpDesignatedPartners?.ToString() ?? "—")</strong><small>&nbsp;</small></div>
+                <div class="pi-metric"><span>Partners</span><strong>@(lst?.LlpPartners?.ToString() ?? "—")</strong><small>not designated</small></div>
+                <div class="pi-metric"><span>Obligation of Contribution</span><strong><partial name="Details/_Amount" model="new AmountViewModel(cp?.LlpObligationOfContributionCrore)" /></strong><small><span data-amount-unit-label="long">₹ Crore</span></small></div>
+                <div class="pi-metric"><span>Contribution Received</span><strong><partial name="Details/_Amount" model="new AmountViewModel(cp?.LlpContributionReceivedCrore)" /></strong><small><span data-amount-unit-label="long">₹ Crore</span></small></div>
+            </div>
+
+            <div class="mca-section" id="mcaLlpContributions">
+                <h3>Partners' Contributions <span class="mca-count">@Model.LlpContributions.Count</span></h3>
+                @if (Model.LlpContributions.Count > 0)
+                {
+                    <div class="pi-table-wrap"><table class="pi-results-table">
+                        <thead><tr><th>Contributor</th><th>Role</th><th class="text-end">Obligation (<span data-amount-unit-label="suffix">Cr</span>)</th><th class="text-end">Received (<span data-amount-unit-label="suffix">Cr</span>)</th><th>As on</th></tr></thead>
+                        <tbody>
+                        @foreach (var c in Model.LlpContributions)
+                        {
+                            <tr>
+                                <td>@c.Name</td>
+                                <td>@(c.Kind == LlpContributorKind.BodyCorporate ? (c.NomineeName is { } nominee ? $"Body corporate (nominee {nominee})" : "Body corporate") : c.Designation ?? "Partner")</td>
+                                <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(c.ObligationOfContributionCrore)" /></td>
+                                <td class="text-end"><partial name="Details/_Amount" model="new AmountViewModel(c.ContributionReceivedCrore)" /></td>
+                                <td>@D(c.AsOnDate)</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table></div>
+                }
+                else { <div class="mca-empty"><i class="bi bi-diagram-3"></i><p>@Model.SheetCoverage.EmptyState("No partners' contributions were reported in this workbook.", SheetAliases.Structure)</p></div> }
+            </div>
+        }
+        else
+        {
         @if (Model.Structure is { } st)
         {
             <div class="mca-highlight-grid" style="margin-bottom:22px;">
@@ -438,6 +488,7 @@
                     </table></div>
                 }
             </div>
+        }
         }
     </div>
 

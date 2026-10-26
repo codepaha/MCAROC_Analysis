@@ -43,7 +43,26 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
         var detailed = DetermineDetailedDomains(hints);
 
         var profile = await db.CompanyProfiles.FirstOrDefaultAsync(x => x.IngestionRunId == ingestionRunId, ct);
-        if (profile is not null)
+        var wording = EntityWording.For(request.EntityType);
+        if (profile is not null && wording.IsLlp)
+        {
+            // An LLP (#539): its LLPIN, its partners' contribution in place of capital, and who contributed what.
+            facts.Add(new StructuredFact("CompanyProfile",
+                $"{profile.CompanyName} | Limited Liability Partnership | LLPIN: {profile.Llpin ?? request.Llpin ?? request.Cin} | Status: {profile.CompanyStatus} | Incorporated: {profile.IncorporationDate} | " +
+                $"Partners' contribution: obligation ₹{profile.LlpObligationOfContributionCrore} Cr, received ₹{profile.LlpContributionReceivedCrore} Cr",
+                "CompanyProfile", profile.CompanyProfileId));
+            var structure = await db.CompanyStructures.AsNoTracking().FirstOrDefaultAsync(x => x.IngestionRunId == ingestionRunId, ct);
+            var contributions = await db.LlpContributions.AsNoTracking().Where(x => x.IngestionRunId == ingestionRunId)
+                .OrderBy(x => x.Kind).ThenBy(x => x.DisplayOrder).ToListAsync(ct);
+            if (structure is not null || contributions.Count > 0)
+                facts.Add(new StructuredFact("Directors",
+                    $"{structure?.LlpDesignatedPartners?.ToString() ?? "?"} designated partner(s), {structure?.LlpPartners?.ToString() ?? "?"} other partner(s). Contributions: "
+                    + (contributions.Count == 0 ? "none listed." : string.Join("; ", contributions.Select(c =>
+                        $"{c.Name} ({(c.Kind == LlpContributorKind.BodyCorporate ? "body corporate" : c.Designation ?? "partner")}): received ₹{c.ContributionReceivedCrore} Cr of ₹{c.ObligationOfContributionCrore} Cr"
+                        + (c.AsOnDate is { } d ? $" as on {d:d MMM yyyy}" : ""))) + "."),
+                    "LlpContribution", null, ingestionRunId));
+        }
+        else if (profile is not null)
             facts.Add(new StructuredFact("CompanyProfile",
                 $"{profile.CompanyName} | CIN: {profile.Cin} | Status: {profile.CompanyStatus} | Compliance: {profile.ComplianceStatus} | Incorporated: {profile.IncorporationDate}",
                 "CompanyProfile", profile.CompanyProfileId));
@@ -56,14 +75,14 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
             if (detailed.Contains("Directors"))
                 foreach (var d in directors)
                     facts.Add(new StructuredFact("Directors",
-                        $"Director: {d.NameRaw} ({d.Designation}) | Appointed: {d.OriginalAppointmentDate} | "
+                        $"{(wording.IsLlp ? "Designated partner" : "Director")}: {d.NameRaw} ({d.Designation}) | Appointed: {d.OriginalAppointmentDate} | "
                             + (d.CessationDate is null ? "Current" : $"Ceased: {d.CessationDate}"),
                         "Director", d.DirectorId));
             else
             {
                 var current = directors.Count(d => d.CessationDate is null);
                 facts.Add(new StructuredFact("Directors",
-                    $"{current} current director(s), {directors.Count - current} historical (ceased) director(s) on record.", null, null));
+                    $"{current} current {wording.Director}(s), {directors.Count - current} historical (ceased) {wording.Director}(s) on record.", null, null));
             }
         }
 

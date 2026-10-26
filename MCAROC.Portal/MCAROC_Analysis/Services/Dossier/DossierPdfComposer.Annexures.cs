@@ -81,8 +81,12 @@ public partial class DossierPdfComposer
     /// default (present and genuinely empty) — right where the reviewer is already looking, instead of a
     /// separate global list of internal sheet names an addressee-side reader has no context for.</summary>
     private void Item<T>(ColumnDescriptor col, ref int n, string caption,
-        IReadOnlyList<T> rows, IReadOnlyList<string>[] sheets, params Col<T>[] cols) =>
+        IReadOnlyList<T> rows, IReadOnlyList<string>[] sheets, params Col<T>[] cols)
+    {
+        // An LLP's export never has a company-only sheet (#539): an empty table fed only by one is left out, not reported missing.
+        if (Cover.IsLlp && rows.Count == 0 && sheets.All(s => SheetAliases.CompanyOnlySheets.Any(c => ReferenceEquals(c, s)))) return;
         Item(col, ref n, caption, rows, model.SourceCoverage.EmptyState("No records on file.", sheets), cols);
+    }
 
     private void Item<T>(ColumnDescriptor col, ref int n, string caption,
         IReadOnlyList<T> rows, string emptyText, params Col<T>[] cols)
@@ -117,26 +121,41 @@ public partial class DossierPdfComposer
     private void AnnexureA(IContainer container) => container.Column(col =>
     {
         var c = model.Corporate;
-        AnnexureHead(col, "Section 4", "Directors & Governance",
-            "Full source record — the directors register, officers, related corporates, shareholding, " +
-            "capital history and other directorships, matching the columns captured on the MCA extract.");
+        var w = Cover.Wording;
+        if (Cover.IsLlp)
+            AnnexureHead(col, "Section 4", "Partners & Governance",
+                "Full source record — the designated partners register, the partners' and body corporates' contributions, and the partners' " +
+                "other directorships, matching the columns captured on the MCA extract.");
+        else
+            AnnexureHead(col, "Section 4", "Directors & Governance",
+                "Full source record — the directors register, officers, related corporates, shareholding, " +
+                "capital history and other directorships, matching the columns captured on the MCA extract.");
 
         var tenure = FindMetric(model.Metrics, "Directors", "Average board tenure");
         var longest = FindMetric(model.Metrics, "Directors", "Longest-serving director");
         AtAGlance(col, string.Join(" ", new[]
         {
-            $"{c.ActiveDirectorCount} of {c.Directors.Count} director(s) on record are active.",
+            $"{c.ActiveDirectorCount} of {c.Directors.Count} {w.Director}(s) on record are active.",
             tenure?.HasValue == true ? $"Average board tenure is {tenure.DisplayValue()}." : null,
             longest?.HasValue == true ? $"Longest-serving director: {longest.Period}, {longest.DisplayValue()} on the board." : null,
         }.Where(s => s is not null)));
 
         var n = 0;
-        Item(col, ref n, "Directors register", c.Directors, [SheetAliases.Directors],
+        Item(col, ref n, $"{w.Directors} register", c.Directors, [SheetAliases.Directors],
             new Col<Director>("Name", 2.2f, d => d.NameRaw),
             new Col<Director>("DIN", 1.1f, d => d.Din),
             new Col<Director>("Present designation", 1.7f, d => d.Designation ?? "-"),
             new Col<Director>("Appointed", 1.1f, d => D(d.OriginalAppointmentDate), true),
             new Col<Director>("Cessation", 1.1f, d => D(d.CessationDate), true));
+
+        if (Cover.IsLlp)
+            Item(col, ref n, "Partners' contributions", c.LlpContributionList, [SheetAliases.Structure],
+                new Col<LlpContribution>("Contributor", 2.4f, x => x.Name),
+                new Col<LlpContribution>("Role", 1.6f, x => x.Kind == LlpContributorKind.BodyCorporate
+                    ? (x.NomineeName is { } nominee ? $"Body corporate (nominee {nominee})" : "Body corporate") : x.Designation ?? "Partner"),
+                new Col<LlpContribution>("Obligation ₹Cr", 1.1f, x => x.ObligationOfContributionCrore?.ToString("0.##") ?? "-", true),
+                new Col<LlpContribution>("Received ₹Cr", 1.1f, x => x.ContributionReceivedCrore?.ToString("0.##") ?? "-", true),
+                new Col<LlpContribution>("As on", 1f, x => D(x.AsOnDate), true));
 
         if (c.Officers.Count > 0)
             Item(col, ref n, "Officers without a DIN (company secretary / KMP)", c.Officers,
@@ -299,7 +318,7 @@ public partial class DossierPdfComposer
         var years = rows.OrderBy(r => r.FinancialYear).ToList();
         (string Label, Func<FinancialYearData, decimal?> V)[] lines =
         [
-            ("Share Capital", x => x.ShareCapital), ("Total Equity / Net Worth", x => x.NetWorth),
+            (Cover.Wording.Capital, x => x.ShareCapital), (Cover.IsLlp ? "Partners' funds" : "Total Equity / Net Worth", x => x.NetWorth),
             ("Long-term Borrowings", x => x.LongTermBorrowings), ("Short-term Borrowings", x => x.ShortTermBorrowings),
             ("Total Debt", x => x.TotalDebt), ("Trade Payables", x => x.TradePayables),
             ("Current Assets", x => x.CurrentAssets), ("Current Liabilities", x => x.CurrentLiabilities),

@@ -83,6 +83,11 @@ public class DossierAssembler(
         var proprietorship = await db.ProprietorshipAssociations.AsNoTracking().Where(x => x.IngestionRunId == runId)
             .OrderBy(x => x.DirectorNameRaw).ToListAsync(ct);
         var profile = await db.CompanyProfiles.AsNoTracking().FirstOrDefaultAsync(x => x.IngestionRunId == runId, ct);
+        // An LLP (#539): its identifier is the LLPIN, its paid-in capital the partners' contribution received.
+        var isLlp = request.EntityType == EntityType.LLP;
+        var llpContributions = isLlp
+            ? await db.LlpContributions.AsNoTracking().Where(x => x.IngestionRunId == runId).OrderBy(x => x.Kind).ThenBy(x => x.DisplayOrder).ToListAsync(ct)
+            : [];
 
         // ── Financials ──
         var fyAll = await db.FinancialYearData.AsNoTracking().Where(x => x.IngestionRunId == runId)
@@ -178,10 +183,11 @@ public class DossierAssembler(
         var model = new DossierModel(
             request.RequestId, runId, analysis.AnalysisRunId,
             new DossierCover(
-                request.CompanyName, request.Cin ?? profile?.Cin, request.Pan ?? profile?.Pan,
+                request.CompanyName, request.Cin ?? (isLlp ? request.Llpin ?? profile?.Llpin : profile?.Cin), request.Pan ?? profile?.Pan,
                 profile?.IncorporationDate, profile?.CompanyStatus,
-                request.Client?.ClientName ?? "", DateTime.UtcNow, run?.CompletedDate, run?.SourceSnapshotDate),
-            new DossierCorporate(directors, officers, shareholders, related, allotments, desigHistory, otherDirectorships, structure, profile?.PaidUpCapital, shareholdingPattern, relatedPartyTransactions, proprietorship),
+                request.Client?.ClientName ?? "", DateTime.UtcNow, run?.CompletedDate, run?.SourceSnapshotDate, isLlp),
+            new DossierCorporate(directors, officers, shareholders, related, allotments, desigHistory, otherDirectorships, structure,
+                isLlp ? profile?.LlpContributionReceivedCrore : profile?.PaidUpCapital, shareholdingPattern, relatedPartyTransactions, proprietorship, llpContributions),
             new DossierFinancials(standalone, consolidated, facts, parameters, auditors, peers, peerCompanies),
             new DossierCharges(
                 charges,
@@ -197,7 +203,7 @@ public class DossierAssembler(
                 analysis.WatchFindingsCount, analysis.PositiveFindingsCount,
                 findings, execSummary, notAssessed),
             sourceSheets,
-            SheetCoverage.From(run),
+            SheetCoverage.From(run, isLlp),
             Metrics: [],
             Profile: profile,
             // Carried through unfiltered — DossierModel is shared with the portal's on-screen company page

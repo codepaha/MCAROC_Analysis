@@ -92,7 +92,10 @@ public enum MetricUnit { Count, Percent, Ratio, Times, Crore, Rupees, Days, Year
 /// "Financial trend &amp; leverage"). The dossier Snapshot and the portal tabs both render a
 /// <c>IReadOnlyList&lt;MetricGroup&gt;</c> through the same components, sourced from the one
 /// <c>DossierModel</c> the <c>DossierCache</c> hands to both.</summary>
-public sealed record MetricGroup(string Title, IReadOnlyList<MetricResult> Metrics)
+/// <param name="Title">The group's key: tabs and the dossier pick groups by it.</param>
+/// <param name="Label">What the group is called on screen when that differs from its key (an LLP's "Designated partners", #539).</param>
+public sealed record MetricGroup(string Title, IReadOnlyList<MetricResult> Metrics, string? Label = null)
 {
     public bool HasAny => Metrics.Count > 0;
+    public string Heading => Label ?? Title;
 }

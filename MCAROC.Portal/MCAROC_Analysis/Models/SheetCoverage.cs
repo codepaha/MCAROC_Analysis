@@ -12,22 +12,27 @@ public sealed class SheetCoverage
 {
     /// <summary>Every tracked optional sheet was present (or there is no completed run yet). The
     /// "not in this upload" qualifier never renders — the plain empty states stand.</summary>
-    public static readonly SheetCoverage Empty = new([], false);
+    public static readonly SheetCoverage Empty = new([], false, SheetAliases.TrackedOptionalSheets.Count);
 
     private readonly HashSet<string> _absent;
 
-    private SheetCoverage(IEnumerable<string> absent, bool chargeReportMissing)
+    private SheetCoverage(IEnumerable<string> absent, bool chargeReportMissing, int total)
     {
         _absent = new HashSet<string>(absent, StringComparer.Ordinal);
         ChargeReportMissing = chargeReportMissing;
+        TotalOptionalSheets = total;
     }
 
-    public static SheetCoverage From(IngestionRun? run)
+    /// <param name="isLlp">An LLP's export (#539) never has the company-only sheets (<see cref="SheetAliases.CompanyOnlySheets"/>): they are
+    /// left out of both the count and the absent list, so the LLP is neither marked short of them nor told its upload lacked them.</param>
+    public static SheetCoverage From(IngestionRun? run, bool isLlp = false)
     {
-        if (run is null) return Empty;
-
-        var tracked = SheetAliases.TrackedOptionalSheets
+        var applicable = SheetAliases.TrackedOptionalSheets
+            .Where(s => !isLlp || !SheetAliases.CompanyOnlySheets.Contains(s))
             .Select(SheetAliases.CanonicalName).ToHashSet(StringComparer.Ordinal);
+        if (run is null) return isLlp ? new SheetCoverage([], false, applicable.Count) : Empty;
+
+        var tracked = applicable;
 
         List<string> absent;
         try
@@ -41,14 +46,14 @@ public sealed class SheetCoverage
 
         // Only keep names we still recognise — a run recorded under an older tracked-sheet list should
         // not inflate the "M" or surface a stale sheet name.
-        return new SheetCoverage(absent.Where(tracked.Contains), run.ChargeReportMissing);
+        return new SheetCoverage(absent.Where(tracked.Contains), run.ChargeReportMissing, tracked.Count);
     }
 
     /// <summary>The Detailed Charge Report workbook was not supplied (or was unusable) while the ROC
     /// report itself lists charges — the charge annexure is ROC-sequence-only.</summary>
     public bool ChargeReportMissing { get; }
 
-    public int TotalOptionalSheets => SheetAliases.TrackedOptionalSheets.Count;
+    public int TotalOptionalSheets { get; }
     public int PresentOptionalSheets => Math.Max(0, TotalOptionalSheets - _absent.Count);
 
     /// <summary>Canonical names of the tracked optional sheets absent from the upload, sorted.</summary>
