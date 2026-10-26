@@ -630,11 +630,16 @@ public sealed class AutoFetchJobService(
 
         // No more is downloaded than the packaged archive may hold (PDFs barely compress; 5% is left for the zips' own overhead): past it the
         // archive check would refuse every filing, where stopping here keeps those that fit and says the list was cut.
-        var aggregateCap = Math.Min(_opts.MaxAggregateDownloadBytes, ArchiveSafetyLimits.Default.MaxArchiveSizeBytes / 100 * 95);
-        var (plan, estimatedBytes) = BuildDownloadPlan(registry, job.MaxDocumentsPerSection, aggregateCap, stagingDir, warnings);
+        var aggregateCap = Math.Min(_opts.MaxAggregateDownloadBytes, (long)(_archiveLimits.MaxArchiveSizeBytes * 0.95));
+        var (plan, estimatedBytes) = BuildDownloadPlan(registry, job.MaxDocumentsPerSection, aggregateCap, _archiveLimits, stagingDir, warnings);
         job.FilesTotal = plan.Sum(f => f.Files.Count);
         job.FilesDownloaded = plan.Sum(f => f.Files.Count(x => IsStaged(x.LocalPath)));
         job.FilesFailed = 0;
+        await AutoFetchGuarded(job.AutoFetchJobId, correlationId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(j => j.FilesTotal, job.FilesTotal)
+                .SetProperty(j => j.FilesDownloaded, job.FilesDownloaded)
+                .SetProperty(j => j.FilesFailed, 0), ct);
         await SaveWarningsAsync(job, correlationId, warnings, ct);
 
         if (plan.Count == 0)
@@ -792,13 +797,13 @@ public sealed class AutoFetchJobService(
     /// only decides how much is planned and how large a storage reservation to ask for; the live download
     /// loop in <see cref="FetchFilingsAsync"/> enforces the same cap against real downloaded bytes.</summary>
     private static (List<PlannedFiling> Plan, long EstimatedBytes) BuildDownloadPlan(
-        ReferenceDocumentRegistry registry, int maxDocumentsPerSection, long aggregateByteCap, string stagingDir, List<string> warnings)
+        ReferenceDocumentRegistry registry, int maxDocumentsPerSection, long aggregateByteCap, ArchiveSafetyLimits archiveLimits, string stagingDir, List<string> warnings)
     {
         var plan = new List<PlannedFiling>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var fileCount = 0;
         long estimatedBytes = 0;
-        var pdfCap = ArchiveSafetyLimits.Default.MaxPdfCount;
+        var pdfCap = archiveLimits.MaxPdfCount;
         var truncatedByCount = false;
         var truncatedByBytes = false;
 

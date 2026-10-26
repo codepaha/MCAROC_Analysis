@@ -8,6 +8,7 @@ using MCAROC_Analysis.Services.Analysis;
 using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.Excel;
 using MCAROC_Analysis.Services.McaFilings;
+using MCAROC_Analysis.Services.Chat;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
@@ -99,8 +100,8 @@ public class AutoFetchFilingsWarningTests : IAsyncLifetime
             BaseUrl = "https://reference-tool.test",
             SessionCookie = "PHPSESSID=abc",
             UserId = "265271",
-            MaxResponseBytes = 50_000,
-            MaxAggregateDownloadBytes = 200_000,
+            MaxResponseBytes = 400,
+            MaxAggregateDownloadBytes = 50_000,
             DownloadConcurrency = 1,
             DownloadAttempts = 1
         });
@@ -113,10 +114,10 @@ public class AutoFetchFilingsWarningTests : IAsyncLifetime
             new NoOpIntegrationHealthService(),
             NullLogger<ReferenceToolClient>.Instance);
 
-        // Set MaxArchiveSizeBytes artificially low so the packaged archive fails ArchiveSafetyValidator
+        // Set MaxArchiveSizeBytes so the plan and download budget admit the file, but the packaged archive (~1,200 bytes) fails ArchiveSafetyValidator
         var uploadOptions = Options.Create(new LargeArchiveUploadOptions
         {
-            MaxArchiveSizeBytes = 500 // Packaged archive will be ~1,200 bytes, exceeding this 500-byte safety ceiling
+            MaxArchiveSizeBytes = 500 // aggregateCap = 475 bytes (admits 102-byte plan & 400-byte response), but packaged outer zip is ~650 bytes
         });
 
         var storageReservations = new StorageReservationManager(db, uploadOptions, NullLogger<StorageReservationManager>.Instance);
@@ -209,6 +210,76 @@ public class AutoFetchFilingsWarningTests : IAsyncLifetime
 
         // Request still active, no extraction re-run
         Assert.NotEqual(RequestStatus.ExtractionFailed, request.RequestStatus);
+    }
+
+    /// <summary>Regression for PR #544 review finding [P2]: configured lower limits (e.g. MaxPdfCount)
+    /// truncate planning with a warning, preserve the fitting files, package and validate them cleanly, and downstream
+    /// FilingBatchProcessor unpacks them using compatible configured limits.</summary>
+    [Fact]
+    public async Task When_lower_configured_limits_truncate_plan_fitting_files_are_preserved_with_warning()
+    {
+        await using var db = CreateContext();
+
+        var options = Options.Create(new ReferenceToolOptions
+        {
+            BaseUrl = "https://reference-tool.test",
+            SessionCookie = "PHPSESSID=abc",
+            UserId = "265271",
+            MaxResponseBytes = 50_000,
+            MaxAggregateDownloadBytes = 500_000,
+            DownloadConcurrency = 1,
+            DownloadAttempts = 1
+        });
+
+        // 3 documents in registry, but MaxPdfCount is capped at 2
+        var client = new ReferenceToolClient(
+            new HttpClient(new MultiDocHandler(count: 3)),
+            options,
+            new ReferenceToolSession(),
+            new NoOpIntegrationHealthService(),
+            NullLogger<ReferenceToolClient>.Instance);
+
+        var uploadOptions = Options.Create(new LargeArchiveUploadOptions
+        {
+            MaxPdfCount = 2,
+            MaxArchiveSizeBytes = 500_000_000
+        });
+
+        var storageReservations = new StorageReservationManager(db, uploadOptions, NullLogger<StorageReservationManager>.Instance);
+        var jobs = new AutoFetchJobService(
+            db, client, options, new FileValidationService(new ExcelSheetReader()),
+            null!, new AnalysisQueue(), new FilingProcessingQueue(), storageReservations,
+            new FakeEnv(_tempDir), NullLogger<AutoFetchJobService>.Instance,
+            uploadOptions: uploadOptions);
+
+        var (requestId, jobId) = await SeedRequestPastIngestionAsync(db);
+
+        await jobs.ProcessAsync(jobId, CancellationToken.None);
+
+        var job = await db.AutoFetchJobs.AsNoTracking().SingleAsync(j => j.AutoFetchJobId == jobId);
+        var request = await db.Requests.AsNoTracking().SingleAsync(r => r.RequestId == requestId);
+
+        // Fitting 2 files are preserved and packaged, truncation warning is recorded
+        Assert.Equal(AutoFetchJobStatus.CompletedWithWarnings, job.Status);
+        Assert.Equal(100, job.ProgressPercent);
+        Assert.Contains("2-PDF batch limit", job.WarningsJson);
+        Assert.DoesNotContain("Filings stage failed", job.WarningsJson);
+        Assert.Contains("Done — workbook data extracted, analysis queued, filings handed to the document pipeline.", job.StatusMessage);
+        Assert.Equal(2, job.FilesTotal);
+        Assert.Equal(2, job.FilesDownloaded);
+        Assert.NotNull(job.FilingsDocumentId);
+        Assert.NotNull(job.FilingBatchId);
+
+        // Downstream unpack uses the same compatible limits and processes cleanly
+        var processor = new FilingBatchProcessor(
+            db, _tempDir, null, null, new FilingProcessingQueue(), new DocumentChunkingQueue(),
+            NullLogger<FilingBatchProcessor>.Instance,
+            archiveOptions: uploadOptions);
+
+        await processor.UnpackBatchAsync(job.FilingBatchId.Value, CancellationToken.None);
+
+        var batch = await db.McaFilingBatches.AsNoTracking().SingleAsync(b => b.BatchId == job.FilingBatchId.Value);
+        Assert.Equal(FilingBatchStatus.Processing, batch.Status);
     }
 
     private static async Task<(long RequestId, long JobId)> SeedRequestPastIngestionAsync(AppDbContext db)
@@ -358,6 +429,41 @@ public class AutoFetchFilingsWarningTests : IAsyncLifetime
                     return Task.FromResult(Bytes(pdf, "application/pdf"));
                 }
                 var section = "{\"data\":[{\"docId\":\"doc1\",\"mcaName\":\"Form 1\",\"documentDate\":\"2026-07-01T00:00:00+05:30\",\"size\":1,\"awsPath\":\"x/1.pdf\",\"section\":\"S\",\"attachments\":[]}],\"totalCount\":1}";
+                return Task.FromResult(Json("{\"charge\":" + JsonSerializer.Serialize(section) + "}"));
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
+
+        private static HttpResponseMessage Json(string body) =>
+            new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+
+        private static HttpResponseMessage Bytes(byte[] body, string contentType)
+        {
+            var content = new ByteArrayContent(body);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+        }
+    }
+
+    private sealed class MultiDocHandler(int count = 3) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("jwt/service.php", StringComparison.Ordinal))
+                return Task.FromResult(Json($"{{\"jwtToken\":\"{KeyHex}\"}}"));
+            if (path.EndsWith("userDetailsService.php", StringComparison.Ordinal))
+                return Task.FromResult(Json("{\"id\":265271}"));
+            if (path.EndsWith("docService/service.php", StringComparison.Ordinal))
+            {
+                if (request.RequestUri!.Query.Contains("action=downloadPdf", StringComparison.Ordinal))
+                {
+                    var pdf = "%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"u8.ToArray();
+                    return Task.FromResult(Bytes(pdf, "application/pdf"));
+                }
+                var docs = Enumerable.Range(1, count)
+                    .Select(i => $"{{\"docId\":\"doc{i}\",\"mcaName\":\"Form {i}\",\"documentDate\":\"2026-07-0{i}T00:00:00+05:30\",\"size\":0.1,\"awsPath\":\"x/{i}.pdf\",\"section\":\"S\",\"attachments\":[]}}");
+                var section = $"{{\"data\":[{string.Join(",", docs)}],\"totalCount\":{count}}}";
                 return Task.FromResult(Json("{\"charge\":" + JsonSerializer.Serialize(section) + "}"));
             }
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
