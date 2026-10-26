@@ -68,8 +68,9 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
         Microsoft.Extensions.Logging.ILogger<RequestsController>? customLogger = null)
     {
         var env = new FakeEnv(_tempDir);
+        var resolver = new MCAROC_Analysis.Services.Storage.StoragePathResolver(env, null);
         var fileVal = new FileValidationService(new ExcelSheetReader());
-        var derivService = new WorkbookDerivativeService(db, env, fileVal, NullLogger<WorkbookDerivativeService>.Instance);
+        var derivService = new WorkbookDerivativeService(db, env, fileVal, NullLogger<WorkbookDerivativeService>.Instance, resolver);
         var dpProvider = DataProtectionProvider.Create(new DirectoryInfo(_tempDir));
         tokenService ??= new MCAROC_Analysis.Services.Documents.TimeLimitedSignedDownloadTokenService(dpProvider);
 
@@ -85,7 +86,8 @@ public class UploadedDocumentDownloadTests : IAsyncLifetime, IDisposable
             corporateTimelineBuilder: new CorporateTimelineBuilder(db),
             logger: customLogger ?? NullLogger<RequestsController>.Instance,
             derivativeService: derivService,
-            tokenService: tokenService);
+            tokenService: tokenService,
+            pathResolver: resolver);
 
         var services = new ServiceCollection();
         services.AddSingleton<IAuthenticationService>(new FakeAuthService(isInternalReviewer));

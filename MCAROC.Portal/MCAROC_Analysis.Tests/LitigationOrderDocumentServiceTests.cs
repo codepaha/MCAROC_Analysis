@@ -4,6 +4,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.McaFilings;
+using MCAROC_Analysis.Services.Storage;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
@@ -29,12 +30,14 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_tempDir);
+        StoragePathHelper.Initialize(new StoragePathResolver(new FakeEnv(_tempDir), null));
         await using var db = CreateContext();
         await global::MCAROC_Analysis.Tests.TestDatabase.MigrateAsync(db);
     }
 
     public Task DisposeAsync()
     {
+        StoragePathHelper.Reset();
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* best effort */ }
         return Task.CompletedTask;
     }
@@ -170,7 +173,7 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
         var reloaded = await verifyDb.LitigationOrderDocuments.FirstAsync(d => d.LitigationOrderDocumentId == document.LitigationOrderDocumentId);
         Assert.Equal(LitigationOrderDocumentStatus.Downloaded, reloaded.Status);
         Assert.NotNull(reloaded.StoragePath);
-        Assert.True(File.Exists(reloaded.StoragePath));
+        Assert.True(File.Exists(StoragePathHelper.ResolveFullPath(reloaded.StoragePath)));
         Assert.Equal(pdfBytes.LongLength, reloaded.FileSizeBytes);
         Assert.Equal(Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(pdfBytes)), reloaded.FileHash);
         Assert.Equal(FilingDocumentProcessingStatus.TextExtracted, reloaded.TextExtractionStatus);
@@ -260,7 +263,7 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
         Assert.Equal(LitigationOrderDocumentStatus.Downloaded, reloaded.Status);
         Assert.EndsWith(".txt", reloaded.StoragePath);
         Assert.StartsWith("text/plain", reloaded.ContentType);
-        var stored = await File.ReadAllTextAsync(reloaded.StoragePath!);
+        var stored = await File.ReadAllTextAsync(StoragePathHelper.ResolveFullPath(reloaded.StoragePath!));
         Assert.Equal("Counsel for D1 to D4 reported No rejoinder. Placed before Honble P.O. Call on 29-04-2019.", stored);
         Assert.DoesNotContain("<", stored); // never the source's HTML
         Assert.Equal(FilingDocumentProcessingStatus.TextExtracted, reloaded.TextExtractionStatus);
@@ -444,7 +447,7 @@ public class LitigationOrderDocumentServiceTests : IAsyncLifetime
         var expectedHashB = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(pdfBytesB));
         Assert.Equal(expectedHashB, reloaded.FileHash); // B's hash, never A's
         Assert.NotNull(reloaded.StoragePath);
-        var onDisk = await File.ReadAllBytesAsync(reloaded.StoragePath!);
+        var onDisk = await File.ReadAllBytesAsync(StoragePathHelper.ResolveFullPath(reloaded.StoragePath!));
         Assert.Equal(pdfBytesB, onDisk); // the file ON DISK matches what the DB records — no A/B mismatch
     }
 

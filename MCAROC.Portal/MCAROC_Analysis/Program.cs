@@ -517,6 +517,7 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+MCAROC_Analysis.Services.Storage.StoragePathHelper.Initialize(app.Services.GetRequiredService<MCAROC_Analysis.Services.Storage.IStoragePathResolver>());
 MCAROC_Analysis.Services.AiUsage.AiUsageLog.Configure(app.Services.GetRequiredService<MCAROC_Analysis.Services.AiUsage.AiUsageQueue>());
 
 if (analystOperationalCommand)

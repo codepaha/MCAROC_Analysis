@@ -5,6 +5,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
 using MCAROC_Analysis.Services.PreLoginReports;
+using MCAROC_Analysis.Services.Storage;
 using MCAROC_Analysis.Services.CompanyMaster;
 using MCAROC_Analysis.Controllers;
 using Microsoft.AspNetCore.Hosting;
@@ -310,7 +311,11 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
     {
         await using var db = CreateContext();
         var job = await db.PreLoginReportJobs.FindAsync(jobId);
-        if (job?.ReportStoragePath is { } path && File.Exists(path)) File.Delete(path);
+        if (job?.ReportStoragePath is { } path)
+        {
+            var full = StoragePathHelper.ResolveFullPath(path);
+            if (File.Exists(full)) File.Delete(full);
+        }
     }
 
     [Fact]
@@ -424,7 +429,7 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
             await service.ProcessAsync(id, CancellationToken.None);
             job = (await service.FindAsync(id, CancellationToken.None))!;
             Assert.Equal(PreLoginReportJobStatus.Completed, job.Status);
-            Assert.True(File.Exists(job.ReportStoragePath));
+            Assert.True(File.Exists(StoragePathHelper.ResolveFullPath(job.ReportStoragePath)));
             await service.RerunAsync(batch, id, CancellationToken.None);
             await service.ProcessAsync(id, CancellationToken.None);
             await db.Entry(job).ReloadAsync();
@@ -496,7 +501,7 @@ public class PreLoginReportJobServiceTests : IAsyncLifetime
             Assert.Equal(cin, data.Assignment!.CompanyDetails.Cin);
             // An automatic selection; an exact, unique, active legal name gives the more specific reason (owner rule 2026-10-13).
             Assert.Contains(data.IdentityResolution!.ReasonCode, new[] { ResolutionReasonCodes.AutoSelected, ResolutionReasonCodes.UniqueExact });
-            Assert.True(File.Exists(job.ReportStoragePath));
+            Assert.True(File.Exists(StoragePathHelper.ResolveFullPath(job.ReportStoragePath)));
         }
         finally
         {

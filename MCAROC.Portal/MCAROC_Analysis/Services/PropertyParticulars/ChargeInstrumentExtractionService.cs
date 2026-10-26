@@ -73,7 +73,8 @@ public class ChargeInstrumentExtractionService(
         foreach (var d in docs.Where(d => !have.Contains(d.FilingDocumentId)))
         {
             // A form read exactly from its own data is part 1's; nothing to quote.
-            if (await XfaFormReader.ReadSidecarAsync(d.ExtractedTextPath!, ct) is { Count: > 0 }) continue;
+            var resolvedSidecar = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(d.ExtractedTextPath);
+            if (await XfaFormReader.ReadSidecarAsync(resolvedSidecar, ct) is { Count: > 0 }) continue;
 
             var earlier = string.IsNullOrEmpty(d.FileHash) ? null : await (
                 from x in db.ChargeInstrumentExtractions.AsNoTracking()
@@ -184,12 +185,13 @@ public class ChargeInstrumentExtractionService(
         var row = await db.ChargeInstrumentExtractions.AsNoTracking().SingleAsync(x => x.ChargeInstrumentExtractionId == extractionId, ct);
         var textPath = await db.McaFilingDocuments.AsNoTracking().Where(d => d.FilingDocumentId == row.FilingDocumentId)
             .Select(d => d.ExtractedTextPath).FirstOrDefaultAsync(ct);
-        if (string.IsNullOrEmpty(textPath) || !File.Exists(textPath))
+        var resolvedTextPath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(textPath);
+        if (string.IsNullOrEmpty(resolvedTextPath) || !File.Exists(resolvedTextPath))
         {
             await FinishAsync(row, token, ChargeInstrumentExtractionStatus.Failed, null, null, null, "The document's extracted text is not available.", ct);
             return;
         }
-        var documentText = await File.ReadAllTextAsync(textPath, ct);
+        var documentText = await File.ReadAllTextAsync(resolvedTextPath, ct);
         if (documentText.Length > options.Value.MaxDocumentChars)
         {
             await FinishAsync(row, token, ChargeInstrumentExtractionStatus.Failed, null, null, null,

@@ -25,11 +25,16 @@ public sealed record LitigationReuseResult(bool Reused, long? JobId, long? Snaps
 /// resolve "borrowed" rows. Nothing here spends a credit or calls Vertex/BPR; it is pure database and file
 /// I/O, which is exactly why it costs nothing to the reusing request.</summary>
 public sealed class LitigationReuseService(
-    AppDbContext db, IWebHostEnvironment env, TimeProvider time, LitigationOrderDocumentQueue documentQueue, ILogger<LitigationReuseService> logger)
+    AppDbContext db,
+    IWebHostEnvironment env,
+    TimeProvider time,
+    LitigationOrderDocumentQueue documentQueue,
+    ILogger<LitigationReuseService> logger,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null)
 {
     private const int ReuseWindowDays = 7;
     private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
-        env != null ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(env, null) : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
+        pathResolver ?? (env != null ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(env, null) : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default);
 
     /// <summary>Looks for a reusable source and copies it if found. Never throws for "no source exists" —
     /// that is <see cref="LitigationReuseResult.None"/>, the caller's cue to proceed with a fresh purchase.

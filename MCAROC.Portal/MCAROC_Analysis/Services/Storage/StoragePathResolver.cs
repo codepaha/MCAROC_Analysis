@@ -30,6 +30,15 @@ public sealed class StoragePathResolver : IStoragePathResolver
 
     public string GetDataRoot() => _dataRoot;
 
+    private static bool IsRootedOrDrive(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        if (Path.IsPathRooted(path)) return true;
+        if (path.Length >= 3 && char.IsLetter(path[0]) && path[1] == ':' && (path[2] == '\\' || path[2] == '/'))
+            return true;
+        return false;
+    }
+
     public string ToRelativePath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -50,24 +59,30 @@ public sealed class StoragePathResolver : IStoragePathResolver
             return normalized.Substring("app_data/".Length).TrimStart('/');
         }
 
-        // If path is rooted, check if it starts with the active data root
-        if (Path.IsPathRooted(path))
+        // If path is rooted or has a Windows drive prefix
+        if (IsRootedOrDrive(path))
         {
-            var fullPath = Path.GetFullPath(path);
+            var isFullyQualified = Path.IsPathFullyQualified(path) || (path.Length >= 3 && char.IsLetter(path[0]) && path[1] == ':');
+
+            // On Windows, paths like "\Requests\..." have no drive letter (Path.IsPathFullyQualified is false)
+            // and should be treated as relative paths with a leading separator.
+            if (!isFullyQualified)
+            {
+                return normalized.TrimStart('/');
+            }
+
             var fullRoot = _dataRoot;
             if (!fullRoot.EndsWith(Path.DirectorySeparatorChar) && !fullRoot.EndsWith(Path.AltDirectorySeparatorChar))
                 fullRoot += Path.DirectorySeparatorChar;
 
-            if (fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
+            // Only attempt Path.GetFullPath if it's native rooted on this OS
+            if (Path.IsPathRooted(path))
             {
-                return Path.GetRelativePath(_dataRoot, fullPath).Replace('\\', '/').TrimStart('/');
-            }
-
-            // On Windows, paths like "\Requests\..." have no drive letter (Path.IsPathFullyQualified is false)
-            // and should be treated as relative paths with a leading separator.
-            if (!Path.IsPathFullyQualified(path))
-            {
-                return normalized.TrimStart('/');
+                var fullPath = Path.GetFullPath(path);
+                if (fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Path.GetRelativePath(_dataRoot, fullPath).Replace('\\', '/').TrimStart('/');
+                }
             }
 
             // Path is absolute, but outside data root and doesn't contain App_Data: keep unchanged
@@ -84,12 +99,28 @@ public sealed class StoragePathResolver : IStoragePathResolver
             return string.Empty;
 
         // If path is relative
-        if (!Path.IsPathRooted(path))
+        if (!IsRootedOrDrive(path))
         {
             var cleanRelative = path.Replace('/', Path.DirectorySeparatorChar)
                                     .Replace('\\', Path.DirectorySeparatorChar)
                                     .TrimStart(Path.DirectorySeparatorChar);
             return Path.GetFullPath(Path.Combine(_dataRoot, cleanRelative));
+        }
+
+        // If it's a legacy absolute path containing App_Data, remap to active data root
+        var relative = ToRelativePath(path);
+        if (!string.Equals(relative, path, StringComparison.OrdinalIgnoreCase))
+        {
+            var cleanRelative = relative.Replace('/', Path.DirectorySeparatorChar)
+                                        .Replace('\\', Path.DirectorySeparatorChar)
+                                        .TrimStart(Path.DirectorySeparatorChar);
+            return Path.GetFullPath(Path.Combine(_dataRoot, cleanRelative));
+        }
+
+        // On non-Windows OS, a Windows drive path (e.g. D:\External\...) cannot be resolved via Path.GetFullPath
+        if (!Path.IsPathRooted(path))
+        {
+            return path;
         }
 
         // Path is rooted (absolute).
@@ -103,16 +134,6 @@ public sealed class StoragePathResolver : IStoragePathResolver
         if (fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
         {
             return fullPath;
-        }
-
-        // If it's a legacy absolute path containing App_Data, remap to active data root
-        var relative = ToRelativePath(path);
-        if (!string.Equals(relative, path, StringComparison.OrdinalIgnoreCase))
-        {
-            var cleanRelative = relative.Replace('/', Path.DirectorySeparatorChar)
-                                        .Replace('\\', Path.DirectorySeparatorChar)
-                                        .TrimStart(Path.DirectorySeparatorChar);
-            return Path.GetFullPath(Path.Combine(_dataRoot, cleanRelative));
         }
 
         // Absolute path outside data root and outside App_Data

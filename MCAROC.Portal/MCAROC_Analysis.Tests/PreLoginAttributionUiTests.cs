@@ -10,6 +10,7 @@ using MCAROC_Analysis.Services.LitigationModule.PreLogin;
 using MCAROC_Analysis.Services.LitigationModule.Reading;
 using MCAROC_Analysis.Services.LitigationModule.Store;
 using MCAROC_Analysis.Services.PreLoginReports;
+using MCAROC_Analysis.Services.Storage;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -37,11 +38,16 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        StoragePathHelper.Initialize(new StoragePathResolver(new TestEnvironment(), null));
         await using var db = Ctx();
         await TestDatabase.MigrateAsync(db);
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public Task DisposeAsync()
+    {
+        StoragePathHelper.Reset();
+        return Task.CompletedTask;
+    }
 
     private static async Task<(PreLoginReportJob Job, PreLoginLitigationTarget Borrower, PreLoginLitigationTarget Director)> CreateJobWithTargetsAsync(
         AppDbContext db, string companyName, string directorName, List<LegalCaseRecord> cases)
@@ -734,9 +740,9 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
             filesToCleanup.Add(updatedJob.ReportStoragePath);
 
             // New report file exists on disk
-            Assert.True(File.Exists(updatedJob.ReportStoragePath));
+            Assert.True(File.Exists(StoragePathHelper.ResolveFullPath(updatedJob.ReportStoragePath)));
             // Old report file was cleaned up on commit!
-            Assert.False(File.Exists(initialReportPath));
+            Assert.False(File.Exists(StoragePathHelper.ResolveFullPath(initialReportPath)));
 
             // Verify AssignmentsController.Download serves the newly published file
             var jobService = new PreLoginReportJobService(verifyDb, new PreLoginReportQueue(), reportService, env);
@@ -744,10 +750,10 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
             var downloadResult = await controller.Download(updatedJob.BatchId, updatedJob.PreLoginReportJobId, CancellationToken.None);
 
             var physicalFile = Assert.IsType<PhysicalFileResult>(downloadResult);
-            Assert.Equal(updatedJob.ReportStoragePath, physicalFile.FileName);
+            Assert.Equal(StoragePathHelper.ResolveFullPath(updatedJob.ReportStoragePath), physicalFile.FileName);
 
             // Inspect generated DOCX contents: excluded case must NOT appear in report body
-            using (var doc = WordprocessingDocument.Open(updatedJob.ReportStoragePath, false))
+            using (var doc = WordprocessingDocument.Open(physicalFile.FileName, false))
             {
                 var bodyText = doc.MainDocumentPart!.Document.Body!.InnerText;
                 Assert.DoesNotContain("CS/2500/2023", bodyText);
@@ -757,7 +763,8 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
         {
             foreach (var f in filesToCleanup)
             {
-                if (File.Exists(f)) { try { File.Delete(f); } catch { } }
+                var fullF = StoragePathHelper.ResolveFullPath(f);
+                if (File.Exists(fullF)) { try { File.Delete(fullF); } catch { } }
             }
         }
     }
@@ -815,14 +822,14 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
             filesToCleanup.Add(finalJob.ReportStoragePath);
 
             // New report exists and old is deleted
-            Assert.True(File.Exists(finalJob.ReportStoragePath));
+            Assert.True(File.Exists(StoragePathHelper.ResolveFullPath(finalJob.ReportStoragePath)));
             if (applyReportPath != null && !string.Equals(applyReportPath, finalJob.ReportStoragePath, StringComparison.OrdinalIgnoreCase))
             {
-                Assert.False(File.Exists(applyReportPath));
+                Assert.False(File.Exists(StoragePathHelper.ResolveFullPath(applyReportPath)));
             }
 
             // Inspect generated DOCX contents: restored case MUST appear in report body
-            using (var doc = WordprocessingDocument.Open(finalJob.ReportStoragePath, false))
+            using (var doc = WordprocessingDocument.Open(StoragePathHelper.ResolveFullPath(finalJob.ReportStoragePath), false))
             {
                 var bodyText = doc.MainDocumentPart!.Document.Body!.InnerText;
                 Assert.Contains("CS/2600/2023", bodyText);
@@ -832,7 +839,8 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
         {
             foreach (var f in filesToCleanup)
             {
-                if (File.Exists(f)) { try { File.Delete(f); } catch { } }
+                var fullF = StoragePathHelper.ResolveFullPath(f);
+                if (File.Exists(fullF)) { try { File.Delete(fullF); } catch { } }
             }
         }
     }
@@ -878,11 +886,11 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
             Assert.NotEqual(initialReportPath, updatedJob.ReportStoragePath);
             filesToCleanup.Add(updatedJob.ReportStoragePath);
 
-            Assert.True(File.Exists(updatedJob.ReportStoragePath));
-            Assert.False(File.Exists(initialReportPath));
+            Assert.True(File.Exists(StoragePathHelper.ResolveFullPath(updatedJob.ReportStoragePath)));
+            Assert.False(File.Exists(StoragePathHelper.ResolveFullPath(initialReportPath)));
 
             // Inspect generated DOCX contents: bulk applied case must NOT appear in report body
-            using (var doc = WordprocessingDocument.Open(updatedJob.ReportStoragePath, false))
+            using (var doc = WordprocessingDocument.Open(StoragePathHelper.ResolveFullPath(updatedJob.ReportStoragePath), false))
             {
                 var bodyText = doc.MainDocumentPart!.Document.Body!.InnerText;
                 Assert.DoesNotContain("CS/2700/2023", bodyText);
@@ -892,7 +900,8 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
         {
             foreach (var f in filesToCleanup)
             {
-                if (File.Exists(f)) { try { File.Delete(f); } catch { } }
+                var fullF = StoragePathHelper.ResolveFullPath(f);
+                if (File.Exists(fullF)) { try { File.Delete(fullF); } catch { } }
             }
         }
     }
@@ -1071,7 +1080,7 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
             filesToCleanup.Add(updatedJob.ReportStoragePath!);
 
             // Downloaded report has C-29A present and C-29B excluded
-            using (var doc = WordprocessingDocument.Open(updatedJob.ReportStoragePath!, false))
+            using (var doc = WordprocessingDocument.Open(StoragePathHelper.ResolveFullPath(updatedJob.ReportStoragePath!), false))
             {
                 var bodyText = doc.MainDocumentPart!.Document.Body!.InnerText;
                 Assert.Contains("CS/2901/2023", bodyText);
@@ -1414,18 +1423,18 @@ public class PreLoginAttributionUiTests : IAsyncLifetime
             filesToCleanup.Add(updatedJob.ReportStoragePath);
 
             // Stale initial file was cleaned up on commit, new file exists
-            Assert.False(File.Exists(initialReportPath));
-            Assert.True(File.Exists(updatedJob.ReportStoragePath));
+            Assert.False(File.Exists(StoragePathHelper.ResolveFullPath(initialReportPath)));
+            Assert.True(File.Exists(StoragePathHelper.ResolveFullPath(updatedJob.ReportStoragePath)));
 
             // Verify controller download serves the new versioned file
             var jobService = new PreLoginReportJobService(verifyDb, new PreLoginReportQueue(), reportService, env);
             var controller = new AssignmentsController(verifyDb, jobService, attributionService);
             var downloadResult = await controller.Download(updatedJob.BatchId, updatedJob.PreLoginReportJobId, CancellationToken.None);
             var physicalFile = Assert.IsType<PhysicalFileResult>(downloadResult);
-            Assert.Equal(updatedJob.ReportStoragePath, physicalFile.FileName);
+            Assert.Equal(StoragePathHelper.ResolveFullPath(updatedJob.ReportStoragePath), physicalFile.FileName);
 
             // Read the actual published docx bytes and assert upgraded attribution metadata
-            using (var doc = WordprocessingDocument.Open(updatedJob.ReportStoragePath, false))
+            using (var doc = WordprocessingDocument.Open(physicalFile.FileName, false))
             {
                 var bodyText = doc.MainDocumentPart!.Document.Body!.InnerText;
                 Assert.Contains("CS/2600/2026", bodyText);

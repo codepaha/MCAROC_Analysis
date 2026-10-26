@@ -18,7 +18,8 @@ public class WorkbookDerivativeService(
     ILogger<WorkbookDerivativeService> logger,
     MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null) : IWorkbookDerivativeService
 {
-    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver = pathResolver ?? (env != null ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(env, null) : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default);
+    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
+        pathResolver ?? (env != null ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(env, null) : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default);
     public const int CurrentSanitizerVersion = 1;
 
     /// <summary>

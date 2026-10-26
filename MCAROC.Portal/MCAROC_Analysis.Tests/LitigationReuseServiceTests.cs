@@ -1,6 +1,7 @@
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.LitigationData;
+using MCAROC_Analysis.Services.Storage;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
@@ -27,10 +28,12 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
         await TestDatabase.MigrateAsync(db);
         _contentRoot = Path.Combine(Path.GetTempPath(), "mcaroc-reuse-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_contentRoot);
+        StoragePathHelper.Initialize(new StoragePathResolver(new FakeEnv(_contentRoot), null));
     }
 
     public Task DisposeAsync()
     {
+        StoragePathHelper.Reset();
         try { Directory.Delete(_contentRoot, recursive: true); } catch { /* best effort */ }
         return Task.CompletedTask;
     }
@@ -72,8 +75,9 @@ public sealed class LitigationReuseServiceTests : IAsyncLifetime
         var newDoc = await verify.LitigationOrderDocuments.AsNoTracking().SingleAsync(d => d.LitigationCaseOrderId == newOrder.LitigationCaseOrderId);
         Assert.Equal(LitigationOrderDocumentStatus.Downloaded, newDoc.Status);
         Assert.NotEqual(source.DocumentPath, newDoc.StoragePath);
-        Assert.True(File.Exists(newDoc.StoragePath));
-        Assert.Equal(File.ReadAllBytes(source.DocumentPath!), await File.ReadAllBytesAsync(newDoc.StoragePath!));
+        var resolvedNewDoc = StoragePathHelper.ResolveFullPath(newDoc.StoragePath);
+        Assert.True(File.Exists(resolvedNewDoc));
+        Assert.Equal(File.ReadAllBytes(source.DocumentPath!), await File.ReadAllBytesAsync(resolvedNewDoc));
 
         var newChunk = await verify.LitigationOrderChunks.AsNoTracking().SingleAsync(c => c.LitigationOrderDocumentId == newDoc.LitigationOrderDocumentId);
         Assert.Equal(request.RequestId, newChunk.RequestId);

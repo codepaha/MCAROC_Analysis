@@ -15,8 +15,13 @@ namespace MCAROC_Analysis.Controllers;
 /// Mine renders the browser's localStorage history without a server-side batch enumeration.</summary>
 [Authorize]
 [Route("pre-login-reports")]
-public sealed class PreLoginReportsController(PreLoginReportJobService jobs, AppDbContext? db = null) : Controller
+public sealed class PreLoginReportsController(
+    PreLoginReportJobService jobs,
+    AppDbContext? db = null,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null) : Controller
 {
+    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
+        pathResolver ?? MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
     [HttpGet("")]
     public IActionResult Index() => View(new PreLoginReportViewModel());
 
@@ -108,8 +113,9 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs, App
         var data = jobs.AssignmentData(job);
         var source = BorrowerAssignmentIntake.PendingSource(job.DataJson);
         var path = data?.SourceStoragePath ?? source?.SourceStoragePath;
-        if (path is null || !System.IO.File.Exists(path)) return NotFound();
-        return PhysicalFile(path, "application/octet-stream", data?.SourceFileName ?? source?.SourceFileName ?? "request");
+        var resolvedPath = _pathResolver.ResolveFullPath(path);
+        if (string.IsNullOrWhiteSpace(resolvedPath) || !System.IO.File.Exists(resolvedPath)) return NotFound();
+        return PhysicalFile(resolvedPath, "application/octet-stream", data?.SourceFileName ?? source?.SourceFileName ?? "request");
     }
 
     [HttpPost("{batch:guid}/{id:long}/assignment")]
@@ -190,7 +196,7 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs, App
         var data = jobs.AssignmentData(job);
         if (data is null) return NotFound();
         ViewBag.Job = job;
-        var fullReportPath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(job.ReportStoragePath);
+        var fullReportPath = _pathResolver.ResolveFullPath(job.ReportStoragePath);
         ViewBag.DownloadAvailable = !string.IsNullOrWhiteSpace(fullReportPath) && System.IO.File.Exists(fullReportPath);
         return View(data);
     }
@@ -227,7 +233,7 @@ public sealed class PreLoginReportsController(PreLoginReportJobService jobs, App
     {
         var job = await jobs.FindInBatchAsync(batch, id, cancellationToken);
         if (job is null || job.Status != PreLoginReportJobStatus.Completed) return NotFound();
-        var fullReportPath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(job.ReportStoragePath);
+        var fullReportPath = _pathResolver.ResolveFullPath(job.ReportStoragePath);
         if (string.IsNullOrWhiteSpace(fullReportPath) || !System.IO.File.Exists(fullReportPath))
         {
             TempData["ReportError"] = "The generated Word file is unavailable. The report data can still be reviewed below; rerun the assignment to regenerate the file.";

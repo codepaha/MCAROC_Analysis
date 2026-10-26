@@ -42,7 +42,8 @@ public sealed class AutoFetchJobService(
     CompanyRefreshService? refresh = null,
     CompanyUnlockService? unlock = null,
     IdentityResolutionService? identity = null,
-    IOptions<LargeArchiveUploadOptions>? uploadOptions = null)
+    IOptions<LargeArchiveUploadOptions>? uploadOptions = null,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null)
 {
     /// <summary>Fallback per-file size estimate used when the registry gives no declared size for a
     /// document or an attachment — only for sizing the up-front storage reservation and the plan-time
@@ -52,7 +53,7 @@ public sealed class AutoFetchJobService(
     private readonly ReferenceToolOptions _opts = options.Value;
     private readonly ArchiveSafetyLimits _archiveLimits = uploadOptions?.Value is { } u ? ArchiveSafetyLimits.FromOptions(u) : ArchiveSafetyLimits.Default;
     private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
-        env != null ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(env, null) : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
+        pathResolver ?? MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
     private static readonly TimeSpan ProgressFlushInterval = TimeSpan.FromSeconds(2);
 
     // ── Creation ───────────────────────────────────────────────────────────────────────────────────

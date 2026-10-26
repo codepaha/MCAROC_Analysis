@@ -5,6 +5,7 @@ public static class StoragePathHelper
     private static IStoragePathResolver? _defaultResolver;
 
     public static void Initialize(IStoragePathResolver resolver) => _defaultResolver = resolver;
+    public static void Reset() => _defaultResolver = null;
 
     public static IStoragePathResolver Default => _defaultResolver ??= new StoragePathResolver();
 

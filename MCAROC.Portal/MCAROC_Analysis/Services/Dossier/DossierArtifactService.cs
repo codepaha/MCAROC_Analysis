@@ -14,8 +14,16 @@ public sealed record DossierRenderResult(bool Rendered, bool NotReady, bool Held
 /// request) and the pipeline coordinator's automatic pre-render (plan §4.3) — one place decides the on-disk
 /// key and the hold check, so the two callers can never disagree about what "ready" means. Idempotent and
 /// cheap to call repeatedly: an existing file is a single <see cref="File.Exists"/> check away.</summary>
-public sealed class DossierArtifactService(DossierCache cache, DossierPdfRenderer renderer, CalculationArtifactGateService gate, IWebHostEnvironment env)
+public sealed class DossierArtifactService(
+    DossierCache cache,
+    DossierPdfRenderer renderer,
+    CalculationArtifactGateService gate,
+    IWebHostEnvironment env,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null)
 {
+    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
+        pathResolver ?? (env != null ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(env, null) : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default);
+
     public async Task<DossierRenderResult> EnsureRenderedAsync(long requestId, DossierVariant flavour, CancellationToken ct)
     {
         var model = await cache.GetAsync(requestId, ct);
@@ -26,7 +34,7 @@ public sealed class DossierArtifactService(DossierCache cache, DossierPdfRendere
         if (await gate.IsHeldAsync(requestId, model.IngestionRunId, model.AnalysisRunId, flavour, ct))
             return new DossierRenderResult(false, false, true, null);
 
-        var dir = Path.Combine(env.ContentRootPath, "App_Data", "Dossiers", requestId.ToString());
+        var dir = Path.Combine(_pathResolver.GetDataRoot(), "Dossiers", requestId.ToString());
         Directory.CreateDirectory(dir);
         // The litigation evidence version is part of the name: the PDF carries charge-to-case links built from it, and
         // this file cache never expires. A refresh, or order text extracted later under the same snapshot, must

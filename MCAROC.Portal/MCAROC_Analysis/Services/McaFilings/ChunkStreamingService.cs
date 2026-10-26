@@ -12,9 +12,12 @@ public record ChunkWriteResult(bool Success, long AcceptedOffset, string? Error,
 public class ChunkStreamingService(
     AppDbContext db,
     IOptions<LargeArchiveUploadOptions> options,
-    ILogger<ChunkStreamingService> logger)
+    ILogger<ChunkStreamingService> logger,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null)
 {
     private readonly LargeArchiveUploadOptions _opts = options.Value;
+    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
+        pathResolver ?? MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
 
     public async Task<ChunkWriteResult> WriteChunkAsync(
         Guid sessionId,
@@ -78,12 +81,13 @@ public class ChunkStreamingService(
         }
 
         // 2. Open staging file under lease and reconcile uncommitted append tail if any
-        var stagingDir = Path.GetDirectoryName(session.StagingFilePath)!;
+        var stagingFilePath = _pathResolver.ResolveFullPath(session.StagingFilePath);
+        var stagingDir = Path.GetDirectoryName(stagingFilePath)!;
         Directory.CreateDirectory(stagingDir);
 
         try
         {
-            using (var archiveStream = new FileStream(session.StagingFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            using (var archiveStream = new FileStream(stagingFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
             {
                 if (archiveStream.Length > offset)
                 {
@@ -144,7 +148,7 @@ public class ChunkStreamingService(
             }
 
             // 4. Append validated chunk to archive.part
-            await using (var archiveStream = new FileStream(session.StagingFilePath, FileMode.Open, FileAccess.Write, FileShare.None))
+            await using (var archiveStream = new FileStream(stagingFilePath, FileMode.Open, FileAccess.Write, FileShare.None))
             await using (var tempReadStream = new FileStream(tempChunkPath, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
                 archiveStream.Seek(offset, SeekOrigin.Begin);

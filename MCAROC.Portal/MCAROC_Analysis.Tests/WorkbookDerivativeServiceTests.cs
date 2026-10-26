@@ -3,6 +3,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services;
 using MCAROC_Analysis.Services.Excel;
+using MCAROC_Analysis.Services.Storage;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
@@ -27,6 +28,7 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
 
     public async Task InitializeAsync()
     {
+        StoragePathHelper.Initialize(new StoragePathResolver(new FakeEnv(_tempDir), null));
         await using var db = CreateContext();
         await global::MCAROC_Analysis.Tests.TestDatabase.MigrateAsync(db);
     }
@@ -35,6 +37,7 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
 
     public void Dispose()
     {
+        StoragePathHelper.Reset();
         if (Directory.Exists(_tempDir))
         {
             try { Directory.Delete(_tempDir, recursive: true); } catch { }
@@ -120,7 +123,8 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
         Assert.Equal(request.RequestId, derivative.RequestId);
         Assert.Equal(WorkbookDerivativeService.CurrentSanitizerVersion, derivative.SanitizerVersion);
         Assert.Equal(originalHash, derivative.RawFileHash);
-        Assert.True(File.Exists(derivative.StoragePath));
+        var resolvedDerivativePath = StoragePathHelper.ResolveFullPath(derivative.StoragePath);
+        Assert.True(File.Exists(resolvedDerivativePath));
         Assert.NotEqual(rawPath, derivative.StoragePath);
 
         // RAW FILE MUST BE 100% UNCHANGED
@@ -134,7 +138,7 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
 
         // Derivative must be sanitized and openable
         var reader = new ExcelSheetReader();
-        var sheets = reader.ReadWorkbook(derivative.StoragePath);
+        var sheets = reader.ReadWorkbook(resolvedDerivativePath);
         var aboutSheet = sheets.First(s => s.Name == "About the Company");
         var labels = aboutSheet.Rows.Select(r => r.Count > 0 ? r[0]?.ToString()?.Trim() : null).ToList();
         Assert.DoesNotContain(labels, l => l == "Printed at");
@@ -211,7 +215,7 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
         Assert.Equal(expiredDerivative.DerivativeId, result.DerivativeId);
         Assert.Equal(DocumentDerivativeStatus.Ready, result.Status);
         Assert.NotEqual(oldLeaseToken, result.LeaseToken);
-        Assert.True(File.Exists(result.StoragePath));
+        Assert.True(File.Exists(StoragePathHelper.ResolveFullPath(result.StoragePath)));
     }
 
     [Fact]
@@ -357,7 +361,7 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
         var recoveryResult = await service.GetOrCreateSanitizedDerivativeAsync(doc);
         Assert.NotNull(recoveryResult);
         Assert.Equal(DocumentDerivativeStatus.Ready, recoveryResult.Status);
-        Assert.True(File.Exists(recoveryResult.StoragePath));
+        Assert.True(File.Exists(StoragePathHelper.ResolveFullPath(recoveryResult.StoragePath)));
     }
 
     [Fact]
@@ -436,7 +440,7 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
         var recoveryResult = await service.GetOrCreateSanitizedDerivativeAsync(doc);
         Assert.NotNull(recoveryResult);
         Assert.Equal(DocumentDerivativeStatus.Ready, recoveryResult.Status);
-        Assert.True(File.Exists(recoveryResult.StoragePath));
+        Assert.True(File.Exists(StoragePathHelper.ResolveFullPath(recoveryResult.StoragePath)));
     }
 
     [Fact]
@@ -501,7 +505,7 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
             var worker2Result = await service2.GetOrCreateSanitizedDerivativeAsync(doc);
             Assert.NotNull(worker2Result);
             Assert.Equal(DocumentDerivativeStatus.Ready, worker2Result.Status);
-            worker2FilePath = worker2Result.StoragePath;
+            worker2FilePath = StoragePathHelper.ResolveFullPath(worker2Result.StoragePath);
             worker2Hash = worker2Result.FileHash;
             Assert.True(File.Exists(worker2FilePath), "Worker 2's file must exist.");
         };
@@ -513,7 +517,7 @@ public class WorkbookDerivativeServiceTests : IAsyncLifetime, IDisposable
         Assert.Equal(DocumentDerivativeStatus.Ready, finalResult.Status);
 
         // Worker 2's results must remain authoritative!
-        Assert.Equal(worker2FilePath, finalResult.StoragePath);
+        Assert.Equal(worker2FilePath, StoragePathHelper.ResolveFullPath(finalResult.StoragePath));
         Assert.Equal(worker2Hash, finalResult.FileHash);
 
         // Worker 1's generation file must have been deleted/cleaned up

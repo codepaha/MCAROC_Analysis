@@ -2,6 +2,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.Chat;
 using MCAROC_Analysis.Services.McaFilings;
+using MCAROC_Analysis.Services.Storage;
 using Microsoft.Data.SqlTypes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -22,6 +23,7 @@ public sealed class McaRefreshReuseTests : IAsyncLifetime, IDisposable
 
     public async Task InitializeAsync()
     {
+        StoragePathHelper.Initialize(new StoragePathResolver(Path.Combine(_contentRoot, "App_Data")));
         await using var db = CreateContext();
         await TestDatabase.MigrateAsync(db);
     }
@@ -30,6 +32,7 @@ public sealed class McaRefreshReuseTests : IAsyncLifetime, IDisposable
 
     public void Dispose()
     {
+        StoragePathHelper.Reset();
         try { Directory.Delete(_contentRoot, recursive: true); } catch { /* best effort */ }
     }
 
@@ -152,7 +155,7 @@ public sealed class McaRefreshReuseTests : IAsyncLifetime, IDisposable
         Assert.All(secondDocs.Values, d => Assert.Equal(FilingDocumentProcessingStatus.Completed, d.ProcessingStatus));
         Assert.Equal(FilingCategory.Charge, secondDocs[a].Category); // classification still ran on the copied text
         Assert.NotEqual(firstDocs[a].ExtractedTextPath, secondDocs[a].ExtractedTextPath); // the new batch has its own text file
-        Assert.Equal(await File.ReadAllTextAsync(firstDocs[a].ExtractedTextPath!), await File.ReadAllTextAsync(secondDocs[a].ExtractedTextPath!));
+        Assert.Equal(await File.ReadAllTextAsync(StoragePathHelper.ResolveFullPath(firstDocs[a].ExtractedTextPath!)), await File.ReadAllTextAsync(StoragePathHelper.ResolveFullPath(secondDocs[a].ExtractedTextPath!)));
 
         var extractions = await (from e in verify.McaFilingExtractions.AsNoTracking()
                                  join f in verify.McaFilings on e.FilingId equals f.FilingId
@@ -259,7 +262,7 @@ public sealed class McaRefreshReuseTests : IAsyncLifetime, IDisposable
         {
             // b's extracted text is gone (e.g. retired), and SRN-X's extraction was made with an older prompt.
             var bText = await tamper.McaFilingDocuments.Where(d => d.BatchId == first && d.FileHash == b).Select(d => d.ExtractedTextPath).SingleAsync();
-            File.Delete(bText!);
+            File.Delete(StoragePathHelper.ResolveFullPath(bText!));
             await tamper.McaFilingExtractions.Where(e => tamper.McaFilings.Any(f => f.FilingId == e.FilingId && f.BatchId == first && f.Srn == "SRN-X"))
                 .ExecuteUpdateAsync(u => u.SetProperty(e => e.PromptVersion, "0.9"));
             // ...and SRN-Z's extraction failed.

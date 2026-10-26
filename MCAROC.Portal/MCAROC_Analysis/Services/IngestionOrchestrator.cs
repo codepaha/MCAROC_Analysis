@@ -11,9 +11,16 @@ namespace MCAROC_Analysis.Services;
 /// parser, and persists everything tagged to a new IngestionRun in one transaction. Never deletes a prior
 /// run's data — re-running creates IngestionRun N+1 and MCA_Request.LatestCompletedIngestionRunId moves
 /// forward only on success, which is what makes reprocessing idempotent (see portalplan/plan doc).</summary>
-public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReader, ILogger<IngestionOrchestrator> logger,
-    PropertyParticulars.PropertyParticularsExtractionService? propertyExtraction = null)
+public class IngestionOrchestrator(
+    AppDbContext db,
+    IExcelSheetReader sheetReader,
+    ILogger<IngestionOrchestrator> logger,
+    PropertyParticulars.PropertyParticularsExtractionService? propertyExtraction = null,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null)
 {
+    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
+        pathResolver ?? MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
+
     public async Task<IngestionRun> RunAsync(long requestId, long rocDocumentId, long? chargeDocumentId, CancellationToken ct = default,
         long? autoFetchJobId = null)
     {
@@ -44,9 +51,10 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         try
         {
-            var rocWorkbook = sheetReader.ReadWorkbook(rocDocument.StoragePath);
+            var rocPath = _pathResolver.ResolveFullPath(rocDocument.StoragePath);
+            var rocWorkbook = sheetReader.ReadWorkbook(rocPath);
             IReadOnlyList<SheetData>? chargeWorkbook = chargeDocument is not null
-                ? sheetReader.ReadWorkbook(chargeDocument.StoragePath)
+                ? sheetReader.ReadWorkbook(_pathResolver.ResolveFullPath(chargeDocument.StoragePath))
                 : null;
 
             // Layer 0 — record every non-blank row of every sheet of the ROC workbook verbatim before

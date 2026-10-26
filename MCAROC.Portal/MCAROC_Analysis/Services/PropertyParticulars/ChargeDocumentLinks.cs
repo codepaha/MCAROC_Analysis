@@ -186,8 +186,9 @@ public class ChargeDocumentLinkBuilder(IServiceScopeFactory scopes, ChargeFormBa
             IReadOnlyList<EmbeddedFileHash>? embedded = null;
             if (formDocIds.Contains(d.FilingDocumentId) && d.ExtractedTextPath is { } text)
             {
-                fields = await XfaFormReader.ReadSidecarAsync(text, ct);
-                embedded = await EmbeddedFiles.ReadSidecarAsync(text, ct);
+                var resolvedText = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(text);
+                fields = await XfaFormReader.ReadSidecarAsync(resolvedText, ct);
+                embedded = await EmbeddedFiles.ReadSidecarAsync(resolvedText, ct);
             }
             inputs.Add(new ChargeLinkInput(d.FilingDocumentId, d.FileHash, d.OriginalFileName, fields, embedded));
         }

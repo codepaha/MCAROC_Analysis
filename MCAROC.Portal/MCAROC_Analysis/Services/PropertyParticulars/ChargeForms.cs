@@ -141,7 +141,8 @@ public static class ChargeForms
         var missing = false;
         foreach (var d in documents)
         {
-            var fields = await XfaFormReader.ReadSidecarAsync(d.ExtractedTextPath!, ct);
+            var resolvedTextPath = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(d.ExtractedTextPath);
+            var fields = await XfaFormReader.ReadSidecarAsync(resolvedTextPath, ct);
             if (fields is null) { missing = true; continue; }
             if (FromFields(d.FilingDocumentId, fields) is { } form) forms.Add(form);
         }

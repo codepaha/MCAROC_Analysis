@@ -11,9 +11,12 @@ public sealed class McaDocumentRetentionService(
     AppDbContext db,
     IOptions<ReferenceToolOptions> options,
     TimeProvider timeProvider,
-    ILogger<McaDocumentRetentionService> logger)
+    ILogger<McaDocumentRetentionService> logger,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null)
 {
     private readonly ReferenceToolOptions _opts = options.Value;
+    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
+        pathResolver ?? MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
 
     public async Task<int> PruneExpiredDocumentsAsync(CancellationToken ct = default)
     {
@@ -111,7 +114,7 @@ public sealed class McaDocumentRetentionService(
 
         foreach (var doc in candidates)
         {
-            var path = doc.StoragePath;
+            var path = _pathResolver.ResolveFullPath(doc.StoragePath);
             var fileSuccessfullyRemoved = false;
             if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
             {

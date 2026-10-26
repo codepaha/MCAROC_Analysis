@@ -4,6 +4,7 @@ using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Services.AutoFetch;
 using MCAROC_Analysis.Services.McaFilings;
+using MCAROC_Analysis.Services.Storage;
 using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -26,6 +27,7 @@ public class McaDocumentRetentionTests : IAsyncLifetime, IDisposable
 
     public async Task InitializeAsync()
     {
+        StoragePathHelper.Initialize(new StoragePathResolver(new FakeHostEnv(_tempDir), null));
         await using var db = CreateContext();
         await TestDatabase.MigrateAsync(db);
     }
@@ -34,6 +36,7 @@ public class McaDocumentRetentionTests : IAsyncLifetime, IDisposable
 
     public void Dispose()
     {
+        StoragePathHelper.Reset();
         try { Directory.Delete(_tempDir, recursive: true); } catch { }
     }
 
@@ -428,7 +431,7 @@ public class McaDocumentRetentionTests : IAsyncLifetime, IDisposable
 
         var refreshed = await db.McaFilingDocuments.FirstAsync(d => d.FilingDocumentId == doc.FilingDocumentId);
         Assert.Null(refreshed.RetiredUtc);
-        Assert.Equal(result.RestoredPath, refreshed.StoragePath);
+        Assert.Equal(result.RestoredPath, StoragePathHelper.ResolveFullPath(refreshed.StoragePath));
     }
 
     [Fact]
@@ -593,7 +596,7 @@ public class McaDocumentRetentionTests : IAsyncLifetime, IDisposable
 
         var refreshed = await db.McaFilingDocuments.FirstAsync(d => d.FilingDocumentId == doc.FilingDocumentId);
         Assert.Null(refreshed.RetiredUtc);
-        Assert.Equal(result.RestoredPath, refreshed.StoragePath);
+        Assert.Equal(result.RestoredPath, StoragePathHelper.ResolveFullPath(refreshed.StoragePath));
         var retention = new McaDocumentRetentionService(db, opts, TimeProvider.System, NullLogger<McaDocumentRetentionService>.Instance);
         await retention.PruneExpiredDocumentsAsync();
         Assert.True(File.Exists(result.RestoredPath), "Just-restored PDF was deleted immediately instead of being retained for 15 days");
@@ -685,7 +688,7 @@ public class McaDocumentRetentionTests : IAsyncLifetime, IDisposable
 
         var refreshed = await db.McaFilingDocuments.FirstAsync(d => d.FilingDocumentId == doc.FilingDocumentId);
         Assert.Null(refreshed.RetiredUtc);
-        Assert.Equal(result.RestoredPath, refreshed.StoragePath);
+        Assert.Equal(result.RestoredPath, StoragePathHelper.ResolveFullPath(refreshed.StoragePath));
     }
 
     [Fact]

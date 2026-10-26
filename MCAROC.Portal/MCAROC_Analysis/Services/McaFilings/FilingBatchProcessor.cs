@@ -22,12 +22,11 @@ public class FilingBatchProcessor(
     DocumentChunkingQueue documentChunkingQueue,
     ILogger<FilingBatchProcessor> logger,
     IOperationalSlotLeaseService? slotLeaseService = null,
-    IOptions<LargeArchiveUploadOptions>? archiveOptions = null)
+    IOptions<LargeArchiveUploadOptions>? archiveOptions = null,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null)
 {
     private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
-        !string.IsNullOrWhiteSpace(contentRootPath)
-            ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(Path.Combine(contentRootPath, "App_Data"))
-            : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
+        pathResolver ?? MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
     private readonly ArchiveSafetyLimits _limits = archiveOptions?.Value is { } o ? ArchiveSafetyLimits.FromOptions(o) : ArchiveSafetyLimits.Default;
     private const int MaxRetryCount = 3;
     private static readonly FilingCategory[] AiEligibleCategories =

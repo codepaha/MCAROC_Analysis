@@ -93,7 +93,9 @@ public class StoragePathResolverTests : IDisposable
         Assert.Equal("PreLoginReports/job1.docx", resolver.ToRelativePath(underRoot));
 
         // External path without App_Data remains unchanged
-        var external = @"D:\SeparateVolume\Shared\Archive.zip";
+        var external = OperatingSystem.IsWindows()
+            ? @"D:\SeparateVolume\Shared\Archive.zip"
+            : "/opt/SeparateVolume/Shared/Archive.zip";
         Assert.Equal(external, resolver.ToRelativePath(external));
     }
 
@@ -114,8 +116,10 @@ public class StoragePathResolverTests : IDisposable
         Assert.Equal(expected, remapped);
 
         // External path remains absolute
-        var external = @"D:\External\data.zip";
-        Assert.Equal(Path.GetFullPath(external), resolver.ResolveFullPath(external));
+        var external = OperatingSystem.IsWindows()
+            ? @"D:\External\data.zip"
+            : "/opt/External/data.zip";
+        Assert.Equal(external, resolver.ResolveFullPath(external));
     }
 
     [Fact]
@@ -255,12 +259,15 @@ public class StoragePathResolverTests : IDisposable
             StoragePath = "Requests/25/litigation-orders/order2.pdf"
         };
         // Seed 3: LitigationOrderDocument external outside App_Data
+        var extOrderPath = OperatingSystem.IsWindows()
+            ? @"D:\Volumes\Archive\order3.pdf"
+            : "/opt/Volumes/Archive/order3.pdf";
         var lodExt = new LitigationOrderDocument
         {
             LitigationCaseOrderId = litOrder.LitigationCaseOrderId,
             Version = 3,
             Status = LitigationOrderDocumentStatus.Downloaded,
-            StoragePath = @"D:\Volumes\Archive\order3.pdf"
+            StoragePath = extOrderPath
         };
         db.LitigationOrderDocuments.AddRange(lodLegacy, lodRel, lodExt);
 
@@ -320,7 +327,7 @@ public class StoragePathResolverTests : IDisposable
         Assert.Equal(6, report.RowsRewritten);
         Assert.Single(report.UnrewrittenPaths);
         Assert.Equal("LitigationOrderDocuments", report.UnrewrittenPaths[0].EntityName);
-        Assert.Equal(@"D:\Volumes\Archive\order3.pdf", report.UnrewrittenPaths[0].Path);
+        Assert.Equal(extOrderPath, report.UnrewrittenPaths[0].Path);
 
         // Check in db context
         var updatedLod1 = await db.LitigationOrderDocuments.FindAsync(lodLegacy.LitigationOrderDocumentId);
@@ -330,7 +337,7 @@ public class StoragePathResolverTests : IDisposable
         Assert.Equal("Requests/25/litigation-orders/order2.pdf", updatedLod2!.StoragePath);
 
         var updatedLod3 = await db.LitigationOrderDocuments.FindAsync(lodExt.LitigationOrderDocumentId);
-        Assert.Equal(@"D:\Volumes\Archive\order3.pdf", updatedLod3!.StoragePath);
+        Assert.Equal(extOrderPath, updatedLod3!.StoragePath);
 
         var updatedMfd = await db.McaFilingDocuments.FindAsync(mfd.FilingDocumentId);
         Assert.Equal("Requests/1/mca-filings/1/1/documents/doc1.pdf", updatedMfd!.StoragePath);

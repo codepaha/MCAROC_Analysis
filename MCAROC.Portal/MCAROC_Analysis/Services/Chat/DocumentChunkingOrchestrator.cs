@@ -19,8 +19,11 @@ public partial class DocumentChunkingOrchestrator(
     EmbeddingService embeddingService,
     DocumentChunkingQueue queue,
     ILogger<DocumentChunkingOrchestrator> logger,
-    IAuditLogService? auditService = null)
+    IAuditLogService? auditService = null,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null)
 {
+    private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
+        pathResolver ?? MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
     public const string ChunkingVersion = "1.0";
     private const int MaxChunkRetryCount = 3;
 
@@ -63,10 +66,11 @@ public partial class DocumentChunkingOrchestrator(
 
         try
         {
-            if (document.ExtractedTextPath is null || !File.Exists(document.ExtractedTextPath))
+            var fullTextPath = _pathResolver.ResolveFullPath(document.ExtractedTextPath);
+            if (string.IsNullOrWhiteSpace(fullTextPath) || !File.Exists(fullTextPath))
                 throw new InvalidOperationException($"Extracted text file not found for document {filingDocumentId} at '{document.ExtractedTextPath}'.");
 
-            var fullText = await File.ReadAllTextAsync(document.ExtractedTextPath, ct);
+            var fullText = await File.ReadAllTextAsync(fullTextPath, ct);
             var textChunks = TextChunker.Chunk(fullText, ChatIndexingOptions.Default);
             // #359: the same PDF already chunked in an earlier batch of this request (a client refresh re-imports the
             // whole MCA export) reuses those vectors when its chunks are identical — no Vertex call for unchanged text.

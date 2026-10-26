@@ -34,11 +34,12 @@ public sealed class McaDocumentRestoreService(
     IHostEnvironment env,
     IOptions<ReferenceToolOptions> options,
     TimeProvider timeProvider,
-    ILogger<McaDocumentRestoreService> logger)
+    ILogger<McaDocumentRestoreService> logger,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null)
 {
     private readonly ReferenceToolOptions _opts = options.Value;
     private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
-        env != null ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(env, null) : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
+        pathResolver ?? (env is IWebHostEnvironment webEnv ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(webEnv, null) : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default);
 
     public async Task<DocumentRestoreResult> RestoreDocumentAsync(McaFilingDocument document, CancellationToken ct = default)
     {
@@ -106,7 +107,7 @@ public sealed class McaDocumentRestoreService(
         }
 
         // 4. Determine destination path
-        var documentsDir = FilingStoragePaths.DocumentsDir(env.ContentRootPath, document.RequestId, document.BatchId, document.FilingId);
+        var documentsDir = FilingStoragePaths.DocumentsDir(document.RequestId, document.BatchId, document.FilingId, _pathResolver);
         Directory.CreateDirectory(documentsDir);
         var targetDocFile = $"{Guid.NewGuid():N}.pdf";
         var destinationPath = Path.Combine(documentsDir, targetDocFile);

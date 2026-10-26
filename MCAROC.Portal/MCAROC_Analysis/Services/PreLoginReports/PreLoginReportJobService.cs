@@ -20,11 +20,12 @@ public sealed class PreLoginReportJobService(
     BorrowerAssignmentIntake? intake = null,
     BorrowerAssignmentIdentityResolver? identityResolver = null,
     PreLoginLitigationTargetQueue? targetQueue = null,
-    IOptions<BprLitigationOptions>? litigationOptions = null)
+    IOptions<BprLitigationOptions>? litigationOptions = null,
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null)
 {
     private readonly PreLoginLitigationTargetQueue? targetQueue = targetQueue;
     private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
-        environment != null ? new MCAROC_Analysis.Services.Storage.StoragePathResolver(environment, null) : MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
+        pathResolver ?? MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
 
     public async Task<Guid> QueueRequestAsync(IFormFile? requestFile, string? requestText, CancellationToken ct)
     {
