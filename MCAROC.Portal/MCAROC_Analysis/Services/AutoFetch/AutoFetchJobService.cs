@@ -83,7 +83,6 @@ public sealed class AutoFetchJobService(
         job.FailureReason = null;
         job.CompletedUtc = null;
         await db.SaveChangesAsync(ct);
-        db.ChangeTracker.Clear();
         return job;
     }
 
@@ -156,9 +155,10 @@ public sealed class AutoFetchJobService(
     /// <summary>Puts a Failed job back in the queue keeping its checkpoints — the caller enqueues it.</summary>
     public async Task<AutoFetchJob?> RequeueAsync(long requestId, CancellationToken ct, string? correlationId = null)
     {
-        db.ChangeTracker.Clear();
         var job = await db.AutoFetchJobs.FirstOrDefaultAsync(j => j.RequestId == requestId, ct);
-        if (job is null || !job.IsTerminal) return job;
+        if (job is null) return null;
+        await db.Entry(job).ReloadAsync(ct);
+        if (!job.IsTerminal) return job;
         if (!string.IsNullOrWhiteSpace(correlationId))
             job.CorrelationId = correlationId.Trim();
 
@@ -435,7 +435,6 @@ public sealed class AutoFetchJobService(
                 db.ChangeTracker.Clear();
                 throw new AutoFetchJobCancelledException(job.AutoFetchJobId);
             }
-            db.ChangeTracker.Clear();
         }
         catch (AutoFetchJobCancelledException)
         {
