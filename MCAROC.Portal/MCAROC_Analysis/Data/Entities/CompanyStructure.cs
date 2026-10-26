@@ -12,4 +12,9 @@ public class CompanyStructure : ExtractedEntityBase
     public int? PromoterShareholders { get; set; }
     public long? TotalEquityShares { get; set; }
     public long? TotalPreferenceShares { get; set; }
+
+    /// <summary>An LLP's "SUMMARY OF DESIGNATED PARTNER(S) / PARTNER(S)" totals (#539): partners who are not designated partners, and
+    /// designated partners (resident in India and others). Null for a company.</summary>
+    public int? LlpPartners { get; set; }
+    public int? LlpDesignatedPartners { get; set; }
 }

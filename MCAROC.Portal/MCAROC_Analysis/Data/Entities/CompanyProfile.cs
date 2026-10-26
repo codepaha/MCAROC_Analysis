@@ -31,6 +31,11 @@ public class CompanyProfile : ExtractedEntityBase
     /// modifications/history our sum does not).</summary>
     public decimal? McaSumOfChargesCrore { get; set; }
 
+    /// <summary>An LLP's "Total Obligation of Contribution (Crore)" and "Total Contribution Received (Crore)" from "About the LLP" (#539): what its
+    /// partners have committed and paid in, in place of a company's authorised and paid-up capital. Null for a company.</summary>
+    public decimal? LlpObligationOfContributionCrore { get; set; }
+    public decimal? LlpContributionReceivedCrore { get; set; }
+
     public string? EntityType { get; set; }
     public string? ListingStatus { get; set; }
     public string? Lei { get; set; }

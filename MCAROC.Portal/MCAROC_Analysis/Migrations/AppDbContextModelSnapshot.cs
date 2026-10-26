@@ -2037,6 +2037,14 @@ namespace MCAROC_Analysis.Migrations
                     b.Property<string>("ListingStatus")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<decimal?>("LlpContributionReceivedCrore")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<decimal?>("LlpObligationOfContributionCrore")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
                     b.Property<string>("Llpin")
                         .HasColumnType("nvarchar(max)");
 
@@ -2150,6 +2158,12 @@ namespace MCAROC_Analysis.Migrations
 
                     b.Property<long>("IngestionRunId")
                         .HasColumnType("bigint");
+
+                    b.Property<int?>("LlpDesignatedPartners")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("LlpPartners")
+                        .HasColumnType("int");
 
                     b.Property<decimal?>("PromoterHoldingPercent")
                         .HasPrecision(18, 4)
@@ -4630,6 +4644,68 @@ namespace MCAROC_Analysis.Migrations
                     b.HasIndex("Status");
 
                     b.ToTable("LitigationSearchJobs");
+                });
+
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.LlpContribution", b =>
+                {
+                    b.Property<long>("LlpContributionId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("LlpContributionId"));
+
+                    b.Property<DateOnly?>("AsOnDate")
+                        .HasColumnType("date");
+
+                    b.Property<decimal?>("ContributionReceivedCrore")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<string>("Designation")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("int");
+
+                    b.Property<long>("IngestionRunId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<string>("NomineeName")
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<decimal?>("ObligationOfContributionCrore")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("SourceDocumentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("SourceRowNumber")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SourceSheetName")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("LlpContributionId");
+
+                    b.HasIndex("RequestId", "IngestionRunId");
+
+                    b.ToTable("LlpContributions");
                 });
 
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.McaFiling", b =>

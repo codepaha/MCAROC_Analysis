@@ -198,4 +198,158 @@ public class LlpWorkbookTests : IAsyncLifetime
         Assert.Equal(DocumentUploadStatus.Quarantined, quarantined.UploadStatus);
         Assert.Contains("Charge report LLPIN 'XXX-0000' does not match ROC report LLPIN", quarantined.QuarantineReason);
     }
+
+    // ---- #539 PR 2: partners' contributions and the LLP statement of accounts ----------------------------------------------------------------
+
+    private static SheetData Structure(bool bodyCorporate = false) => Sheet("Structure",
+        Row("CONTRIBUTION BY PARTNERS - 31 Mar, 2026", "", "", "", ""),
+        Row("Name", "Designation", "Obligation of Contribution (Crore)", "Contribution Received (Crore)", ""),
+        Row("PARTNER ONE", "Designated Partner", 0.75, 0.75, ""),
+        Row("PARTNER TWO", "Designated Partner", 1.25, 1.0, ""),
+        Row("", "", "", "", ""),
+        Row("CONTRIBUTION BY BODY CORPORATES - 31 Mar, 2026", "", "", "", ""),
+        Row("Name", "Nominee Name", "Obligation of Contribution (Crore)", "Contribution Received (Crore)", ""),
+        bodyCorporate ? Row("SAMPLE HOLDINGS PRIVATE LIMITED", "NOMINEE PERSON", 0.5, 0.25, "") : Row("There is no contribution by body corporates.", "", "", "", ""),
+        Row("", "", "", "", ""),
+        Row("SUMMARY OF DESIGNATED PARTNER(S) / PARTNER(S) - 31 Mar, 2026", "", "", "", ""),
+        Row("Category", "Number of Partners", "Number of Designated Partners", "", "Total"),
+        Row("", "", "Resident in India", "Others", ""),
+        Row("Individual", 1.0, 2.0, 0.0, 3.0),
+        Row("Companies", 0.0, 0.0, 1.0, 1.0),
+        Row("Total", 1.0, 2.0, 1.0, 4.0));
+
+    /// <summary>The real export's layout and labels (one year column), with made-up values.</summary>
+    private static SheetData FinancialData() => Sheet("Financial Data",
+        Row("STATEMENT OF ASSETS AND LIABILITIES (Rs. Crore)", "", "31 Mar, 2025", "31 Mar, 2024"),
+        Row("Contribution and Liabilities", "", "", ""),
+        Row("Partner's Funds", "", "", ""),
+        Row("Contribution Received", "", 2.0, 1.5),
+        Row("Reserves and Surplus", "", -0.25, -0.01),
+        Row("Liabilities", "", "", ""),
+        Row("Secured Loans", "", 0.4, 0.0),
+        Row("Unsecured Loans", "", 0.1, 0.0),
+        Row("Short Term Borrowing", "", 0.2, 0.0),
+        Row("Creditor / Trade Payables - Advance from Customers", "", 0.3, 0.0),
+        Row("Total", "", 2.75, 1.49),
+        Row("Assets", "", "", ""),
+        Row("Debtors / Trade Receivables", "", 0.6, 0.0),
+        Row("Cash and Cash Equivalents", "", 1.87, 1.37),
+        Row("Inventories", "", 0.15, 0.0),
+        Row("Total", "", 2.75, 1.49),
+        Row("STATEMENT OF INCOME AND EXPENDITURE (Rs. Crore)", "", "31 Mar, 2025", "31 Mar, 2024"),
+        Row("Net Revenue", "", 3.5, 0.0),
+        Row("Operating Profit ( EBITDA )", "", 0.4, 0.0),
+        Row("Finance Costs", "", 0.05, 0.0),
+        Row("Profit Before Tax", "", 0.3, 0.0),
+        Row("Profit for the Period", "", 0.24, 0.0),
+        Row("RATIOS", "", "31 Mar, 2025", "31 Mar, 2024"),
+        Row("Return on Partners' Fund (%)", "", 13.6, -0.1),
+        Row("CERTIFIER(s)", "", "", ""),
+        Row("Year", "Certifier Name", "Designation", "Certifier Membership Number", "Certifier Firm Name", "Firm Registration Number", "Address (of firm or auditor)"),
+        Row(2025.0, "SAMPLE AUDITOR", "Auditor", 111111.0, "SAMPLE & CO", "000000N", "1 SAMPLE STREET NEW DELHI 110001"));
+
+    [Fact]
+    public void The_LLP_profile_gives_its_contribution_in_place_of_capital()
+    {
+        var p = Assert.Single(CompanyProfileParser.Parse(AboutTheLlp(), 1, 1, null).Items);
+        Assert.Equal((2.0m, 2.0m), (p.LlpObligationOfContributionCrore, p.LlpContributionReceivedCrore));
+        Assert.Equal((null, null), (p.AuthorisedCapital, p.PaidUpCapital));
+    }
+
+    [Fact]
+    public void An_LLP_structure_lists_each_contributor_and_the_partner_counts()
+    {
+        Assert.True(LlpStructureParser.IsLlpStructure(Structure()));
+        Assert.False(LlpStructureParser.IsLlpStructure(Sheet("Structure", Row("SHARE HOLDING SUMMARY - 31 Mar, 2025", ""))));
+
+        var result = LlpStructureParser.Parse(Structure(bodyCorporate: true), 1, 1, null, out var contributions);
+
+        Assert.Empty(result.Warnings);
+        Assert.Equal([("PARTNER ONE", LlpContributorKind.Partner, "Designated Partner", (string?)null, 0.75m, 0.75m),
+                ("PARTNER TWO", LlpContributorKind.Partner, "Designated Partner", null, 1.25m, 1.0m),
+                ("SAMPLE HOLDINGS PRIVATE LIMITED", LlpContributorKind.BodyCorporate, null, "NOMINEE PERSON", 0.5m, 0.25m)],
+            contributions.Select(c => (c.Name, c.Kind, c.Designation, c.NomineeName, c.ObligationOfContributionCrore!.Value, c.ContributionReceivedCrore!.Value)));
+        Assert.All(contributions, c => Assert.Equal(new DateOnly(2026, 3, 31), c.AsOnDate));
+        var s = Assert.Single(result.Items);
+        Assert.Equal((1, 3), (s.LlpPartners!.Value, s.LlpDesignatedPartners!.Value));   // designated: 2 resident + 1 other
+
+        LlpStructureParser.Parse(Structure(), 1, 1, null, out var noBodyCorporate);
+        Assert.Equal(2, noBodyCorporate.Count);   // "There is no contribution by body corporates." is not a contributor
+    }
+
+    [Fact]
+    public void The_LLP_statement_of_accounts_gives_the_years_figures_with_partners_funds_as_net_worth()
+    {
+        var result = StandaloneFinancialDataParser.Parse(FinancialData(), 1, 1, null, out var facts);
+
+        Assert.Empty(result.Errors);
+        var fy25 = result.Items.Single(y => y.FinancialYear == 2025);
+        Assert.Equal((2.0m, 1.75m, 0.5m, 0.2m, 0.7m), (fy25.ShareCapital!.Value, fy25.NetWorth!.Value, fy25.LongTermBorrowings!.Value,
+            fy25.ShortTermBorrowings!.Value, fy25.TotalDebt!.Value));
+        Assert.Equal((0.3m, 0.6m, 1.87m, 0.15m), (fy25.TradePayables!.Value, fy25.TradeReceivables!.Value, fy25.CashAndBank!.Value, fy25.Inventory!.Value));
+        Assert.Equal((3.5m, 0.4m, 0.05m, 0.3m, 0.24m), (fy25.Revenue!.Value, fy25.Ebitda!.Value, fy25.FinanceCost!.Value, fy25.Pbt!.Value, fy25.Pat!.Value));
+        Assert.Equal(1.49m, result.Items.Single(y => y.FinancialYear == 2024).NetWorth);
+
+        Assert.Contains(facts, f => f.Label == "Reserves and Surplus" && f.FinancialYear == 2025 && f.NumericValue == -0.25m && f.Section == FinancialStatementSection.BalanceSheet);
+        Assert.Contains(facts, f => f.Label == "Return on Partners' Fund (%)" && f.Section == FinancialStatementSection.Ratios);
+        Assert.DoesNotContain(facts, f => f.RawValue.Contains("SAMPLE AUDITOR") || f.Label is "Year" or "2025");   // the certifier block is not figures
+    }
+
+    /// <summary>Review of #546: a part not reported (a row missing, or "-") is never taken as zero. The figure it would make stays empty, with a
+    /// warning, instead of a confident total that may be wrong.</summary>
+    [Fact]
+    public void An_LLP_figure_with_a_part_not_reported_is_left_empty_and_says_so()
+    {
+        var sheet = Sheet("Financial Data",
+            Row("STATEMENT OF ASSETS AND LIABILITIES (Rs. Crore)", "", "31 Mar, 2025"),
+            Row("Contribution Received", "", 2.0),
+            Row("Reserves and Surplus", "", "-"),
+            Row("Secured Loans", "", 0.4),
+            Row("Short Term Borrowing", "", 0.2));
+
+        var result = StandaloneFinancialDataParser.Parse(sheet, 1, 1, null, out _);
+
+        var fy = Assert.Single(result.Items);
+        Assert.Equal((2.0m, (decimal?)null, (decimal?)null, 0.2m, (decimal?)null),
+            (fy.ShareCapital!.Value, fy.NetWorth, fy.LongTermBorrowings, fy.ShortTermBorrowings!.Value, fy.TotalDebt));
+        Assert.Equal(["NetWorth FY2025 is not derived: Reserves and Surplus is not reported on the LLP's statement.",
+                "LongTermBorrowings FY2025 is not derived: Unsecured Loans is not reported on the LLP's statement.",
+                "TotalDebt FY2025 is not derived: a long-term loan line is not reported on the LLP's statement."],
+            result.Warnings.Where(w => w.IssueCode == "LLP_FIGURE_INCOMPLETE").Select(w => w.Message));
+    }
+
+    [Fact]
+    public void A_company_statement_without_a_total_equity_line_is_never_given_an_LLPs_derived_net_worth()
+    {
+        var sheet = Sheet("Standalone Financial Data",
+            Row("BALANCE SHEET (Rs. Crore)", "", "Mar 2025"),
+            Row("Share Capital", "", 1.0),
+            Row("Reserves and Surplus", "", 4.0),
+            Row("Secured Loans", "", 2.0));
+        var fy = Assert.Single(StandaloneFinancialDataParser.Parse(sheet, 1, 1, null, out _).Items);
+        Assert.Equal((1.0m, (decimal?)null, (decimal?)null), (fy.ShareCapital!.Value, fy.NetWorth, fy.LongTermBorrowings));
+    }
+
+    [Fact]
+    public async Task An_LLP_ingests_its_contributors_partner_counts_and_statement_of_accounts()
+    {
+        await using var db = Ctx();
+        var (request, roc, _) = await SeedAsync(db, Llpin);
+        var reader = new FakeExcelSheetReader(new Dictionary<string, IReadOnlyList<SheetData>>
+        {
+            [roc.StoragePath] = [AboutTheLlp(), Directors(), Highlights(), Structure(), FinancialData()],
+        });
+
+        var run = await new IngestionOrchestrator(db, reader, NullLogger<IngestionOrchestrator>.Instance).RunAsync(request.RequestId, roc.DocumentId, chargeDocumentId: null);
+
+        Assert.NotEqual(IngestionRunStatus.Failed, run.Status);
+        await using var verify = Ctx();
+        Assert.Equal(["PARTNER ONE", "PARTNER TWO"], await verify.LlpContributions.Where(c => c.IngestionRunId == run.IngestionRunId).OrderBy(c => c.DisplayOrder).Select(c => c.Name).ToListAsync());
+        var structure = await verify.CompanyStructures.SingleAsync(s => s.IngestionRunId == run.IngestionRunId);
+        Assert.Equal((1, 3), (structure.LlpPartners!.Value, structure.LlpDesignatedPartners!.Value));
+        Assert.Equal(1.75m, (await verify.FinancialYearData.SingleAsync(f => f.IngestionRunId == run.IngestionRunId && f.FinancialYear == 2025)).NetWorth);
+        Assert.Equal(2.0m, (await verify.CompanyProfiles.SingleAsync(p => p.IngestionRunId == run.IngestionRunId)).LlpContributionReceivedCrore);
+        // The company structure parser never ran on it: no "no share holding summary" warning.
+        Assert.False(await verify.IngestionIssues.AnyAsync(i => i.IngestionRunId == run.IngestionRunId && i.IssueCode == "STRUCTURE_SUMMARY_EMPTY"));
+    }
 }

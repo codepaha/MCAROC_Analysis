@@ -10,7 +10,8 @@ public static class SheetAliases
     public static readonly string[] OtherDirectorships = ["Other Directorships"];
     public static readonly string[] DirectorShareholding = ["Director Shareholding"];
     public static readonly string[] MajorShareholding = ["Shareholding More Than 5%"];
-    public static readonly string[] StandaloneFinancialData = ["Standalone Financial Data"];
+    /// <summary>An LLP's export calls it "Financial Data": a statement of assets and liabilities and one of income and expenditure (#539).</summary>
+    public static readonly string[] StandaloneFinancialData = ["Standalone Financial Data", "Financial Data"];
     public static readonly string[] OpenChargesSequence = ["Open Charges Sequence"];
     public static readonly string[] SatisfiedChargesSequence = ["Satisfied Charges Sequence"];
     public static readonly string[] OpenChargesDetails = ["Open Charges in Details"];
