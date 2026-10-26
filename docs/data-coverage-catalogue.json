@@ -341,6 +341,135 @@
       "fields": [
         {"source": "Amount Payable/Receivable / Type Of Financial Dispute / Currency / Amount Under Default / Verdict / Court / Litigant(s) / Case No. / Date Of Default / Date Of Judgement", "entityField": "Direction / DisputeType / Currency / AmountUnderDefault / Verdict / Court / Litigants / CaseNumber / DateOfDefault / DateOfJudgement", "status": "live", "note": "A10/#52 — column layout from the VTION portfolio audit, not a real workbook (absent from COASTAL); synthetic-only test coverage. Separate register from Legal History, its own Litigation-tab section."}
       ]
+    },
+    {
+      "workbook": "RocReport (LLP)",
+      "sheet": "About the LLP",
+      "shape": "key-value, 41 rows (an LLP's About sheet)",
+      "parser": "CompanyProfileParser",
+      "entity": "CompanyProfile",
+      "portal_tab": "Corporate (as a company's About section until #539 PR 3 gives LLP wording)",
+      "dossier": "Cover + Snapshot",
+      "fields": [
+        {
+          "source": "Legal Name / LLPIN / PAN",
+          "entityField": "CompanyName / Llpin / Pan",
+          "status": "live",
+          "note": "#539 PR 1"
+        },
+        {
+          "gap": "G26",
+            "source": "Total Obligation of Contribution (Crore) / Total Contribution Received (Crore)",
+          "entityField": "CompanyProfile.LlpObligationOfContributionCrore / LlpContributionReceivedCrore",
+          "status": "parsed-not-shown",
+          "note": "#539 PR 2; an LLP's equivalent of authorised / paid-up capital; display in PR 3"
+        },
+        {
+          "source": "LLP Status",
+          "entityField": "CompanyStatus",
+          "status": "live",
+          "note": "#539 PR 1"
+        },
+        {
+          "source": "Registered / Business Address, Website, Email, Phone, About the LLP, Type of Entity, Date of Incorporation, Industry, Segment(s)",
+          "entityField": "as for a company (Phone keeps every number)",
+          "status": "live",
+          "note": "#539 PR 1"
+        },
+        {
+          "gap": "G26",
+            "source": "FYED for which Annual Report Filed / BROAD INDUSTRY CATEGORY",
+          "entityField": null,
+          "status": "not-parsed",
+          "note": "kept in Layer-0 SourceRow"
+        }
+      ]
+    },
+    {
+      "workbook": "RocReport (LLP)",
+      "sheet": "Structure (LLP)",
+      "shape": "three blocks: CONTRIBUTION BY PARTNERS, CONTRIBUTION BY BODY CORPORATES, SUMMARY OF DESIGNATED PARTNER(S) / PARTNER(S)",
+      "parser": "LlpStructureParser",
+      "entity": "LlpContribution + CompanyStructure",
+      "portal_tab": "not yet shown (#539 PR 3)",
+      "dossier": "not yet shown (#539 PR 3)",
+      "fields": [
+        {
+          "gap": "G26",
+            "source": "Partner: Name / Designation / Obligation of Contribution / Contribution Received",
+          "entityField": "LlpContribution (Kind = Partner)",
+          "status": "parsed-not-shown",
+          "note": "#539 PR 2"
+        },
+        {
+          "gap": "G26",
+            "source": "Body corporate: Name / Nominee Name / Obligation of Contribution / Contribution Received",
+          "entityField": "LlpContribution (Kind = BodyCorporate)",
+          "status": "parsed-not-shown",
+          "note": "#539 PR 2"
+        },
+        {
+          "gap": "G26",
+            "source": "Summary: Total row (partners; designated partners resident in India + others)",
+          "entityField": "CompanyStructure.LlpPartners / LlpDesignatedPartners",
+          "status": "parsed-not-shown",
+          "note": "#539 PR 2; the per-category rows stay in Layer-0 SourceRow"
+        }
+      ]
+    },
+    {
+      "workbook": "RocReport (LLP)",
+      "sheet": "Financial Data (LLP)",
+      "shape": "year-per-column grid: STATEMENT OF ASSETS AND LIABILITIES, STATEMENT OF INCOME AND EXPENDITURE (+ KEY SCHEDULE), RATIOS, CERTIFIER(s)",
+      "parser": "StandaloneFinancialDataParser",
+      "entity": "FinancialYearData (Standalone) + FinancialFact",
+      "portal_tab": "Financials (company wording until #539 PR 3)",
+      "dossier": "Financial Profile",
+      "fields": [
+        {
+          "source": "Contribution Received",
+          "entityField": "FinancialYearData.ShareCapital",
+          "status": "live",
+          "note": "#539 PR 2"
+        },
+        {
+          "source": "Partner's Funds (Contribution Received + Reserves and Surplus)",
+          "entityField": "FinancialYearData.NetWorth (derived)",
+          "status": "live",
+          "note": "#539 PR 2; no Total Equity line on an LLP's statement"
+        },
+        {
+          "source": "Secured Loans + Unsecured Loans / Short Term Borrowing",
+          "entityField": "LongTermBorrowings (derived) / ShortTermBorrowings; TotalDebt",
+          "status": "live",
+          "note": "#539 PR 2"
+        },
+        {
+          "source": "Creditor / Trade Payables - Advance from Customers / Debtors / Trade Receivables / Cash and Cash Equivalents / Inventories",
+          "entityField": "TradePayables / TradeReceivables / CashAndBank / Inventory",
+          "status": "live",
+          "note": "#539 PR 2"
+        },
+        {
+          "source": "Statement of Income and Expenditure (Net Revenue, EBITDA, Finance Costs, Profit Before Tax, Profit for the Period ...)",
+          "entityField": "Revenue / Ebitda / FinanceCost / Pbt / Pat (the company's labels)",
+          "status": "live",
+          "note": "#539 PR 2"
+        },
+        {
+          "source": "Every other line, the key schedule and the RATIOS block",
+          "entityField": "FinancialFact",
+          "status": "live",
+          "note": "#539 PR 2"
+        },
+        {
+          "gap": "G26",
+            "source": "CERTIFIER(s)",
+          "entityField": null,
+          "status": "not-parsed",
+          "note": "#539 PR 2 stops the figures there (never read as figures); the certifier identity is kept in Layer-0 SourceRow"
+        }
+      ]
     }
   ],
 
@@ -448,7 +577,14 @@
      "status": "DONE (#107)",
      "detail": "Found by render audit 2026-09-12: both are captured and drive the H1 (on-time rate) / H2 (late-remittance count) analytics metrics internally, but the Compliance → EPFO Contribution & Headcount History table shows only the derived PaymentStatus text — a reviewer can't verify an individual 'late' classification by eye without the actual due/paid dates.",
      "fix": "Add PaymentDate/PaymentDueDate columns to the Contribution & Headcount History table.",
-     "issue": "#107"}
+     "issue": "#107"},
+    {"id": "G26",
+     "title": "LLP export: partners' contributions and LLP figures parsed but not yet shown in LLP terms",
+     "severity": "medium",
+     "status": "OPEN (#539 PR 3)",
+     "detail": "An LLP's export (About the LLP, Structure, Financial Data) ingests since #539 PR 1-2, but the request page, dossier and chat still use company wording (capital, shareholders) and do not list partners' contributions, the partner counts or the contribution totals. FYED for which Annual Report Filed, BROAD INDUSTRY CATEGORY and the CERTIFIER(s) identity are not parsed (Layer-0 SourceRow only).",
+     "fix": "#539 PR 3: LLP wording on the request page, dossier and chat; show LlpContribution rows, CompanyStructure.LlpPartners / LlpDesignatedPartners and CompanyProfile.LlpObligationOfContributionCrore / LlpContributionReceivedCrore; hide company-only sections.",
+     "issue": "#539"}
   ],
 
   "benchmark_take_leave": {

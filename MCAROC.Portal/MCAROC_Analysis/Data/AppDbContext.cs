@@ -48,6 +48,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     // Phase 6
     public DbSet<CompanyStructure> CompanyStructures => Set<CompanyStructure>();
     public DbSet<ShareholdingPatternRow> ShareholdingPatternRows => Set<ShareholdingPatternRow>();
+    public DbSet<LlpContribution> LlpContributions => Set<LlpContribution>();
     public DbSet<CompanyNameHistory> CompanyNameHistories => Set<CompanyNameHistory>();
     public DbSet<PrincipalBusinessActivity> PrincipalBusinessActivities => Set<PrincipalBusinessActivity>();
     public DbSet<RelatedCorporate> RelatedCorporates => Set<RelatedCorporate>();
@@ -861,6 +862,16 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.CategoryGroup).HasMaxLength(200);
             e.Property(x => x.EquityPercent).HasPrecision(9, 4);
             e.Property(x => x.PreferencePercent).HasPrecision(9, 4);
+        });
+
+        modelBuilder.Entity<LlpContribution>(e =>
+        {
+            e.HasKey(x => x.LlpContributionId);
+            e.HasIndex(x => new { x.RequestId, x.IngestionRunId });
+            e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Name).HasMaxLength(400);
+            e.Property(x => x.Designation).HasMaxLength(100);
+            e.Property(x => x.NomineeName).HasMaxLength(400);
         });
 
         modelBuilder.Entity<CompanyNameHistory>(e =>

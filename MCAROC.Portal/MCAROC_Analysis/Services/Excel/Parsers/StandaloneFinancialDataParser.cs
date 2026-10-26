@@ -9,7 +9,11 @@ namespace MCAROC_Analysis.Services.Excel.Parsers;
 /// inspection). Cash Flow does NOT — the sample data shows it reporting only the most recent N years,
 /// left-packed into columns 2..(2+N-1) rather than aligned to the full year list, which we detected by
 /// comparing its values against the P&amp;L section's matching row. We map its columns to the last N years
-/// of the master year list and log a warning noting that assumption, rather than silently guessing.</summary>
+/// of the master year list and log a warning noting that assumption, rather than silently guessing.
+/// <para>An LLP's "Financial Data" (#539) has the same grid: STATEMENT OF ASSETS AND LIABILITIES in place of the balance sheet and STATEMENT OF
+/// INCOME AND EXPENDITURE in place of the P&amp;L, whose lines are the company's. Its balance sheet is the partners': Contribution Received
+/// (→ <see cref="FinancialYearData.ShareCapital"/>) plus Reserves and Surplus is the net worth, Secured plus Unsecured Loans the long-term
+/// borrowings. Its tail block is CERTIFIER(s), the per-year certifier table (like a company's AUDITOR(s)), never figures.</para></summary>
 public static class StandaloneFinancialDataParser
 {
     private const string ParserName = nameof(StandaloneFinancialDataParser);
@@ -33,7 +37,17 @@ public static class StandaloneFinancialDataParser
         ["Finance Costs"] = nameof(FinancialYearData.FinanceCost),
         ["Profit Before Tax"] = nameof(FinancialYearData.Pbt),
         ["Profit for the Period"] = nameof(FinancialYearData.Pat),
+        // An LLP's statement of assets and liabilities (#539).
+        ["Contribution Received"] = nameof(FinancialYearData.ShareCapital),
+        ["Short Term Borrowing"] = nameof(FinancialYearData.ShortTermBorrowings),
+        ["Creditor / Trade Payables - Advance from Customers"] = nameof(FinancialYearData.TradePayables),
+        ["Debtors / Trade Receivables"] = nameof(FinancialYearData.TradeReceivables),
+        ["Cash and Cash Equivalents"] = nameof(FinancialYearData.CashAndBank),
     };
+
+    /// <summary>The block that ends the year-column data: a company's AUDITOR(s) or an LLP's CERTIFIER(s), both per-year identity tables.</summary>
+    private static bool IsIdentityBlock(string label) =>
+        label.StartsWith("AUDITOR", StringComparison.OrdinalIgnoreCase) || label.StartsWith("CERTIFIER", StringComparison.OrdinalIgnoreCase);
 
     private static readonly Dictionary<string, string> CashFlowRowToProperty = new()
     {
@@ -65,11 +79,12 @@ public static class StandaloneFinancialDataParser
         var targetCatalogSink = targetCatalog;
         var factSink = facts;
 
-        var headerRowIndex = FindRowIndex(sheet, r => Label(r)?.StartsWith("BALANCE SHEET", StringComparison.OrdinalIgnoreCase) == true);
+        var headerRowIndex = FindRowIndex(sheet, r => Label(r) is { } l
+            && (l.StartsWith("BALANCE SHEET", StringComparison.OrdinalIgnoreCase) || l.StartsWith("STATEMENT OF ASSETS AND LIABILITIES", StringComparison.OrdinalIgnoreCase)));
         if (headerRowIndex is null)
         {
             result.AddError(new ParseIssue(IssueSeverity.Error, ParserName, null, null,
-                "MISSING_HEADER", "Could not find 'BALANCE SHEET' header row in Standalone Financial Data"));
+                "MISSING_HEADER", $"Could not find the 'BALANCE SHEET' (or an LLP's 'STATEMENT OF ASSETS AND LIABILITIES') header row in {sheet.Name}"));
             return result;
         }
 
@@ -166,7 +181,7 @@ public static class StandaloneFinancialDataParser
                 break; // switch to the cash-flow handling loop below
 
             if (label.StartsWith("RATIOS", StringComparison.OrdinalIgnoreCase)
-                || label.StartsWith("AUDITOR", StringComparison.OrdinalIgnoreCase))
+                || IsIdentityBlock(label))
                 break; // handled by their own dedicated loops below — not more year-column data for
                        // this loop's mapping (the AUDITOR(s) block in particular is a differently-shaped
                        // per-auditor table, not year-per-column; applying this loop's year mapping to it
@@ -174,7 +189,8 @@ public static class StandaloneFinancialDataParser
 
             if (label.Contains("PROFIT & LOSS", StringComparison.OrdinalIgnoreCase)
                 || label.Contains("PROFIT AND LOSS", StringComparison.OrdinalIgnoreCase)
-                || label.Contains("STATEMENT OF PROFIT", StringComparison.OrdinalIgnoreCase))
+                || label.Contains("STATEMENT OF PROFIT", StringComparison.OrdinalIgnoreCase)
+                || label.Contains("STATEMENT OF INCOME AND EXPENDITURE", StringComparison.OrdinalIgnoreCase))
             {
                 section = FinancialStatementSection.ProfitAndLoss; // section sub-header, not a line item
                 continue;
@@ -219,7 +235,7 @@ public static class StandaloneFinancialDataParser
                 {
                     var label = Label(sheet.Rows[r]);
                     if (label is null) continue;
-                    if (label.StartsWith("RATIOS", StringComparison.OrdinalIgnoreCase) || label.StartsWith("AUDITOR", StringComparison.OrdinalIgnoreCase))
+                    if (label.StartsWith("RATIOS", StringComparison.OrdinalIgnoreCase) || IsIdentityBlock(label))
                         break;
 
                     if (CashFlowRowToProperty.TryGetValue(label, out var property))
@@ -244,8 +260,25 @@ public static class StandaloneFinancialDataParser
             {
                 var label = Label(sheet.Rows[r]);
                 if (label is null) continue;
-                if (label.StartsWith("AUDITOR", StringComparison.OrdinalIgnoreCase)) break;
+                if (IsIdentityBlock(label)) break;
                 CaptureFacts(sheet.Rows[r], label, years, FinancialStatementSection.Ratios, r, columnOffset: 2, yearInferred: false);
+            }
+        }
+
+        // An LLP's statement has no "Total Equity" or long-term borrowings line: its partners' funds are the contribution received plus
+        // reserves and surplus, and its long-term borrowings the secured plus unsecured loans (#539). Only for an LLP's statement: a company's
+        // figures are never derived this way.
+        if (Label(headerRow)?.StartsWith("STATEMENT OF ASSETS AND LIABILITIES", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            decimal? Fact(int year, string label) =>
+                factSink.FirstOrDefault(f => f.FinancialYear == year && f.Section == FinancialStatementSection.BalanceSheet && f.Label == label)?.NumericValue;
+            foreach (var e in byYear.Values)
+            {
+                if (e.NetWorth is null && e.ShareCapital is { } contribution)
+                    e.NetWorth = contribution + (Fact(e.FinancialYear, "Reserves and Surplus") ?? 0m);
+                var (secured, unsecured) = (Fact(e.FinancialYear, "Secured Loans"), Fact(e.FinancialYear, "Unsecured Loans"));
+                if (e.LongTermBorrowings is null && (secured is not null || unsecured is not null))
+                    e.LongTermBorrowings = (secured ?? 0m) + (unsecured ?? 0m);
             }
         }
 

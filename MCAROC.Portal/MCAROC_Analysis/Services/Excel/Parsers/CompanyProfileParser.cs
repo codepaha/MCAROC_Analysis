@@ -8,8 +8,7 @@ namespace MCAROC_Analysis.Services.Excel.Parsers;
 /// special: the first address sits on the "Email" row, further addresses on their own label-less rows,
 /// and a "* Our attempt to reach this email was not successful." footnote marks the "*"-suffixed one. The Phone block runs on the same way.
 /// <para>An LLP's export (#539) has the same sheet as "About the LLP": "LLPIN" for "CIN", "LLP Status" for "Company Status", and its narrative
-/// under "About the LLP". Its "Total Obligation of Contribution" and "Total Contribution Received" rows stay in the verbatim source rows until
-/// the LLP figures have their own fields (#539 PR 2).</para></summary>
+/// under "About the LLP", and its "Total Obligation of Contribution" and "Total Contribution Received" in place of a company's capital.</para></summary>
 public static class CompanyProfileParser
 {
     private const string ParserName = nameof(CompanyProfileParser);
@@ -158,6 +157,12 @@ public static class CompanyProfileParser
                     break;
                 case "Paid Up Capital (Crore)":
                     if (AmountNormalizer.TryParse(value, out var paidCap, out _)) profile.PaidUpCapital = paidCap;
+                    break;
+                case "Total Obligation of Contribution (Crore)":
+                    if (AmountNormalizer.TryParse(value, out var obligation, out _)) profile.LlpObligationOfContributionCrore = obligation;
+                    break;
+                case "Total Contribution Received (Crore)":
+                    if (AmountNormalizer.TryParse(value, out var received, out _)) profile.LlpContributionReceivedCrore = received;
                     break;
                 case "Sum of Charges (Crore)":
                     if (AmountNormalizer.TryParse(value, out var soc, out _)) profile.McaSumOfChargesCrore = soc;

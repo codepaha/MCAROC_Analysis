@@ -368,7 +368,16 @@ public class IngestionOrchestrator(AppDbContext db, IExcelSheetReader sheetReade
 
         // ── Phase 6 domain sheets ──
         var structureSheet = rocSheets.Find(SheetAliases.Structure);
-        if (structureSheet is not null)
+        if (structureSheet is not null && LlpStructureParser.IsLlpStructure(structureSheet))
+        {
+            // An LLP's Structure sheet holds its partners' contributions, not a shareholding (#539).
+            var r = LlpStructureParser.Parse(structureSheet, requestId, runId, rocDocumentId, out var contributions);
+            db.CompanyStructures.AddRange(r.Items);
+            db.LlpContributions.AddRange(contributions);
+            itemCount += contributions.Count;
+            Collect(r, issues, ref itemCount);
+        }
+        else if (structureSheet is not null)
         {
             var r = StructureParser.Parse(structureSheet, requestId, runId, rocDocumentId, out var patternRows);
             db.CompanyStructures.AddRange(r.Items);
