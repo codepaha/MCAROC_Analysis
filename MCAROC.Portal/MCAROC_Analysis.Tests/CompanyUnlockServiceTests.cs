@@ -210,6 +210,33 @@ public sealed class CompanyUnlockServiceTests : IAsyncLifetime
         Assert.Equal(1, tool.Count("addAsset"));
     }
 
+    /// <summary>E2E round 2026-10-25: the approver's request was cancelled while the unlock was in flight, and the
+    /// cancellation reached the paid call, leaving it unverified and the company's unlock blocked for half an hour.
+    /// Once admitted, the attempt must finish — the paid call answers, the unlock is verified and recorded — whatever
+    /// happens to the caller.</summary>
+    [Fact]
+    public async Task Cancelling_the_caller_mid_unlock_still_finishes_and_verifies_the_paid_call()
+    {
+        var tool = LockedTool();
+        tool.AddAssetDelay = TimeSpan.FromSeconds(1);   // honours the token it is given
+        var sp = Services(tool);
+        var (requestId, _) = await SeedJobAsync();
+        await ApproveAsync(sp, requestId);
+
+        using var caller = new CancellationTokenSource();
+        var execution = Task.Run(() => InScope(sp, s => s.GetRequiredService<CompanyUnlockService>().ExecuteAsync(_cin, Bid, requestId, caller.Token)));
+        await tool.AddAssetEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        caller.Cancel();
+        var result = await execution;
+
+        Assert.Equal(UnlockOutcome.Unlocked, result.Outcome);
+        Assert.Equal(1, tool.Count("addAsset"));
+        await using var db = CreateContext();
+        var admission = await db.PaidCallAdmissions.AsNoTracking().SingleAsync(a => a.Kind == PaidCallKind.ReferenceUnlock && a.RequestId == requestId);
+        Assert.Equal(PaidCallAdmissionState.Committed, admission.State);
+        Assert.Null(await db.SpendScopes.AsNoTracking().Where(x => x.ScopeKey == "unlock|" + _cin).Select(x => x.ActiveAdmissionId).SingleAsync());
+    }
+
     /// <summary>An outcome that can't be confirmed after the paid call (the verification call fails) must still
     /// retire every open approval — including any that pre-dated the attempt.</summary>
     [Fact]
