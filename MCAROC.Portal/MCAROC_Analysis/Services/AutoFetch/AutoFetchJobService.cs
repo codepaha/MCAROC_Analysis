@@ -535,7 +535,9 @@ public sealed class AutoFetchJobService(
                 var hits = await client.SearchCompaniesAsync(job.Cin, 5, ct);
                 match = hits.FirstOrDefault(h => string.Equals(h.Cin, job.Cin, StringComparison.OrdinalIgnoreCase));
             }
-            catch (ReferenceToolException ex)
+            // Any failure of the search (the tool's error, a network failure, a timeout) still tries the preview (review of #543); only the job's
+            // own cancellation stops it.
+            catch (Exception ex) when (ex is ReferenceToolException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
             {
                 logger.LogWarning(ex, "Company-name search for {Cin} failed; trying the preview", job.Cin);
             }

@@ -55,7 +55,7 @@ public sealed class ReferenceToolReplayTests : IAsyncLifetime
         await db.CompanyReportLifecycles.Where(l => _identifiers.Contains(l.Identifier)).ExecuteDeleteAsync();
     }
 
-    private static ServiceProvider Services(FixtureReferenceTool tool, FakeTime time) =>
+    private static ServiceProvider Services(HttpMessageHandler tool, FakeTime time) =>
         FakeReferenceTool.BuildServices(tool, time, new AutoFetchQueue(), extra: services => services.AddScoped(sp => new AutoFetchJobService(
             sp.GetRequiredService<AppDbContext>(), FakeReferenceTool.NewClient(tool), FakeReferenceTool.Options(), new FileValidationService(new ExcelSheetReader()),
             null!, new AnalysisQueue(), new FilingProcessingQueue(), null!, new FakeEnv(Path.GetTempPath()), NullLogger<AutoFetchJobService>.Instance,
@@ -232,6 +232,29 @@ public sealed class ReferenceToolReplayTests : IAsyncLifetime
         Assert.Equal(0, tool.Count("addAsset"));
         await using var read = CreateContext();
         Assert.Equal("TATA CONSULTANCY SERVICES LIMITED", await read.Requests.Where(r => r.RequestId == job.RequestId).Select(r => r.CompanyName).SingleAsync());
+    }
+
+    /// <summary>Review of #543: a name search that fails on the network (a dropped connection, a timeout) still falls back to the preview.</summary>
+    [Fact]
+    public async Task A_name_search_that_fails_on_the_network_still_names_the_request_from_the_preview()
+    {
+        var tool = new FixtureReferenceTool("locked-unlock-tcs-20260922");
+        var sp = Services(new SearchFailsOnTheNetwork(tool), new FakeTime(new DateTimeOffset(2026, 9, 22, 4, 10, 0, TimeSpan.Zero)));
+
+        var job = await ProcessNewJobAsync(sp, TcsCin, EntityType.Company, companyName: TcsCin);
+
+        Assert.Equal(AutoFetchJobStatus.WaitingForUnlock, job.Status);
+        await using var read = CreateContext();
+        Assert.Equal("TATA CONSULTANCY SERVICES LIMITED", await read.Requests.Where(r => r.RequestId == job.RequestId).Select(r => r.CompanyName).SingleAsync());
+    }
+
+    /// <summary>The recorded scenario, except that the company-name search never gets an answer.</summary>
+    private sealed class SearchFailsOnTheNetwork(HttpMessageHandler inner) : DelegatingHandler(inner)
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            request.RequestUri!.AbsolutePath.Contains("/search/", StringComparison.Ordinal)
+                ? throw new HttpRequestException("The connection was reset.")
+                : base.SendAsync(request, ct);
     }
 
     /// <summary>Profile 10 (#515): a large company with 1,354 documents across 4 sections.
