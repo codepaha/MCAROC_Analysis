@@ -66,17 +66,21 @@ public static partial class ChargeLitigationLinker
         "DEBTS RECOVERY TRIBUNAL", "RECOVERY SUIT", "SUIT FOR RECOVERY", "RECOVERY", "INSOLVENCY", "BANKRUPTCY"
     ];
 
+    /// <param name="companyNames">The company's registered and former names: a lender's case counts only when the company is the respondent
+    /// and the lender is on the other side. Without them no lender link is made (never a guess).</param>
     public static ChargeLitigationSummary Build(
         IReadOnlyList<RocCharge> openCharges,
         IReadOnlyList<LitigationCase> cases,
-        IReadOnlyDictionary<long, LitigationOrderDocument> docsByOrderId)
+        IReadOnlyDictionary<long, LitigationOrderDocument> docsByOrderId,
+        IReadOnlyCollection<string> companyNames)
     {
         var links = new List<ChargeLitigationLink>();
         if (openCharges.Count == 0)
             return new ChargeLitigationSummary([], cases.Count, 0, 0, cases.Any(LitigationOrderAddressMatcher.IsNcltCase));
 
-        links.AddRange(ImmovableAddressLinks(openCharges, cases, docsByOrderId));
-        links.AddRange(LenderRecoveryLinks(openCharges, cases));
+        // No "order names the charged property" link from word matching (#554): any number plus any word made a "strong" match (426 false links
+        // on Godrej, none real). The properties each order names are read and compared with the charged properties field by field (#554 PR 3).
+        links.AddRange(LenderRecoveryLinks(openCharges, cases, companyNames));
         var identifiersByCharge = IdentifiersByCharge(openCharges);
         links.AddRange(MovableIdentifierLinks(openCharges, identifiersByCharge, cases, docsByOrderId));
 
@@ -163,64 +167,15 @@ public static partial class ChargeLitigationLinker
         }
     }
 
-    // ── Signal: charged immovable property named in an order ──────────────────────────────────────────────
-    private static IEnumerable<ChargeLitigationLink> ImmovableAddressLinks(
-        IReadOnlyList<RocCharge> charges, IReadOnlyList<LitigationCase> cases, IReadOnlyDictionary<long, LitigationOrderDocument> docs)
-    {
-        // Charged property only: no company premises, which the case card already reports separately.
-        var pool = LitigationOrderAddressMatcher.BuildAddressPool(null, null, WithoutMovableIdentifiers(charges));
-        if (pool.Count == 0 || cases.Count == 0) yield break;
-
-        var caseByOrder = new Dictionary<long, LitigationCase>();
-        foreach (var c in cases) foreach (var o in c.Orders) caseByOrder[o.LitigationCaseOrderId] = c;
-
-        var strong = LitigationOrderAddressMatcher.MatchCasesStrongOnly(pool, cases, docs)
-            .Where(m => m.RocChargeId is not null && caseByOrder.ContainsKey(m.LitigationCaseOrderId))
-            .GroupBy(m => (ChargeId: m.RocChargeId!.Value, Case: caseByOrder[m.LitigationCaseOrderId].LitigationCaseId));
-
-        foreach (var g in strong)
-        {
-            var first = g.OrderBy(m => m.PageNumber).First();
-            var c = caseByOrder[first.LitigationCaseOrderId];
-            var detail = string.Join(", ", first.MatchedPlotNumbers.Concat(first.MatchedLocalities).Append(first.MatchedPinCode ?? "").Where(s => !string.IsNullOrWhiteSpace(s)));
-            var more = g.Count() > 1 ? $" (also on {g.Count() - 1} more page(s)/order(s))" : "";
-            yield return new ChargeLitigationLink(
-                first.RocChargeId!.Value, first.RocChargeNumber, first.ChargeHolder, ChargeLitigationSignal.ImmovableAddress,
-                ToLinked(c),
-                $"The order{(string.IsNullOrWhiteSpace(first.OrderDate) ? "" : $" dated {first.OrderDate}")} names the property charged under {first.RocChargeNumber} ({detail}){more}.",
-                first.LitigationCaseOrderId, first.PageNumber, first.Excerpt,
-                $"{first.OrderType ?? "Order"} {first.OrderDate}".Trim());
-        }
-    }
-
-    /// <summary>A charge can name a vehicle and a plot in one clause. The address matcher counts any token with a
-    /// digit as a plot/survey number, so a registration such as MH12AB1234 would make an order that merely mentions
-    /// the vehicle look like a property match. The identifiers are blanked out of the text the address matcher sees
-    /// (they are matched separately, as their own signal); only the fields it reads are copied.</summary>
-    private static List<RocCharge> WithoutMovableIdentifiers(IReadOnlyList<RocCharge> charges)
-    {
-        var masked = new List<RocCharge>(charges.Count);
-        foreach (var c in charges)
-        {
-            var ids = MovableIdentifierExtractor.Extract(c.Events.SelectMany(e => new[] { e.PropertyParticulars, e.ExtentAndOperation, e.InstrumentDescription, e.OtherTerms }).ToArray());
-            masked.Add(new RocCharge
-            {
-                ChargeId = c.ChargeId, RocChargeNumber = c.RocChargeNumber, LatestChargeHolderRaw = c.LatestChargeHolderRaw,
-                SatisfactionDate = c.SatisfactionDate,
-                Events = c.Events.Select(e => new RocChargeEvent
-                {
-                    ChargeEventId = e.ChargeEventId, PropertyType = e.PropertyType,
-                    PropertyParticulars = ids.Count == 0 ? e.PropertyParticulars : MovableIdentifierExtractor.Mask(e.PropertyParticulars, ids)
-                }).ToList()
-            });
-        }
-        return masked;
-    }
-
     // ── Signal: the lender is litigating a recovery-type case against the company ─────────────────────────
+    /// <summary>The charge's holder brings a recovery-type case against the company: the company is a respondent, and the holder is a petitioner
+    /// (a borrower or guarantor suing the bank, with the company a co-respondent, is not the lender enforcing; nor is the lender's case against
+    /// someone else).</summary>
     private static IEnumerable<ChargeLitigationLink> LenderRecoveryLinks(
-        IReadOnlyList<RocCharge> charges, IReadOnlyList<LitigationCase> cases)
+        IReadOnlyList<RocCharge> charges, IReadOnlyList<LitigationCase> cases, IReadOnlyCollection<string> companyNames)
     {
+        var companyCores = companyNames.Select(LitigationCompanySides.Core).Where(c => c.Length > 0).Distinct().ToList();
+        if (companyCores.Count == 0) yield break;
         var holders = charges
             .Select(c => (Charge: c, Norm: EntityCrossReferenceRules.NormalizeCompanyName(c.LatestChargeHolderRaw ?? "")))
             .Where(h => h.Norm.Length >= 4) // too short/generic to trust a substring match (same floor as LITIGATION_BY_EXISTING_CHARGE_HOLDER)
@@ -231,9 +186,10 @@ public static partial class ChargeLitigationLinker
         {
             var forum = RecoveryForum(c.Act, c.ProceedingType, c.CaseType, c.CaseClassification, c.Type, c.Court, c.CourtCategory, c.Bench);
             if (forum is null) continue;
-            var parties = Parties(c.PetitionersJson, c.RespondentsJson);
+            if (!RawParties(c.RespondentsJson).Any(r => LitigationCompanySides.IsCompany(r, companyCores))) continue;
+            var petitioners = Parties(c.PetitionersJson);
             foreach (var (charge, norm) in holders)
-                if (parties.Any(p => p.Contains(norm, StringComparison.Ordinal)))
+                if (petitioners.Any(p => p.Contains(norm, StringComparison.Ordinal)))
                     yield return LenderLink(charge, ToLinked(c) with { Forum = forum });
         }
     }
@@ -257,6 +213,13 @@ public static partial class ChargeLitigationLinker
             if (text.Contains(phrase, StringComparison.Ordinal))
                 return phrase is "INSOLVENCY" or "BANKRUPTCY" ? "Insolvency proceeding" : phrase is "SARFAESI" or "SECURITISATION" or "SECURITIZATION" ? "SARFAESI" : "Recovery proceeding";
         return null;
+    }
+
+    private static List<string> RawParties(string? partyJson)
+    {
+        if (string.IsNullOrWhiteSpace(partyJson)) return [];
+        try { return LitigationPartyNames.Parse(partyJson); }
+        catch (JsonException) { return []; }
     }
 
     private static List<string> Parties(params string?[] partyJsons)

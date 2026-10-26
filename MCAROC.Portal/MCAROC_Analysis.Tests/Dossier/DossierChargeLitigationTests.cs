@@ -144,8 +144,9 @@ public class DossierChargeLitigationTests : IAsyncLifetime
 
     // ── order text extracted AFTER the snapshot (review of #335) ──────────────────────────────────────────
 
-    private const string MortgageParticulars = "Equitable mortgage on the land and building at Plot No. A-36, Nilakantha Nagar, Nayapalli, Bhubaneswar, 751012";
-    private const string OrderNamingProperty = "--- Page 1 (native) ---\nIN THE HIGH COURT OF ORISSA\n\n--- Page 2 (native) ---\nThe property situated at Plot No. A-36, Nayapalli, Bhubaneswar is attached.";
+    // A vehicle under the charge named in the order: the link that still reads order text (#554 withdrew word-matched property links).
+    private const string MortgageParticulars = "Hypothecation of the truck Tata Prima bearing registration No. OD02AB1234";
+    private const string OrderNamingProperty = "--- Page 1 (native) ---\nIN THE HIGH COURT OF ORISSA\n\n--- Page 2 (native) ---\nThe truck bearing registration OD 02 AB 1234 is attached.";
 
     private sealed class TestEnv(string contentRoot) : Microsoft.AspNetCore.Hosting.IWebHostEnvironment
     {
@@ -163,7 +164,7 @@ public class DossierChargeLitigationTests : IAsyncLifetime
     {
         var (requestId, runId, _) = await DossierTestSeed.SeedAsync(db);
         var c1 = await db.RocCharges.Include(c => c.Events).FirstAsync(c => c.RequestId == requestId && c.RocChargeNumber == "C1");
-        foreach (var ev in c1.Events) { ev.PropertyType = "Immovable property"; ev.PropertyParticulars = MortgageParticulars; }
+        foreach (var ev in c1.Events) { ev.PropertyType = "Movable property (not being pledge)"; ev.PropertyParticulars = MortgageParticulars; }
 
         var when = DateTime.UtcNow.AddDays(-1);
         var job = new LitigationSearchJob { RequestId = requestId, KeywordsJson = "[]", Status = LitigationSearchJobStatus.Completed, CreatedUtc = when, CompletedUtc = when, RawResponseHash = "late-" + requestId };

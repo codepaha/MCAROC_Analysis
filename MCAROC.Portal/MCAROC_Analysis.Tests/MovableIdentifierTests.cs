@@ -127,7 +127,7 @@ public class ChargeLitigationMovableTests
         var charge = Charge(1, "CHG-7", "Hypothecation of vehicles: Toyota Innova MH12AB1234 and Tata Prima MH14CD5678");
         const string order = "--- Page 1 (native) ---\nIN THE HIGH COURT\n\n--- Page 2 (native) ---\nThe Bank seized the truck bearing registration MH 14 CD 5678 on 4th March.";
 
-        var summary = ChargeLitigationLinker.Build([charge], [Case(20, "CS 88/2021", 700)], Docs(700, order));
+        var summary = ChargeLitigationLinker.Build([charge], [Case(20, "CS 88/2021", 700)], Docs(700, order), ["Coastal Projects Limited"]);
 
         var link = Assert.Single(summary.Links);
         Assert.Equal(ChargeLitigationSignal.MovableIdentifier, link.Signal);
@@ -147,7 +147,7 @@ public class ChargeLitigationMovableTests
         var charge = Charge(1, "CHG-7", "Hypothecation of MH12AB1234 and MH14CD5678");
         const string order = "--- Page 1 (native) ---\nVehicles MH12AB1234 and MH14CD5678 were attached.";
 
-        var link = Assert.Single(ChargeLitigationLinker.Build([charge], [Case(20, "CS 88/2021", 700)], Docs(700, order)).Links);
+        var link = Assert.Single(ChargeLitigationLinker.Build([charge], [Case(20, "CS 88/2021", 700)], Docs(700, order), ["Coastal Projects Limited"]).Links);
 
         Assert.Contains("MH12AB1234", link.Explanation);
         Assert.Contains("MH14CD5678", link.Explanation);
@@ -159,7 +159,7 @@ public class ChargeLitigationMovableTests
         var charge = Charge(1, "CHG-7", "Hypothecation of vehicle MH12AB1234");
         const string order = "--- Page 1 (native) ---\nThe vehicle MH12AB9999 was released to its owner.";
 
-        var summary = ChargeLitigationLinker.Build([charge], [Case(20, "CS 88/2021", 700)], Docs(700, order));
+        var summary = ChargeLitigationLinker.Build([charge], [Case(20, "CS 88/2021", 700)], Docs(700, order), ["Coastal Projects Limited"]);
 
         Assert.False(summary.HasAny);
         Assert.Equal(1, summary.ChargesWithIdentifiers);
@@ -172,7 +172,7 @@ public class ChargeLitigationMovableTests
         var withVehicle = Charge(2, "CHG-2", "Hypothecation of MH12AB1234");
         var land = Charge(3, "CHG-3", "Mortgage on land at Plot No. 55, Rohini, Delhi, 110085", propertyType: "Immovable property", securityTypesJson: "[\"ImmovableProperty\"]");
 
-        var summary = ChargeLitigationLinker.Build([generic, withVehicle, land], [], new Dictionary<long, LitigationOrderDocument>());
+        var summary = ChargeLitigationLinker.Build([generic, withVehicle, land], [], new Dictionary<long, LitigationOrderDocument>(), ["Coastal Projects Limited"]);
 
         Assert.Equal(1, summary.ChargesWithIdentifiers);
         Assert.Equal(1, summary.MovableChargesWithoutIdentifiers);   // only CHG-1: CHG-2 has an identifier, CHG-3 is land
@@ -190,14 +190,14 @@ public class ChargeLitigationMovableTests
             [701] = new() { LitigationCaseOrderId = 701, ExtractedText = null, TextExtractionStatus = FilingDocumentProcessingStatus.Discovered }
         };
 
-        var summary = ChargeLitigationLinker.Build([charge], [nclt, noText], docs);
+        var summary = ChargeLitigationLinker.Build([charge], [nclt, noText], docs, ["Coastal Projects Limited"]);
 
         Assert.False(summary.HasAny);
         Assert.True(summary.NcltOrdersSkipped);
     }
 
     [Fact]
-    public void All_three_signals_can_coexist_on_one_charge()
+    public void Both_remaining_signals_coexist_on_one_charge_and_the_plot_is_not_word_matched()
     {
         var charge = Charge(1, "CHG-7", "Hypothecation of vehicle MH12AB1234; also equitable mortgage on land at Plot No. A-36, Nayapalli, Bhubaneswar, 751012",
             propertyType: "Immovable property, Movable property (not being pledge)");
@@ -206,20 +206,21 @@ public class ChargeLitigationMovableTests
         var recoveryCase = new LitigationCase
         {
             LitigationCaseId = 22, CaseNumber = "SA 3/2021", Court = "Debts Recovery Tribunal", Act = "SARFAESI", PetitionersJson = "[\"State Bank of India\"]",
-            Orders = []
+            RespondentsJson = "[\"Coastal Projects Limited\"]", Orders = []
         };
         var docs = new Dictionary<long, LitigationOrderDocument>(Docs(700, "--- Page 1 (native) ---\nThe land at Plot No. A-36, Nayapalli, Bhubaneswar is attached."))
         {
             [701] = new() { LitigationCaseOrderId = 701, ExtractedText = "--- Page 1 (native) ---\nThe vehicle MH12AB1234 is released.", TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted }
         };
 
-        var summary = ChargeLitigationLinker.Build([charge], [propertyCase, vehicleCase, recoveryCase], docs);
+        var summary = ChargeLitigationLinker.Build([charge], [propertyCase, vehicleCase, recoveryCase], docs, ["Coastal Projects Limited"]);
 
-        Assert.Equal(3, summary.Links.Count);
-        Assert.Equal(1, summary.CasesFor(ChargeLitigationSignal.ImmovableAddress));
+        // #554: the plot named in the order is no longer word-matched to the charge (that is read and compared field by field instead).
+        Assert.Equal(2, summary.Links.Count);
+        Assert.Equal(0, summary.CasesFor(ChargeLitigationSignal.ImmovableAddress));
         Assert.Equal(1, summary.CasesFor(ChargeLitigationSignal.MovableIdentifier));
         Assert.Equal(1, summary.CasesFor(ChargeLitigationSignal.LenderRecoveryCase));
-        Assert.Equal(2, summary.CasesNamingAssets);
+        Assert.Equal(1, summary.CasesNamingAssets);
     }
 
     [Fact]
@@ -236,7 +237,7 @@ public class ChargeLitigationMovableTests
             [701] = new() { LitigationCaseOrderId = 701, ExtractedText = "--- Page 1 (native) ---\nThe vehicle MH12AB1234 is released to its owner.", TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted }
         };
 
-        var summary = ChargeLitigationLinker.Build([charge], [vehicleOnly], docs);
+        var summary = ChargeLitigationLinker.Build([charge], [vehicleOnly], docs, ["Coastal Projects Limited"]);
 
         var link = Assert.Single(summary.Links);
         Assert.Equal(ChargeLitigationSignal.MovableIdentifier, link.Signal);

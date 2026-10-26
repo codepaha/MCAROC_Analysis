@@ -58,11 +58,10 @@ public sealed class LitigationCasePageService(
         var orderDocs = (await db.LitigationOrderDocuments.AsNoTracking().Where(d => orderIds.Contains(d.LitigationCaseOrderId)).ToListAsync(ct))
             .GroupBy(d => d.LitigationCaseOrderId).ToDictionary(g => g.Key, g => g.First());
 
+        // Order text is no longer word-matched to the company's premises or charged property (#554): any number and any word made a "match"
+        // (426 false links on one company). The properties each order names are read and compared field by field instead (#554 PR 3).
+        var propertyMatches = new Dictionary<long, List<LitigationPropertyMatchResult>>();
         var companyProfile = await db.CompanyProfiles.AsNoTracking().FirstOrDefaultAsync(p => p.RequestId == requestId, ct);
-        var establishments = await db.EpfoEstablishments.AsNoTracking().Where(e => e.RequestId == requestId).ToListAsync(ct);
-        var charges = await db.RocCharges.AsNoTracking().Where(c => c.RequestId == requestId && c.SatisfactionDate == null).Include(c => c.Events).ToListAsync(ct);
-        var propertyMatches = LitigationOrderAddressMatcher.MatchCases(LitigationOrderAddressMatcher.BuildAddressPool(companyProfile, establishments, charges), [theCase], orderDocs)
-            .GroupBy(m => m.LitigationCaseOrderId).ToDictionary(g => g.Key, g => g.ToList());
 
         var outcomes = await (outcomeQuery ?? new LitigationOrderOutcomeQuery(db)).FindAsync(requestId, Enum.GetValues<LitigationOrderOutcome>(), ct);
         var outcomeByOrder = outcomes.Matches.Where(m => orderIds.Contains(m.LitigationCaseOrderId)).GroupBy(m => m.LitigationCaseOrderId).ToDictionary(g => g.Key, g => g.First());

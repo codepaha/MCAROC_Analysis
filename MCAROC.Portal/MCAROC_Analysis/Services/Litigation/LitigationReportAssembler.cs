@@ -101,18 +101,17 @@ public class LitigationReportAssembler(
 
         var docByOrderId = docs.ToDictionary(d => d.LitigationCaseOrderId);
 
-        var companyProfile = await db.CompanyProfiles.AsNoTracking().FirstOrDefaultAsync(p => p.RequestId == requestId, ct);
-        var epfoEsts = await db.EpfoEstablishments.AsNoTracking().Where(e => e.RequestId == requestId).ToListAsync(ct);
         var charges = await db.RocCharges.AsNoTracking()
             .Where(c => c.RequestId == requestId && c.SatisfactionDate == null)
             .Include(c => c.Events)
             .ToListAsync(ct);
 
-        var addressPool = LitigationOrderAddressMatcher.BuildAddressPool(companyProfile, epfoEsts, charges);
-        var propertyMatches = LitigationOrderAddressMatcher.MatchCases(addressPool, cases, docByOrderId);
+        // Order text is no longer word-matched to the company's premises or charged property (#554): any number and any word made a "match"
+        // (426 false links on one company). The properties each order names are read and compared field by field instead (#554 PR 3).
+        var propertyMatches = new List<LitigationPropertyMatchResult>();
 
         // Cases that touch what the open charges secure (charged property, named assets, a lender's recovery case).
-        var chargeLinks = ChargeLitigationLinker.Build(charges, cases, docByOrderId);
+        var chargeLinks = ChargeLitigationLinker.Build(charges, cases, docByOrderId, await ChargeLitigationService.CompanyNamesAsync(db, requestId, ct));
         var propertyMatchesByOrderId = propertyMatches
             .GroupBy(m => m.LitigationCaseOrderId)
             .ToDictionary(g => g.Key, g => g.ToList());
