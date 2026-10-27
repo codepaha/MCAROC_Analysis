@@ -71,6 +71,11 @@ public sealed class LitigationCasePageService(
         // Order text is no longer word-matched to the company's premises or charged property (#554): any number and any word made a "match"
         // (426 false links on one company). The properties each order names are read and compared field by field instead (#554 PR 3).
         var propertyMatches = new Dictionary<long, List<LitigationPropertyMatchResult>>();
+        // Each property against the open charges (#554): the charged asset itself, a unit of a charged project, or not under an open charge.
+        var openCharges = await ChargeLitigationService.OpenChargesAsync(db, requestId, request.LatestCompletedIngestionRunId, ct);
+        var chargedProperties = MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyChargeMatcher.ChargedProperties(openCharges,
+            await MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionService.LoadCompletedAsync(db, openCharges.SelectMany(c => c.Events), ct));
+        orderProperties = orderProperties.WithTies(chargedProperties, await ChargeLitigationService.CompanyNamesAsync(db, requestId, ct));
         var companyProfile = await db.CompanyProfiles.AsNoTracking().FirstOrDefaultAsync(p => p.RequestId == requestId, ct);
 
         var outcomes = await (outcomeQuery ?? new LitigationOrderOutcomeQuery(db)).FindAsync(requestId, Enum.GetValues<LitigationOrderOutcome>(), ct);

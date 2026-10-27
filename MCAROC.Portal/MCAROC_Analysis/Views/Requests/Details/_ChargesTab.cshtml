@@ -19,7 +19,7 @@
     void LitigationBadges(RocCharge c)
     {
         var links = LitigationFor(c);
-        foreach (var signal in new[] { ChargeLitigationSignal.ImmovableAddress, ChargeLitigationSignal.MovableIdentifier, ChargeLitigationSignal.LenderRecoveryCase })
+        foreach (var signal in new[] { ChargeLitigationSignal.ImmovableAddress, ChargeLitigationSignal.MovableIdentifier, ChargeLitigationSignal.ChargedProject, ChargeLitigationSignal.LenderRecoveryCase })
         {
             var n = links.Where(l => l.Signal == signal).Select(l => l.CaseKey).Distinct().Count();
             if (n == 0) continue;
@@ -27,6 +27,7 @@
             {
                 ChargeLitigationSignal.ImmovableAddress => "A court order names the property charged under this charge. Open Details for the case and the matching text.",
                 ChargeLitigationSignal.MovableIdentifier => "A court order names a specific asset (vehicle, engine, chassis or serial number) listed in this charge's security. Open Details for the case and the matching text.",
+                ChargeLitigationSignal.ChargedProject => "A court order names another unit or part of a project or building this charge secures (for example a buyer's flat in a mortgaged project). Open Details.",
                 _ => "This charge's holder is a party in a recovery-type proceeding against the company (indirect). Open Details."
             };
             <span class="mca-badge @ChargeLitigationLabels.Severity(signal)" title="@title"><i class="bi @(signal == ChargeLitigationSignal.LenderRecoveryCase ? "bi-exclamation-triangle" : "bi-bank")"></i> @ChargeLitigationLabels.Badge(signal) (@n)</span>

@@ -65,7 +65,7 @@
                         @if (ViewData["ChargeLinks"] is IReadOnlyList<ChargeLitigationLink> links)
                         {
                             @foreach (var signal in links.Where(l => l.Case.LitigationCaseId == c.LitigationCaseId).Select(l => l.Signal).Distinct())
-                            { <span class="mca-badge @ChargeLitigationLabels.Severity(signal)">@(signal == ChargeLitigationSignal.ImmovableAddress ? "Touches charged property" : signal == ChargeLitigationSignal.MovableIdentifier ? "Names a charged asset" : "Charge holder's recovery case")</span> }
+                            { <span class="mca-badge @ChargeLitigationLabels.Severity(signal)">@ChargeLitigationLabels.CaseBadge(signal)</span> }
                         }
                     </td>
                     <td><span class="fw-semibold">@LitigationCasePresentation.Label(c.Institution)</span><small class="d-block text-muted">@Or(c.Court)</small></td>
