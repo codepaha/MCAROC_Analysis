@@ -12,6 +12,8 @@ public static class AiUsagePurposes
     public const string LitigationPortfolio = "LitigationPortfolio";
     public const string Copilot = "Copilot";
     public const string PropertyParticulars = "PropertyParticulars";
+    /// <summary>Reading the properties a court order names (#554).</summary>
+    public const string OrderProperties = "LitigationOrderProperties";
     public const string ChargesNarrative = "ChargesNarrative";
     public const string CrossSection = "CrossSectionAnalysis";
     public const string CalculationAudit = "CalculationAudit";

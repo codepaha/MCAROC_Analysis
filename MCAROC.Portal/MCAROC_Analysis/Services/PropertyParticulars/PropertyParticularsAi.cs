@@ -133,78 +133,87 @@ public static partial class PropertyParticularsAi
             var clause = whole.Slice(span);
             var own = new Grounding(clause);
 
-            string? Words(Grounding g, string? value, string field)
-            {
-                if (string.IsNullOrWhiteSpace(value)) return null;
-                var trimmed = Whitespace().Replace(value.Trim(), " ");
-                if (g.ContainsWords(trimmed)) return trimmed;
-                rejected.Add($"{at}.{field}: '{trimmed}' not in {(ReferenceEquals(g, own) ? "this property's clause" : "source")}");
-                return null;
-            }
-
-            var areas = new List<AiArea>();
-            foreach (var a in p.Areas ?? [])
-            {
-                if (!TryName<AiAreaUnit>(a.Unit, out var unit) || a.Value <= 0 || !own.ContainsArea(a.Value, unit))
-                {
-                    rejected.Add($"{at}.areas: {a.Value} {a.Unit} is not stated in this property's clause with that unit");
-                    continue;
-                }
-                var basis = TryName<AreaBasis>(a.Basis, out var b) ? b : AreaBasis.Unspecified;
-                AiAreaUnit? eqUnit = null;
-                decimal? eqValue = null;
-                if (a.EquivalentValue is { } ev && TryName<AiAreaUnit>(a.EquivalentUnit, out var eu))
-                {
-                    if (ev > 0 && eu != unit && own.ContainsArea(ev, eu)) { eqValue = ev; eqUnit = eu; }
-                    else rejected.Add($"{at}.areas: equivalent {ev} {a.EquivalentUnit} is not stated in this property's clause with that unit");
-                }
-                areas.Add(new AiArea(a.Value, unit, basis, eqValue, eqUnit));
-            }
-
-            int? parking = null;
-            if (p.ParkingSpaces is { } ps)
-            {
-                if (ps > 0 && own.ContainsParkingCount(ps)) parking = ps;
-                else rejected.Add($"{at}.parkingSpaces: {ps} is not stated as a parking count in this property's clause");
-            }
-
-            var surveys = new List<SurveyNumberGroup>();
-            foreach (var g in p.SurveyNumbers ?? [])
-            {
-                var scheme = g.Scheme is { } sc && Schemes.FirstOrDefault(x => string.Equals(x, sc.Trim(), StringComparison.OrdinalIgnoreCase)) is { } known ? known : null;
-                var qualifier = g.Qualifier is { } q && (q.Equals("new", StringComparison.OrdinalIgnoreCase) || q.Equals("old", StringComparison.OrdinalIgnoreCase))
-                    ? char.ToUpperInvariant(q[0]) + q[1..].ToLowerInvariant() : null;
-                if (scheme is null) { rejected.Add($"{at}.surveyNumbers: unsupported scheme '{g.Scheme}'"); continue; }
-                var numbers = new List<string>();
-                foreach (var n in g.Numbers ?? [])
-                {
-                    var number = Grounding.NormalizeIdentifier(n);
-                    if (number.Length > 0 && own.ContainsIdentifier(scheme, number)) numbers.Add(number);
-                    else rejected.Add($"{at}.surveyNumbers: {scheme} '{n}' is not written in a {scheme} list (or a range it states) in this property's clause");
-                }
-                if (numbers.Count > 0) surveys.Add(new SurveyNumberGroup(scheme, qualifier, numbers.Distinct().ToList()));
-            }
-
-            var pin = p.Pin is { } pinText && PinFormat().IsMatch(pinText.Trim()) && whole.ContainsPin(pinText.Trim()) ? pinText.Trim() : null;
-            if (p.Pin is not null && pin is null) rejected.Add($"{at}.pin: '{p.Pin}' is not stated as a PIN in source");
-
-            string? unitNumber = null;
-            if (!string.IsNullOrWhiteSpace(p.UnitNumber))
-            {
-                if (own.ContainsWords(p.UnitNumber)) unitNumber = Whitespace().Replace(p.UnitNumber.Trim(), "").ToUpperInvariant();
-                else rejected.Add($"{at}.unitNumber: '{p.UnitNumber}' not in this property's clause");
-            }
-
-            properties.Add(new AiProperty(assetClass, kind, Words(whole, p.Owner, "owner"), unitNumber, Words(own, p.Floor, "floor"),
-                Words(whole, p.Building, "building"), Words(whole, p.Project, "project"), areas, parking, surveys,
-                (p.Localities ?? []).Select((l, j) => Words(whole, l, $"localities[{j}]")).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-                Words(whole, p.Village, "village"), Words(whole, p.Taluka, "taluka"), Words(whole, p.District, "district"),
-                Words(whole, p.City, "city"), Words(whole, p.State, "state"), pin,
-                clause));
+            properties.Add(BuildProperty(p, assetClass, kind, whole, own, clause, at, rejected));
         }
 
         if (properties.Count == 0) return new PropertyParticularsValidation(false, null, rejected, "No property survived validation.");
         return new PropertyParticularsValidation(true, new PropertyParticularsAiResult(properties), rejected, null);
+    }
+
+    /// <summary>The fields of one returned property, each kept only when grounded: identifiers, measurements and parking inside the
+    /// property's own clause (<paramref name="own"/>), names anywhere in <paramref name="whole"/>. Shared with the court-order
+    /// extraction (<see cref="OrderPropertiesAi"/>), so a property read from an order passes exactly the checks a charge's does.</summary>
+    internal static AiProperty BuildProperty(ResponseProperty p, PropertyAssetClass assetClass, PropertyKind kind,
+        Grounding whole, Grounding own, string clause, string at, List<string> rejected)
+    {
+        string? Words(Grounding g, string? value, string field)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            var trimmed = Whitespace().Replace(value.Trim(), " ");
+            if (g.ContainsWords(trimmed)) return trimmed;
+            rejected.Add($"{at}.{field}: '{trimmed}' not in {(ReferenceEquals(g, own) ? "this property's clause" : "source")}");
+            return null;
+        }
+
+        var areas = new List<AiArea>();
+        foreach (var a in p.Areas ?? [])
+        {
+            if (!TryName<AiAreaUnit>(a.Unit, out var unit) || a.Value <= 0 || !own.ContainsArea(a.Value, unit))
+            {
+                rejected.Add($"{at}.areas: {a.Value} {a.Unit} is not stated in this property's clause with that unit");
+                continue;
+            }
+            var basis = TryName<AreaBasis>(a.Basis, out var b) ? b : AreaBasis.Unspecified;
+            AiAreaUnit? eqUnit = null;
+            decimal? eqValue = null;
+            if (a.EquivalentValue is { } ev && TryName<AiAreaUnit>(a.EquivalentUnit, out var eu))
+            {
+                if (ev > 0 && eu != unit && own.ContainsArea(ev, eu)) { eqValue = ev; eqUnit = eu; }
+                else rejected.Add($"{at}.areas: equivalent {ev} {a.EquivalentUnit} is not stated in this property's clause with that unit");
+            }
+            areas.Add(new AiArea(a.Value, unit, basis, eqValue, eqUnit));
+        }
+
+        int? parking = null;
+        if (p.ParkingSpaces is { } ps)
+        {
+            if (ps > 0 && own.ContainsParkingCount(ps)) parking = ps;
+            else rejected.Add($"{at}.parkingSpaces: {ps} is not stated as a parking count in this property's clause");
+        }
+
+        var surveys = new List<SurveyNumberGroup>();
+        foreach (var g in p.SurveyNumbers ?? [])
+        {
+            var scheme = g.Scheme is { } sc && Schemes.FirstOrDefault(x => string.Equals(x, sc.Trim(), StringComparison.OrdinalIgnoreCase)) is { } known ? known : null;
+            var qualifier = g.Qualifier is { } q && (q.Equals("new", StringComparison.OrdinalIgnoreCase) || q.Equals("old", StringComparison.OrdinalIgnoreCase))
+                ? char.ToUpperInvariant(q[0]) + q[1..].ToLowerInvariant() : null;
+            if (scheme is null) { rejected.Add($"{at}.surveyNumbers: unsupported scheme '{g.Scheme}'"); continue; }
+            var numbers = new List<string>();
+            foreach (var n in g.Numbers ?? [])
+            {
+                var number = Grounding.NormalizeIdentifier(n);
+                if (number.Length > 0 && own.ContainsIdentifier(scheme, number)) numbers.Add(number);
+                else rejected.Add($"{at}.surveyNumbers: {scheme} '{n}' is not written in a {scheme} list (or a range it states) in this property's clause");
+            }
+            if (numbers.Count > 0) surveys.Add(new SurveyNumberGroup(scheme, qualifier, numbers.Distinct().ToList()));
+        }
+
+        var pin = p.Pin is { } pinText && PinFormat().IsMatch(pinText.Trim()) && whole.ContainsPin(pinText.Trim()) ? pinText.Trim() : null;
+        if (p.Pin is not null && pin is null) rejected.Add($"{at}.pin: '{p.Pin}' is not stated as a PIN in source");
+
+        string? unitNumber = null;
+        if (!string.IsNullOrWhiteSpace(p.UnitNumber))
+        {
+            if (own.ContainsWords(p.UnitNumber)) unitNumber = Whitespace().Replace(p.UnitNumber.Trim(), "").ToUpperInvariant();
+            else rejected.Add($"{at}.unitNumber: '{p.UnitNumber}' not in this property's clause");
+        }
+
+        return new AiProperty(assetClass, kind, Words(whole, p.Owner, "owner"), unitNumber, Words(own, p.Floor, "floor"),
+            Words(whole, p.Building, "building"), Words(whole, p.Project, "project"), areas, parking, surveys,
+            (p.Localities ?? []).Select((l, j) => Words(whole, l, $"localities[{j}]")).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            Words(whole, p.Village, "village"), Words(whole, p.Taluka, "taluka"), Words(whole, p.District, "district"),
+            Words(whole, p.City, "city"), Words(whole, p.State, "state"), pin,
+            clause);
     }
 
     public static string Serialize(PropertyParticularsAiResult result) => JsonSerializer.Serialize(result, JsonOptions);
@@ -221,7 +230,7 @@ public static partial class PropertyParticularsAi
     private static PropertyParticularsValidation Failed(string reason) => new(false, null, [], reason);
 
     /// <summary>Names only — a numeric string like "3" must not map to whatever member sits at that position.</summary>
-    private static bool TryName<T>(string? value, out T parsed) where T : struct, Enum
+    internal static bool TryName<T>(string? value, out T parsed) where T : struct, Enum
     {
         parsed = default;
         if (value is null) return false;
@@ -233,7 +242,7 @@ public static partial class PropertyParticularsAi
     /// checks run against it. Every check is aligned to word/number boundaries — a value can never be "found" by
     /// gluing the tail of one word to the head of the next, by borrowing a number from an unrelated field, or by
     /// matching a number while ignoring the unit it was stated in.</summary>
-    private sealed partial class Grounding
+    internal sealed partial class Grounding
     {
         private readonly string _text;
         private readonly string _lower;
@@ -380,7 +389,7 @@ public static partial class PropertyParticularsAi
         [GeneratedRegex(@"^\s*(?:nos?\.?\s*(?:of\s*)?)?(?:covered\s+|open\s+|stilt\s+)?(?:car\s*)?parking\b")] private static partial Regex ParkingAfter();
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -389,13 +398,13 @@ public static partial class PropertyParticularsAi
     };
 
     private sealed record Response(List<ResponseProperty>? Properties);
-    private sealed record ResponseProperty(
+    internal record ResponseProperty(
         string? SourceText, string? AssetClass, string? Kind, string? Owner, string? UnitNumber, string? Floor, string? Building, string? Project,
         List<ResponseArea>? Areas, int? ParkingSpaces, List<ResponseSurvey>? SurveyNumbers, List<string>? Localities,
         string? Village, string? Taluka, string? District, string? City, string? State, string? Pin);
-    private sealed record ResponseArea(decimal Value, string? Unit, string? Basis, decimal? EquivalentValue, string? EquivalentUnit);
-    private sealed record ResponseSurvey(string? Scheme, string? Qualifier, List<string>? Numbers);
+    internal sealed record ResponseArea(decimal Value, string? Unit, string? Basis, decimal? EquivalentValue, string? EquivalentUnit);
+    internal sealed record ResponseSurvey(string? Scheme, string? Qualifier, List<string>? Numbers);
 
-    [GeneratedRegex(@"\s+")] private static partial Regex Whitespace();
+    [GeneratedRegex(@"\s+")] internal static partial Regex Whitespace();
     [GeneratedRegex(@"^[1-9]\d{5}$")] private static partial Regex PinFormat();
 }

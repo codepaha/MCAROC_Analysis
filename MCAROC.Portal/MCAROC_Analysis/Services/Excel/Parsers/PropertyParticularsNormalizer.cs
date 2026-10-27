@@ -122,11 +122,17 @@ public static partial class PropertyParticularsNormalizer
     public static string Describe(SurveyNumberGroup g) =>
         $"{(g.Qualifier is null ? "" : g.Qualifier + " ")}{g.Scheme} {string.Join(", ", g.Numbers)}";
 
+    /// <summary>A value that already says what it is ("Padavu Village", "Dakshina Kannada District") is not labelled twice.</summary>
     public static string Describe(NormalizedLocation l) =>
         string.Join(", ", l.Localities
-            .Concat(new[] { l.Village is null ? null : $"Village {l.Village}", l.Taluka is null ? null : $"Taluka {l.Taluka}",
-                l.District is null ? null : $"{l.District} District", l.City, l.State, l.Pin }.OfType<string>())
+            .Concat(new[] { Labelled(l.Village, "Village", before: true), Labelled(l.Taluka, "Taluka", before: true),
+                Labelled(l.District, "District", before: false), l.City, l.State, l.Pin }.OfType<string>())
             .Distinct(StringComparer.OrdinalIgnoreCase));
+
+    private static string? Labelled(string? value, string label, bool before) =>
+        value is null ? null
+        : Regex.IsMatch(value, $@"\b{label}\b", RegexOptions.IgnoreCase) ? value
+        : before ? $"{label} {value}" : $"{value} {label}";
 
     // ── Kinds and asset class ──────────────────────────────────────────────────────────────────────────
 

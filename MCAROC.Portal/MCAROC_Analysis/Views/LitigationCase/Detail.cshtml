@@ -2,6 +2,7 @@
 @using MCAROC_Analysis.Data.Entities
 @using MCAROC_Analysis.Services.LitigationData
 @using MCAROC_Analysis.Services.LitigationModule.Freshness
+@using MCAROC_Analysis.Services.PropertyParticulars
 @model LitigationCasePage
 @{
     var returnUrl = Context.Request.Query["returnUrl"].ToString();
@@ -321,6 +322,53 @@
         </div>
         </div>
     </div>
+
+    <!-- Properties the orders name (#554) -->
+    @if (Model.OrderProperties is { } props && (props.HasAny || props.OrdersPending > 0))
+    {
+        <div class="card shadow-sm mb-3" id="case-properties">
+            <div class="card-header bg-light small fw-bold text-uppercase"><i class="bi bi-house-door me-1 text-primary"></i>Properties in this case
+                @if (props.Properties.Count > 0) { <span class="badge bg-secondary ms-1">@props.Properties.Count</span> }
+            </div>
+            <div class="card-body small">
+                @if (props.OrdersPending > 0)
+                {
+                    <div class="text-muted mb-2" id="case-properties-pending"><i class="bi bi-hourglass-split me-1"></i>@props.OrdersPending order@(props.OrdersPending == 1 ? " is" : "s are") still being read for the properties they name.</div>
+                }
+                @foreach (var p in props.Properties)
+                {
+                    var relation = OrderPropertyLabels.Relation(p.Relation);
+                    var issue = OrderPropertyLabels.Issue(p.Issue);
+                    <div class="pb-2 mb-2 border-bottom" data-case-property>
+                        <div>
+                            <span class="mca-badge @OrderPropertyLabels.RoleCss(p.Role)">@OrderPropertyLabels.Role(p.Role)@(issue is null ? "" : ": " + issue)</span>
+                            <strong>@p.Description</strong>@(relation is null ? "" : " — " + relation)
+                        </div>
+                        @foreach (var (mention, direction) in p.Directions)
+                        {
+                            <div class="mt-1"><span class="fw-semibold">@OrderPropertyLabels.Direction(direction.Kind):</span> &ldquo;@direction.Quote&rdquo;
+                                <a href="/Requests/@request.RequestId/Litigation/Orders/@mention.LitigationOrderDocumentId/download#page=@mention.Page">@Or(mention.OrderDate), p. @mention.Page</a></div>
+                        }
+                        <div class="text-muted mt-1">Named in
+                            @for (var i = 0; i < p.Mentions.Count; i++)
+                            {
+                                var m = p.Mentions[i];
+                                <a href="/Requests/@request.RequestId/Litigation/Orders/@m.LitigationOrderDocumentId/download#page=@m.Page" title="@m.Quote">@Or(m.OrderDate), p. @m.Page</a>@(i < p.Mentions.Count - 1 ? "; " : ".")
+                            }
+                        </div>
+                    </div>
+                }
+                @foreach (var u in props.Unidentified)
+                {
+                    <div class="pb-2 mb-2 border-bottom" data-case-property-unidentified>
+                        <span class="mca-badge @OrderPropertyLabels.RoleCss(u.Role)">@OrderPropertyLabels.Role(u.Role)</span>
+                        Property not described in the order: &ldquo;@u.Quote&rdquo;
+                        <a href="/Requests/@request.RequestId/Litigation/Orders/@u.LitigationOrderDocumentId/download#page=@u.Page">@Or(u.OrderDate), p. @u.Page</a>
+                    </div>
+                }
+            </div>
+        </div>
+    }
 
     <!-- Charges -->
     @if (Model.ChargeLinks.Count > 0)

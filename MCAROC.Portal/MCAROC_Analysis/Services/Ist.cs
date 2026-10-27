@@ -34,6 +34,14 @@ public static class Ist
     public static string Format(DateTimeOffset? instant, string format = "d MMM yyyy HH:mm", string whenNull = "—") =>
         instant is { } value ? Format(value, format) : whenNull;
 
+    /// <summary>The UTC instant today (in IST) began: the boundary daily limits count from.</summary>
+    public static DateTime StartOfTodayUtc(DateTime utc) =>
+        TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(FromUtc(utc).Date, DateTimeKind.Unspecified), Zone);
+
+    /// <summary>The UTC instant the next IST day begins.</summary>
+    public static DateTime NextMidnightUtc(DateTime utc) =>
+        TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(FromUtc(utc).Date.AddDays(1), DateTimeKind.Unspecified), Zone);
+
     /// <summary>The IST calendar date of an instant, e.g. "24 Sep 2026" — no label, since it is only a date.</summary>
     public static string Date(DateTime utc, string format = "d MMM yyyy") =>
         FromUtc(utc).ToString(format, CultureInfo.InvariantCulture);

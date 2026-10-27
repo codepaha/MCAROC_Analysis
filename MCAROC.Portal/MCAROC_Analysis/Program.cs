@@ -284,6 +284,11 @@ builder.Services.AddSingleton<MCAROC_Analysis.Services.PropertyParticulars.IProp
 });
 builder.Services.AddScoped<MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionService>();
 builder.Services.AddHostedService<MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionWorker>();
+// #554: the properties each court order names, read with the same Gemini client and grounded in the order's own pages.
+builder.Services.Configure<MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyReadingOptions>(
+    builder.Configuration.GetSection(MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyReadingOptions.SectionName));
+builder.Services.AddScoped<MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyReadingService>();
+builder.Services.AddHostedService<MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyReadingWorker>();
 // #364 part 2: property passages quoted from charge documents linked by #377 (deeds, instruments, scanned forms), grounded in the
 // document's own text. Shares the Gemini client above; skipped when disabled or when Vertex AI is not configured.
 builder.Services.Configure<MCAROC_Analysis.Services.PropertyParticulars.ChargeInstrumentExtractionOptions>(
