@@ -51,12 +51,13 @@ public sealed class NameVariationSearchWorker(IServiceScopeFactory scopes, ILogg
                 .Select(j => new { j.LitigationSearchJobId, j.Status, j.KeywordsJson }).FirstOrDefaultAsync(ct);
             if (job is null) continue;   // no search yet: the request's first search plans the variations itself
 
+            // Manual: the search was asked for by the person who added the names (the client refresh limits were checked then); it is bounded
+            // by StartPendingSearchAsync, which never buys the same keyword set again.
             if (job.Status is LitigationSearchJobStatus.Completed or LitigationSearchJobStatus.Failed
-                && (await NameVariationService.UnsearchedAsync(db, request, ct)).Count > 0)
+                && await services.GetRequiredService<NameVariationService>().StartPendingSearchAsync(requestId, ct) is { } search)
             {
-                var result = await services.GetRequiredService<NameVariationService>().StartSearchAsync(requestId, ct);
                 logger.LogInformation("Search with the added name variations for request {RequestId}: {Outcome}", requestId,
-                    result.Started ? "started" : result.Message);
+                    search.Started ? "started" : search.Message);
                 continue;
             }
 

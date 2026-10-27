@@ -8,7 +8,8 @@ using Microsoft.Extensions.Options;
 
 namespace MCAROC_Analysis.Services.LitigationData;
 
-public enum NameVariationAddStatus { Added, AlreadySearched, TooGeneric, Invalid }
+/// <summary><see cref="TooMany"/>: the search already carries the most names it can, so the variation would never be searched.</summary>
+public enum NameVariationAddStatus { Added, AlreadySearched, TooGeneric, Invalid, TooMany }
 
 /// <param name="Warning">Set for an added variation that may bring other companies' cases (a single distinctive word).</param>
 public sealed record NameVariationAddResult(string Name, NameVariationAddStatus Status, string Message, string? Warning = null);
@@ -83,6 +84,22 @@ public sealed class NameVariationService(
             foreach (var v in added) db.Entry(v).State = EntityState.Detached;
             return new([.. results.Select(r => r.Status == NameVariationAddStatus.Added ? r with { Status = NameVariationAddStatus.AlreadySearched, Message = "Just added by someone else.", Warning = null } : r)], null);
         }
+        // A variation the search cannot carry (it holds at most LitigationKeywordSuggester.MaxKeywords names) would never be searched, and a
+        // later pass would keep seeing it as unsearched: it is not kept.
+        var misfits = await NotInPlanAsync(request, added, ct);
+        if (misfits.Count > 0)
+        {
+            var ids = misfits.Select(v => v.CompanyNameVariationId).ToList();
+            await db.CompanyNameVariations.Where(v => ids.Contains(v.CompanyNameVariationId)).ExecuteDeleteAsync(ct);
+            added = added.Where(v => !ids.Contains(v.CompanyNameVariationId)).ToList();
+            var misfitNames = misfits.Select(v => v.Name).ToHashSet(StringComparer.Ordinal);
+            results = results.Select(r => r.Status == NameVariationAddStatus.Added && misfitNames.Contains(r.Name)
+                ? r with { Status = NameVariationAddStatus.TooMany, Warning = null,
+                    Message = $"The search already carries the most names it can ({LitigationKeywordSuggester.MaxKeywords}); remove a name variation first." }
+                : r).ToList();
+            if (added.Count == 0) return new(results, null);
+        }
+
         logger.LogInformation("{Actor} added name variation(s) {Names} for {Identifier} on request {RequestId}",
             actor, string.Join(", ", added.Select(v => v.Name)), identifier, requestId);
 
@@ -117,6 +134,36 @@ public sealed class NameVariationService(
 
     /// <summary>Re-runs the request's search with the full keyword set (registered, former and added names, and the generated forms): the case list
     /// shows one report, so a search for the new names alone would hide every other case. One paid search, recorded as a manual one.</summary>
+    /// <summary>The variations the request's search plan would leave out (none when the plan cannot be made: the search then fails anyway).</summary>
+    private async Task<List<CompanyNameVariation>> NotInPlanAsync(McaRequest request, IReadOnlyList<CompanyNameVariation> variations, CancellationToken ct)
+    {
+        var (plan, _) = await LitigationStartService.PlanSearchAsync(db, request, bprOptions?.Value ?? new BprLitigationOptions(), ct, suggester);
+        if (plan is null) return [];
+        var planned = plan.Keywords.Select(k => WholeNamePartyMatcher.Canonical(k.Value)).ToHashSet(StringComparer.Ordinal);
+        return variations.Where(v => !planned.Contains(v.NameKey)).ToList();
+    }
+
+    /// <summary>The search a pass of <see cref="NameVariationSearchWorker"/> runs for variations added while another search was running. It
+    /// starts only when the plan carries a variation the latest search did not and is not that search's keyword set again, so each variation
+    /// buys at most one search this way (the job stores its keywords when it is created, a failed search included) and an unchanged keyword
+    /// set is never bought twice. Null when there is nothing to search.</summary>
+    public async Task<LitigationStartResult?> StartPendingSearchAsync(long requestId, CancellationToken ct)
+    {
+        var request = await db.Requests.AsNoTracking().FirstOrDefaultAsync(r => r.RequestId == requestId, ct);
+        if (request is null) return null;
+        var unsearched = await UnsearchedAsync(db, request, ct);
+        if (unsearched.Count == 0) return null;
+        var (plan, _) = await LitigationStartService.PlanSearchAsync(db, request, bprOptions?.Value ?? new BprLitigationOptions(), ct, suggester);
+        if (plan is null) return null;
+        var planned = plan.Keywords.Select(k => WholeNamePartyMatcher.Canonical(k.Value)).ToHashSet(StringComparer.Ordinal);
+        if (!unsearched.Any(v => planned.Contains(v.NameKey))) return null;
+        var lastJson = await db.LitigationSearchJobs.AsNoTracking().Where(j => j.RequestId == requestId)
+            .OrderByDescending(j => j.LitigationSearchJobId).Select(j => j.KeywordsJson).FirstOrDefaultAsync(ct);
+        var last = LitigationKeyword.ParseJson(lastJson).Select(k => WholeNamePartyMatcher.Canonical(k.Value)).ToHashSet(StringComparer.Ordinal);
+        if (planned.SetEquals(last)) return null;
+        return await start.StartSearchAsync(request, plan.Keywords, plan.EntityType, plan.ApplicationCustomerId, PaidCallTrigger.Manual, ct);
+    }
+
     public async Task<LitigationStartResult> StartSearchAsync(long requestId, CancellationToken ct)
     {
         var request = await db.Requests.AsNoTracking().FirstOrDefaultAsync(r => r.RequestId == requestId, ct);

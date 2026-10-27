@@ -4,6 +4,7 @@ using MCAROC_Analysis.Services.LitigationData;
 using MCAROC_Analysis.Services.LitigationData.Attribution;
 using MCAROC_Analysis.Services.Pipeline;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -229,6 +230,91 @@ public sealed class NameVariationTests : IAsyncLifetime
 
         Assert.NotNull(outcome.Problem);
         Assert.Empty(outcome.Results);
+    }
+
+    // ── the keyword cap and the deferred search (review of #558) ────────────────────────────────────────
+
+    private static readonly string[] Brands =
+        ["Aster", "Bloom", "Cedar", "Dahlia", "Ember", "Fern", "Garnet", "Hazel", "Iris", "Jasmine", "Kestrel", "Lotus", "Maple", "Nectar", "Orchid",
+         "Pebble", "Quartz", "Rowan", "Saffron", "Tulip", "Umber", "Violet", "Willow"];
+
+    /// <summary>The planning path that caps a search at <see cref="LitigationKeywordSuggester.MaxKeywords"/> names. No model client is registered,
+    /// so no Hindi spellings are asked for: the cap is reached by the added names alone.</summary>
+    private static NameVariationService CappedService(AppDbContext db)
+    {
+        var admission = new PaidCallAdmissionService(db, new StaticOptionsMonitor(new PipelineOptions()), TimeProvider.System, NullLogger<PaidCallAdmissionService>.Instance);
+        var search = new LitigationSearchJobService(db, null!, new LitigationSearchQueue(), null!, null!, Options.Create(Bpr), NullLogger<LitigationSearchJobService>.Instance);
+        var analysis = new LitigationAiAnalysisOrchestrator(db, null!, new LitigationAiAnalysisQueue(), Options.Create(new LitigationAiAnalysisOptions()),
+            NullLogger<LitigationAiAnalysisOrchestrator>.Instance);
+        var suggester = new LitigationKeywordSuggester(
+            new CompanyNameSuggestionService(db, new ServiceCollection().BuildServiceProvider(), NullLogger<CompanyNameSuggestionService>.Instance),
+            Options.Create(new LitigationKeywordOptions { UseGeneratedKeywords = true }));
+        var start = new LitigationStartService(db, admission, search, new LitigationSearchQueue(), analysis, Options.Create(Bpr), keywordSuggester: suggester);
+        return new NameVariationService(db, start, NullLogger<NameVariationService>.Instance, Options.Create(Bpr), suggester);
+    }
+
+    [Fact]
+    public async Task A_variation_the_search_cannot_carry_is_refused_not_kept()
+    {
+        await using var db = CreateContext();
+        var (request, _, _) = await SeedAsync(db, "Someone Else Limited");
+        var names = Brands.Take(21).Select(b => $"Vatika {b} Homes").ToList();
+
+        var results = new List<NameVariationAddResult>();
+        foreach (var batch in names.Chunk(NameVariationService.MaxPerAdd))
+            results.AddRange((await CappedService(db).AddAsync(request.RequestId, batch, "mcaroc@ct.com", default)).Results);
+
+        // The registered name and 19 variations fill the search's 20 names; the last two would never be searched.
+        Assert.Equal(19, results.Count(r => r.Status == NameVariationAddStatus.Added));
+        Assert.Equal(2, results.Count(r => r.Status == NameVariationAddStatus.TooMany));
+        Assert.Equal(19, (await LitigationCompanyNames.ActiveVariationsAsync(db, request.Cin, default)).Count);
+    }
+
+    /// <summary>The reviewer's loop: after each search the worker saw names the plan always leaves out as "unsearched" and bought the same search
+    /// again. A pass now starts a search only for a variation the plan carries and never for the last search's keyword set.</summary>
+    [Fact]
+    public async Task Repeated_passes_never_buy_an_unchanged_keyword_set()
+    {
+        await using var db = CreateContext();
+        var (request, _, _) = await SeedAsync(db, "Someone Else Limited");
+        var service = CappedService(db);
+        // Variations added straight into the table (as if the add had been made before the cap check existed): 21 of them, two beyond the cap.
+        db.CompanyNameVariations.AddRange(Brands.Take(21).Select(b => new CompanyNameVariation
+        {
+            Identifier = request.Cin!, Name = $"Vatika {b} Homes", NameKey = MCAROC_Analysis.Services.LitigationModule.Refresh.WholeNamePartyMatcher.Canonical($"Vatika {b} Homes"),
+            AddedBy = "mcaroc@ct.com", AddedUtc = DateTime.UtcNow, AddedOnRequestId = request.RequestId
+        }));
+        await db.SaveChangesAsync();
+
+        var first = await service.StartPendingSearchAsync(request.RequestId, default);
+        Assert.True(first!.Started);
+        await db.LitigationSearchJobs.Where(j => j.RequestId == request.RequestId)
+            .ExecuteUpdateAsync(s => s.SetProperty(j => j.Status, LitigationSearchJobStatus.Completed));
+
+        // Two names are still unsearched (the plan cannot carry them), but the plan is the keyword set just bought: nothing to start, every pass.
+        Assert.Equal(2, (await NameVariationService.UnsearchedAsync(db, request, default)).Count);
+        for (var pass = 0; pass < 3; pass++)
+            Assert.Null(await CappedService(db).StartPendingSearchAsync(request.RequestId, default));
+        Assert.Equal(1, await db.LitigationSearchJobs.CountAsync(j => j.RequestId == request.RequestId));
+    }
+
+    [Fact]
+    public async Task A_pending_variation_buys_one_search_even_when_that_search_fails()
+    {
+        await using var db = CreateContext();
+        var (request, _, _) = await SeedAsync(db, "Someone Else Limited");
+        db.LitigationSearchJobs.Add(new LitigationSearchJob { RequestId = request.RequestId, Status = LitigationSearchJobStatus.Completed, CreatedUtc = DateTime.UtcNow,
+            KeywordsJson = "[{\"value\":\"VATIKA GROUP PRIVATE LIMITED\",\"source\":\"LegalName\"}]" });
+        db.CompanyNameVariations.Add(new CompanyNameVariation { Identifier = request.Cin!, Name = "Vatika Limited",
+            NameKey = MCAROC_Analysis.Services.LitigationModule.Refresh.WholeNamePartyMatcher.Canonical("Vatika Limited"),
+            AddedBy = "mcaroc@ct.com", AddedUtc = DateTime.UtcNow, AddedOnRequestId = request.RequestId });
+        await db.SaveChangesAsync();
+
+        Assert.True((await Service(db).StartPendingSearchAsync(request.RequestId, default))!.Started);
+        await db.LitigationSearchJobs.Where(j => j.RequestId == request.RequestId)
+            .ExecuteUpdateAsync(s => s.SetProperty(j => j.Status, LitigationSearchJobStatus.Failed));
+
+        Assert.Null(await Service(db).StartPendingSearchAsync(request.RequestId, default));
     }
 
     private sealed class StaticOptionsMonitor(PipelineOptions value) : IOptionsMonitor<PipelineOptions>
