@@ -73,9 +73,11 @@ public static class OrderPropertyChargeMatcher
     }
 
     /// <summary>The order's project or building is named in the charged property's project or building: every one of its words, in order, at least
-    /// two words with one that is not the company's own name ("Godrej Two", not "Godrej"), and no place both state differing.</summary>
+    /// two words with one that is not the company's own name ("Godrej Two", not "Godrej"), and no place both state differing. Only when the charge
+    /// secures the project, building or land as a whole: a charge over one flat (it names a unit) does not cover the flat next door.</summary>
     internal static bool SameProject(AiProperty order, AiProperty charged, IReadOnlySet<string> companyWords)
     {
+        if (charged.UnitNumber is not null || charged.Kind is not (PropertyKind.BuildingOrProject or PropertyKind.Land)) return false;
         if (Conflict(order.Village, charged.Village) || Conflict(order.City, charged.City) || Conflict(order.Pin, charged.Pin)) return false;
         var chargedNames = new[] { charged.Project, charged.Building }.OfType<string>().Select(n => Words(n).ToList()).Where(w => w.Count > 0).ToList();
         foreach (var name in new[] { order.Project, order.Building }.OfType<string>())

@@ -123,8 +123,10 @@ public static partial class ChargeLitigationLinker
                     var signal = tie.Kind == MCAROC_Analysis.Services.PropertyParticulars.PropertyChargeTieKind.SameProperty
                         ? ChargeLitigationSignal.ImmovableAddress : ChargeLitigationSignal.ChargedProject;
                     if (!linked.Add((tie.Charge.ChargeId, signal))) continue;   // one link per charge, signal and case: the first order that names it
-                    var m = p.Mentions[0];
-                    var what = MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyLabels.Role(p.Role).ToLowerInvariant();
+                    // The order the link cites is one that says what the link says: one that gave the property its role (attached, security,
+                    // disputed), the one with a direction about it first, else the earliest. A merely mentioning order never stands for an attachment.
+                    var m = p.Mentions.Where(x => x.Role == p.Role).OrderByDescending(x => x.Directions.Count > 0).FirstOrDefault() ?? p.Mentions[0];
+                    var what = MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyLabels.Role(m.Role).ToLowerInvariant();
                     var dated = string.IsNullOrWhiteSpace(m.OrderDate) ? "" : $" dated {m.OrderDate}";
                     var more = p.Mentions.Count > 1 ? $" (named in {p.Mentions.Count} orders)" : "";
                     var explanation = signal == ChargeLitigationSignal.ImmovableAddress

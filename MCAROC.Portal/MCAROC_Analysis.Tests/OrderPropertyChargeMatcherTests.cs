@@ -48,6 +48,21 @@ public sealed class OrderPropertyChargeMatcherTests : IAsyncLifetime
         Assert.Equal(PropertyChargeTieKind.ChargedProject, tie.Kind);
     }
 
+    /// <summary>Review of #559: a charge over flat 101 of Godrej One does not cover flat 102. Only a charge over the building, project or its land
+    /// as a whole makes another unit "in a charged project".</summary>
+    [Fact]
+    public void A_charge_over_one_flat_does_not_cover_the_next_flat_but_a_charge_over_the_building_does()
+    {
+        var oneFlat = Charge(1, P(unit: "101", building: "Godrej One", city: "Mumbai"));
+        var wholeBuilding = Charge(2, P(building: "Godrej One", city: "Mumbai", kind: PropertyKind.BuildingOrProject));
+        var flat102 = P(unit: "102", building: "Godrej One", city: "Mumbai");
+
+        Assert.Empty(OrderPropertyChargeMatcher.Ties(flat102, [oneFlat], Godrej));
+        Assert.Equal(PropertyChargeTieKind.ChargedProject, Assert.Single(OrderPropertyChargeMatcher.Ties(flat102, [wholeBuilding], Godrej)).Kind);
+        Assert.Equal(PropertyChargeTieKind.SameProperty,
+            Assert.Single(OrderPropertyChargeMatcher.Ties(P(unit: "101", building: "Godrej One", city: "Mumbai"), [oneFlat], Godrej)).Kind);
+    }
+
     [Fact]
     public void The_company_name_alone_or_another_city_is_not_a_charged_project()
     {
@@ -127,6 +142,40 @@ public sealed class OrderPropertyChargeMatcherTests : IAsyncLifetime
         Assert.DoesNotContain(summary.Links, l => l.Case.LitigationCaseId == 12);
         Assert.True(ChargeLitigationLabels.NamesTheAsset(ChargeLitigationSignal.ImmovableAddress));
         Assert.False(ChargeLitigationLabels.NamesTheAsset(ChargeLitigationSignal.ChargedProject));
+    }
+
+    /// <summary>Review of #559: an early order only mentions the charged unit, a later one attaches it. The link says "attached", so it must cite
+    /// the later order — its date, page and quote — not the first mention.</summary>
+    [Fact]
+    public void The_link_cites_the_order_that_supports_it_not_the_first_mention()
+    {
+        var charges = new List<RocCharge> { new() { ChargeId = 1, RocChargeNumber = "100603359", LatestChargeHolderRaw = "HDFC Bank Limited", ChargeStatus = "Open", Events = [] } };
+        var charged = new[] { Charge(1, P(unit: "5C", building: "Godrej One", city: "Mumbai")) };
+        var early = new LitigationCaseOrder { LitigationCaseOrderId = 700, LitigationCaseId = 20, OrderDate = "10-01-2019", OrderType = "Order" };
+        var later = new LitigationCaseOrder { LitigationCaseOrderId = 701, LitigationCaseId = 20, OrderDate = "15-06-2019", OrderType = "Order" };
+        var c = new LitigationCase { LitigationCaseId = 20, CaseNumber = "OA 20/2019", Court = "Debts Recovery Tribunal", CaseStatus = "Pending",
+            PetitionersJson = "[\"HDFC Bank Limited\"]", RespondentsJson = "[\"Godrej Properties Limited\"]", Orders = [early, later] };
+        LitigationOrderDocument Doc(long orderId) => new() { LitigationOrderDocumentId = 100 + orderId, LitigationCaseOrderId = orderId,
+            Status = LitigationOrderDocumentStatus.Downloaded, TextExtractionStatus = FilingDocumentProcessingStatus.TextExtracted, ExtractedText = "--- Page 1 (native) ---\nx" };
+        var docs = new Dictionary<long, LitigationOrderDocument> { [700] = Doc(700), [701] = Doc(701) };
+        var readings = new Dictionary<long, LitigationOrderPropertyReading>
+        {
+            [800] = Reading(800, new OrderProperty(1, OrderPropertyRole.Mentioned, OrderPropertyRelation.TargetOwned, null, [],
+                P(unit: "5C", building: "Godrej One", city: "Mumbai") with { SourceText = "the applicant refers to Unit 5C, Godrej One" })),
+            [801] = Reading(801, new OrderProperty(3, OrderPropertyRole.Attached, OrderPropertyRelation.TargetOwned, null,
+                [new OrderPropertyDirection(OrderPropertyDirectionKind.Attachment, "Unit 5C, Godrej One shall stand attached")],
+                P(unit: "5C", building: "Godrej One", city: "Mumbai") with { SourceText = "Unit 5C, Godrej One shall stand attached" })),
+        };
+        var props = new Dictionary<long, CaseOrderProperties> { [20] = CaseOrderProperties.Build([(early, docs[700]), (later, docs[701])], readings) };
+
+        var link = Assert.Single(ChargeLitigationLinker.Build(charges, [c], docs, Godrej, props, charged).Links, l => l.Signal == ChargeLitigationSignal.ImmovableAddress);
+
+        Assert.Equal(701, link.OrderId);
+        Assert.Equal(3, link.PageNumber);
+        Assert.Contains("attached", link.Excerpt);
+        Assert.Contains("15-06-2019", link.Explanation);
+        Assert.Contains("attached", link.Explanation);
+        Assert.Contains("named in 2 orders", link.Explanation);
     }
 
     // ── the service: readings arriving, and charges of the latest ingestion only ─────────────────────────
