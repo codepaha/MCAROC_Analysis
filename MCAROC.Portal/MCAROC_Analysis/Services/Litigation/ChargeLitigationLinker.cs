@@ -11,8 +11,8 @@ namespace MCAROC_Analysis.Services.LitigationData;
 /// signal defines its own "strong" bar.</summary>
 public enum ChargeLitigationSignal
 {
-    /// <summary>A court order's text names the charged immovable property: a plot/survey/door number plus a
-    /// PIN code or locality (<see cref="AddressMatchStrength.Strong"/>).</summary>
+    /// <summary>A property a court order names is the charged immovable property itself (#554): read from the order and compared with the
+    /// charged property field by field (<see cref="MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyChargeMatcher"/>).</summary>
     ImmovableAddress,
 
     /// <summary>The charge's holder (the lender) is a party in a recovery-type proceeding against the company.
@@ -21,7 +21,11 @@ public enum ChargeLitigationSignal
 
     /// <summary>A specific movable asset named in the charge (vehicle registration, engine/chassis or serial
     /// number) is named in a court order. Only an exact, whole-token identifier match counts.</summary>
-    MovableIdentifier
+    MovableIdentifier,
+
+    /// <summary>A court order names another unit or part of a project or building the charge secures (#554): a home buyer's flat in a
+    /// project whose land is mortgaged. Not the charged asset itself, but the project under the charge is in dispute.</summary>
+    ChargedProject
 }
 
 /// <summary>The case half of a link. <see cref="Source"/> is "Court records": the litigation service is the only source of cases.</summary>
@@ -68,18 +72,23 @@ public static partial class ChargeLitigationLinker
 
     /// <param name="companyNames">The company's registered and former names: a lender's case counts only when the company is the respondent
     /// and the lender is on the other side. Without them no lender link is made (never a guess).</param>
+    /// <param name="orderProperties">The properties each case's orders name, by case (#554); none when the orders have not been read.</param>
+    /// <param name="charged">The immovable properties of <paramref name="openCharges"/> (<see cref="MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyChargeMatcher.ChargedProperties"/>).</param>
     public static ChargeLitigationSummary Build(
         IReadOnlyList<RocCharge> openCharges,
         IReadOnlyList<LitigationCase> cases,
         IReadOnlyDictionary<long, LitigationOrderDocument> docsByOrderId,
-        IReadOnlyCollection<string> companyNames)
+        IReadOnlyCollection<string> companyNames,
+        IReadOnlyDictionary<long, MCAROC_Analysis.Services.PropertyParticulars.CaseOrderProperties>? orderProperties = null,
+        IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargedProperty>? charged = null)
     {
         var links = new List<ChargeLitigationLink>();
         if (openCharges.Count == 0)
             return new ChargeLitigationSummary([], cases.Count, 0, 0, cases.Any(LitigationOrderAddressMatcher.IsNcltCase));
 
-        // No "order names the charged property" link from word matching (#554): any number plus any word made a "strong" match (426 false links
-        // on Godrej, none real). The properties each order names are read and compared with the charged properties field by field (#554 PR 3).
+        // Never from word matching (#554: any number plus any word made a "strong" match, 426 false links on Godrej, none real): the properties
+        // each order names are read and compared with the charged properties field by field.
+        links.AddRange(PropertyLinks(cases, orderProperties, charged, companyNames));
         links.AddRange(LenderRecoveryLinks(openCharges, cases, companyNames));
         var identifiersByCharge = IdentifiersByCharge(openCharges);
         links.AddRange(MovableIdentifierLinks(openCharges, identifiersByCharge, cases, docsByOrderId));
@@ -96,6 +105,35 @@ public static partial class ChargeLitigationLinker
             NcltOrdersSkipped: cases.Any(LitigationOrderAddressMatcher.IsNcltCase),
             ChargesWithIdentifiers: identifiersByCharge.Count,
             MovableChargesWithoutIdentifiers: openCharges.Count(c => IsMovableCharge(c) && !identifiersByCharge.ContainsKey(c.ChargeId)));
+    }
+
+    // ── Signals: the charged property, or a project under a charge, named in an order (#554) ───────────────
+    private static IEnumerable<ChargeLitigationLink> PropertyLinks(IReadOnlyList<LitigationCase> cases,
+        IReadOnlyDictionary<long, MCAROC_Analysis.Services.PropertyParticulars.CaseOrderProperties>? orderProperties,
+        IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargedProperty>? charged, IReadOnlyCollection<string> companyNames)
+    {
+        if (orderProperties is null || charged is null || charged.Count == 0) yield break;
+        foreach (var c in cases)
+        {
+            if (!orderProperties.TryGetValue(c.LitigationCaseId, out var props)) continue;
+            var linked = new HashSet<(long ChargeId, ChargeLitigationSignal Signal)>();
+            foreach (var p in props.Properties)
+                foreach (var tie in MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyChargeMatcher.Ties(p.Property, charged, companyNames))
+                {
+                    var signal = tie.Kind == MCAROC_Analysis.Services.PropertyParticulars.PropertyChargeTieKind.SameProperty
+                        ? ChargeLitigationSignal.ImmovableAddress : ChargeLitigationSignal.ChargedProject;
+                    if (!linked.Add((tie.Charge.ChargeId, signal))) continue;   // one link per charge, signal and case: the first order that names it
+                    var m = p.Mentions[0];
+                    var what = MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyLabels.Role(p.Role).ToLowerInvariant();
+                    var dated = string.IsNullOrWhiteSpace(m.OrderDate) ? "" : $" dated {m.OrderDate}";
+                    var more = p.Mentions.Count > 1 ? $" (named in {p.Mentions.Count} orders)" : "";
+                    var explanation = signal == ChargeLitigationSignal.ImmovableAddress
+                        ? $"The order{dated} names {p.Description} ({what}), the property charged under {tie.Charge.ChargeNumber}{more}."
+                        : $"The order{dated} names {p.Description} ({what}), in a project or building charged under {tie.Charge.ChargeNumber}: not the charged asset itself{more}.";
+                    yield return new ChargeLitigationLink(tie.Charge.ChargeId, tie.Charge.ChargeNumber, tie.Charge.Holder, signal, ToLinked(c), explanation,
+                        m.LitigationCaseOrderId, m.Page, m.Quote, $"{m.OrderType ?? "Order"} {m.OrderDate}".Trim());
+                }
+        }
     }
 
     // ── Signal: a specific movable named in the charge is named in an order ───────────────────────────────

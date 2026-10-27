@@ -9,8 +9,9 @@ public sealed record OrderPropertyMention(long LitigationCaseOrderId, long Litig
 
 /// <summary>One property a case's orders name, with every order that names it. <see cref="Property"/> is the fullest description among them.
 /// <see cref="Role"/> is the weightiest one any order gives it (attached over security over disputed over mentioned).</summary>
+/// <param name="Ties">The open charges it is, or lies in the project of (<see cref="OrderPropertyChargeMatcher"/>); null when not compared.</param>
 public sealed record CaseOrderProperty(AiProperty Property, string Description, OrderPropertyRole Role, OrderPropertyRelation Relation,
-    OrderPropertyIssue? Issue, IReadOnlyList<OrderPropertyMention> Mentions)
+    OrderPropertyIssue? Issue, IReadOnlyList<OrderPropertyMention> Mentions, IReadOnlyList<PropertyChargeTie>? Ties = null)
 {
     public IEnumerable<(OrderPropertyMention Mention, OrderPropertyDirection Direction)> Directions =>
         Mentions.SelectMany(m => m.Directions.Select(d => (m, d)));
@@ -27,6 +28,10 @@ public sealed record CaseOrderProperties(
     IReadOnlyList<CaseOrderProperty> Properties, IReadOnlyList<CaseUnidentifiedProperty> Unidentified, int OrdersRead, int OrdersPending)
 {
     public static CaseOrderProperties Empty { get; } = new([], [], 0, 0);
+
+    /// <summary>The same properties, each with the open charges it is, or lies in the project of.</summary>
+    public CaseOrderProperties WithTies(IReadOnlyList<ChargedProperty> charged, IReadOnlyCollection<string> companyNames) =>
+        this with { Properties = Properties.Select(p => p with { Ties = OrderPropertyChargeMatcher.Ties(p.Property, charged, companyNames) }).ToList() };
 
     public bool HasAny => Properties.Count > 0 || Unidentified.Count > 0;
 
@@ -91,7 +96,9 @@ public sealed record CaseOrderProperties(
 
         var sameVillageOrPin = Same(a.Village, b.Village) || Same(a.Pin, b.Pin);
         if (a.UnitNumber is not null && b.UnitNumber is not null)
-            return SameId(a.UnitNumber, b.UnitNumber) && (Same(a.Building, b.Building) || Same(a.Project, b.Project));
+            // A building and a project are often the same name read into different fields ("Godrej One" as the building of one and the
+            // project of the other): the unit's building or project is compared with the other's building or project.
+            return SameId(a.UnitNumber, b.UnitNumber) && new[] { a.Building, a.Project }.Any(x => Same(x, b.Building) || Same(x, b.Project));
         if (surveysA.Count > 0 && surveysB.Count > 0)
             return surveysA.Keys.Intersect(surveysB.Keys).Any() && sameVillageOrPin;
         if (a.UnitNumber is null && b.UnitNumber is null && surveysA.Count == 0 && surveysB.Count == 0)

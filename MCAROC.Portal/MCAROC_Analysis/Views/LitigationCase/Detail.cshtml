@@ -344,6 +344,20 @@
                             <span class="mca-badge @OrderPropertyLabels.RoleCss(p.Role)">@OrderPropertyLabels.Role(p.Role)@(issue is null ? "" : ": " + issue)</span>
                             <strong>@p.Description</strong>@(relation is null ? "" : " — " + relation)
                         </div>
+                        @if (p.Ties is { } ties)
+                        {
+                            <div class="mt-1" data-property-charge>
+                                @if (ties.Count == 0)
+                                {
+                                    <span class="text-muted">Not under an open charge.</span>
+                                }
+                                @foreach (var tie in ties)
+                                {
+                                    <span class="mca-badge @(tie.Kind == PropertyChargeTieKind.SameProperty ? "sev-critical" : "sev-watch")">@(tie.Kind == PropertyChargeTieKind.SameProperty ? "The charged property" : "In a charged project")</span>
+                                    <a href="/Requests/@request.RequestId?charge=@tie.Charge.ChargeId#tab-charges">@(tie.Charge.ChargeNumber ?? "Charge " + tie.Charge.ChargeId)</a>@(string.IsNullOrWhiteSpace(tie.Charge.Holder) ? "" : " (" + tie.Charge.Holder + ")")
+                                }
+                            </div>
+                        }
                         @foreach (var (mention, direction) in p.Directions)
                         {
                             <div class="mt-1"><span class="fw-semibold">@OrderPropertyLabels.Direction(direction.Kind):</span> &ldquo;@direction.Quote&rdquo;
@@ -383,6 +397,7 @@
                         {
                             ChargeLitigationSignal.ImmovableAddress => "Touches charged property",
                             ChargeLitigationSignal.MovableIdentifier => "Names a charged asset",
+                            ChargeLitigationSignal.ChargedProject => "Unit in a charged project",
                             _ => "Charge holder's recovery case"
                         };
                         <li class="mb-1">

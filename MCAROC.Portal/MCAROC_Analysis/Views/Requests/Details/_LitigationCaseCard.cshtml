@@ -37,7 +37,7 @@
             }
             @if (ViewBag.ChargeLinks is IReadOnlyList<MCAROC_Analysis.Services.LitigationData.ChargeLitigationLink> chargeLinks && chargeLinks.Count > 0)
             {
-                foreach (var signal in new[] { MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.ImmovableAddress, MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.MovableIdentifier, MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.LenderRecoveryCase })
+                foreach (var signal in new[] { MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.ImmovableAddress, MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.MovableIdentifier, MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.ChargedProject, MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.LenderRecoveryCase })
                 {
                     var forSignal = chargeLinks.Where(l => l.Signal == signal).ToList();
                     if (forSignal.Count == 0) continue;
@@ -45,6 +45,7 @@
                     {
                         MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.ImmovableAddress => "Touches charged property",
                         MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.MovableIdentifier => "Names a charged asset",
+                        MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.ChargedProject => "Unit in a charged project",
                         _ => "Charge holder's recovery case"
                     };
                     <span class="mca-badge @MCAROC_Analysis.Services.LitigationData.ChargeLitigationLabels.Severity(signal)" title="@string.Join(" | ", forSignal.Select(l => l.ChargeNumber + ": " + l.Explanation))"><i class="bi @(signal == MCAROC_Analysis.Services.LitigationData.ChargeLitigationSignal.LenderRecoveryCase ? "bi-exclamation-triangle" : "bi-bank")"></i> @text</span>
