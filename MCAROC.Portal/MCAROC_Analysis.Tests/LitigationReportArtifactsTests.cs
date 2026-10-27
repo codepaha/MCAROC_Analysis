@@ -69,6 +69,32 @@ public sealed class LitigationReportArtifactsTests
         Assert.Contains("BENCH", text);
     }
 
+    /// <summary>#554: the report lists the property in litigation before the cases, charged first, with the other property in dispute stated as such.</summary>
+    [SkippableFact]
+    public void RenderPdf_lists_the_property_in_litigation()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+        var flat = new MCAROC_Analysis.Services.PropertyParticulars.AiProperty(MCAROC_Analysis.Services.Excel.Parsers.PropertyAssetClass.Immovable,
+            MCAROC_Analysis.Services.Excel.Parsers.PropertyKind.Premises, null, "1804", null, null, "Godrej Alpine", [], null, [], [], null, null, null, "Mangalore", null, null);
+        var entry = new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationEntry(flat, "Premises / unit · Unit 1804 · Godrej Alpine · Mangalore",
+            MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyRole.Disputed, MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyRelation.SoldByTarget,
+            MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyIssue.DelayedPossession, [], [],
+            [new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationCase(1, "CC 3/2020", "Consumer Court", "Pending")]);
+        var property = new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary([], [], [entry], 2, [], 1, 0);
+        var report = ReportWithSingleCase("csp-42") with { ChargeLinks = ChargeLitigationSummary.Empty with { PropertyLitigation = property } };
+
+        using var doc = PdfDocument.Open(new MemoryStream(LitigationReportArtifacts.RenderPdf(report)));
+        var text = string.Concat(doc.GetPages().Select(p => p.Text));
+
+        Assert.Contains("PROPERTY IN LITIGATION", text);
+        Assert.Contains("OTHER PROPERTY IN DISPUTE", text);
+        Assert.Contains("Godrej Alpine", text);
+        Assert.Contains("delayed possession", text);
+        Assert.Contains("CC 3/2020", text);
+        Assert.Contains("named only in passing", text);
+    }
+
     [SkippableFact]
     public void RenderPdf_includes_reuse_provenance_banner_when_reused()
     {

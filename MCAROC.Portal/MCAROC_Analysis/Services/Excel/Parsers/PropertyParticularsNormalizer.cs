@@ -114,7 +114,7 @@ public static partial class PropertyParticularsNormalizer
     };
 
     public static string Describe(NormalizedUnit u) =>
-        string.Join(", ", new[] { $"Unit {u.UnitNumber}", u.Floor is null ? null : $"{u.Floor} floor", u.Building }.Where(x => x is not null));
+        string.Join(", ", new[] { $"Unit {u.UnitNumber}", u.Floor is null ? null : Labelled(u.Floor, "floor", before: false), u.Building }.Where(x => x is not null));
 
     public static string Describe(NormalizedArea a) =>
         string.Create(CultureInfo.InvariantCulture, $"{a.SquareMetres:#,0.##} sq m ({a.SquareFeet:#,0.##} sq ft) {Label(a.Basis)}");

@@ -1,0 +1,81 @@
+@using MCAROC_Analysis.Services.PropertyParticulars
+@model PropertyLitigationSummary
+@{
+    // #554: every property the request's court orders name, charged first, then units of charged projects, then other property in dispute.
+    var reqId = (long)ViewData["RequestId"]!;
+    const int MaxRows = 12;
+
+    string Cases(PropertyLitigationEntry e) => e.Cases.Count == 1 ? "1 case" : $"{e.Cases.Count} cases";
+}
+
+<details class="mca-section litigation-property mb-3" id="property-litigation" open>
+    <summary>
+        <strong>Property in litigation</strong>
+        <span class="text-muted small ms-2">
+            @Model.ChargedProperty.Count charged propert@(Model.ChargedProperty.Count == 1 ? "y" : "ies") ·
+            @Model.InChargedProject.Count in charged projects ·
+            @Model.NotUnderCharge.Count other propert@(Model.NotUnderCharge.Count == 1 ? "y" : "ies") in dispute
+        </span>
+    </summary>
+
+    @foreach (var (title, note, entries, id) in new[]
+    {
+        ("Charged property in litigation", "The order names the property an open charge secures.", Model.ChargedProperty, "property-litigation-charged"),
+        ("Units of charged projects", "Another unit or part of a project or building an open charge secures (for example a buyer's flat in a mortgaged project).", Model.InChargedProject, "property-litigation-project"),
+        ("Other property in dispute", "In dispute, under a lender's security or attached, and not under any open charge.", Model.NotUnderCharge, "property-litigation-other")
+    })
+    {
+        if (entries.Count == 0) continue;
+        <div class="mt-3" id="@id">
+            <div class="fw-semibold">@title <span class="badge text-bg-light">@entries.Count</span></div>
+            <div class="text-muted small mb-1">@note</div>
+            <div class="pi-table-wrap">
+                <table class="pi-results-table">
+                    <thead><tr><th>Property</th><th>What the orders say</th><th>Cases</th>@if (entries.Any(e => e.Ties.Count > 0)) { <th>Charge</th> }</tr></thead>
+                    <tbody>
+                    @foreach (var e in entries.Take(MaxRows))
+                    {
+                        var relation = OrderPropertyLabels.Relation(e.Relation);
+                        var issue = OrderPropertyLabels.Issue(e.Issue);
+                        <tr>
+                            <td>@e.Description@(relation is null ? "" : " — " + relation)</td>
+                            <td>
+                                <span class="mca-badge @OrderPropertyLabels.RoleCss(e.Role)">@OrderPropertyLabels.Role(e.Role)@(issue is null ? "" : ": " + issue)</span>
+                                @if (e.Directions.Count > 0) { <span class="small d-block">@string.Join(", ", e.Directions.Select(OrderPropertyLabels.Direction))</span> }
+                            </td>
+                            <td>
+                                @for (var i = 0; i < Math.Min(3, e.Cases.Count); i++)
+                                {
+                                    var c = e.Cases[i];
+                                    <a class="d-block" href="/Requests/@reqId/Litigation/Cases/@c.LitigationCaseId">@(c.CaseNumber ?? "Case #" + c.LitigationCaseId)</a>
+                                }
+                                @if (e.Cases.Count > 3) { <span class="text-muted small">and @(e.Cases.Count - 3) more (@Cases(e))</span> }
+                            </td>
+                            @if (entries.Any(x => x.Ties.Count > 0))
+                            {
+                                <td>
+                                    @foreach (var t in e.Ties)
+                                    {
+                                        <a class="d-block" href="/Requests/@reqId?charge=@t.Charge.ChargeId#tab-charges">@(t.Charge.ChargeNumber ?? "Charge " + t.Charge.ChargeId)</a>
+                                    }
+                                </td>
+                            }
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+            @if (entries.Count > MaxRows) { <div class="text-muted small">and @(entries.Count - MaxRows) more; each case page lists its properties.</div> }
+        </div>
+    }
+
+    <div class="text-muted small mt-2">
+        @if (Model.UnidentifiedSecurityCases.Count > 0)
+        {
+            <div>@Model.UnidentifiedSecurityCases.Count case@(Model.UnidentifiedSecurityCases.Count == 1 ? "'s orders act" : "s' orders act") on secured or attached property they describe only by reference (for example "the mortgaged properties described in the schedule").</div>
+        }
+        @if (Model.MentionedOnly > 0) { <div>@Model.MentionedOnly more propert@(Model.MentionedOnly == 1 ? "y is" : "ies are") named only in passing.</div> }
+        @if (Model.OrdersPending > 0) { <div>@Model.OrdersPending order@(Model.OrdersPending == 1 ? " is" : "s are") still being read.</div> }
+        <div>Party and office addresses in case titles are not counted.</div>
+    </div>
+</details>

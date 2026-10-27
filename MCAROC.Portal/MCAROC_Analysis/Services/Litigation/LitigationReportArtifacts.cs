@@ -392,6 +392,12 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
             {
                 column.Spacing(9);
                 ComposeCover(column);
+                // #554: every property the orders name, before the cases, charged first.
+                if (report.ChargeLinks?.PropertyLitigation is { HasAny: true } property)
+                {
+                    column.Item().PageBreak();
+                    ComposePropertyLitigation(column, property);
+                }
                 var serial = 0;
                 foreach (var section in new[] { LitigationCaseStatusBucket.Pending, LitigationCaseStatusBucket.Disposed, LitigationCaseStatusBucket.Unknown })
                 {
@@ -548,6 +554,66 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
 
     /// <summary>One row per forum, zero rows included so a forum with nothing found reads as "searched, none". Cases against
     /// the company and cases it brought each show total (pending / disposed / unknown).</summary>
+    private static void ComposePropertyLitigation(ColumnDescriptor column, MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary summary)
+    {
+        column.Item().Text("PROPERTY IN LITIGATION").Bold().FontSize(11).FontColor(Navy);
+        column.Item().Text("Every specific property the court orders name, read from the orders and compared with the properties the open charges secure. " +
+            "Party and office addresses in case titles are not counted.").FontSize(7.5f).FontColor(Colors.Grey.Darken2);
+
+        foreach (var (title, note, entries) in new[]
+        {
+            ("Charged property in litigation", "The order names the property an open charge secures.", summary.ChargedProperty),
+            ("Units of charged projects", "Another unit or part of a project or building an open charge secures.", summary.InChargedProject),
+            ("Other property in dispute", "In dispute, under a lender's security or attached, and not under any open charge.", summary.NotUnderCharge)
+        })
+        {
+            if (entries.Count == 0) continue;
+            column.Item().PaddingTop(6).Text($"{title.ToUpperInvariant()}  ·  {entries.Count}").Bold().FontSize(8.5f).FontColor(Navy);
+            column.Item().Text(note).FontSize(7f).FontColor(Colors.Grey.Darken1);
+            var withCharge = entries.Any(e => e.Ties.Count > 0);
+            column.Item().Table(table =>
+            {
+                table.ColumnsDefinition(columns =>
+                {
+                    columns.RelativeColumn(3.4f); columns.RelativeColumn(2); columns.RelativeColumn(1.8f);
+                    if (withCharge) columns.RelativeColumn(1.2f);
+                });
+                IContainer Head(IContainer c) => c.Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4);
+                IContainer Cell(IContainer c) => c.BorderBottom(0.5f).BorderColor("#D7E3F2").Padding(4);
+                table.Header(header =>
+                {
+                    header.Cell().Element(Head).Text("PROPERTY").Bold().FontSize(7).FontColor(Navy);
+                    header.Cell().Element(Head).Text("WHAT THE ORDERS SAY").Bold().FontSize(7).FontColor(Navy);
+                    header.Cell().Element(Head).Text("CASES").Bold().FontSize(7).FontColor(Navy);
+                    if (withCharge) header.Cell().Element(Head).Text("CHARGE").Bold().FontSize(7).FontColor(Navy);
+                });
+                foreach (var e in entries)
+                {
+                    var relation = MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyLabels.Relation(e.Relation);
+                    var issue = MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyLabels.Issue(e.Issue);
+                    table.Cell().Element(Cell).Text(e.Description + (relation is null ? "" : " — " + relation)).FontSize(7.5f);
+                    table.Cell().Element(Cell).Text(t =>
+                    {
+                        t.Span(MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyLabels.Role(e.Role) + (issue is null ? "" : ": " + issue)).FontSize(7.5f).Bold();
+                        if (e.Directions.Count > 0)
+                            t.Line("").FontSize(4);
+                        if (e.Directions.Count > 0)
+                            t.Span(string.Join(", ", e.Directions.Select(MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyLabels.Direction))).FontSize(7f);
+                    });
+                    table.Cell().Element(Cell).Text(string.Join("\n", e.Cases.Select(c => c.CaseNumber ?? $"Case #{c.LitigationCaseId}"))).FontSize(7f);
+                    if (withCharge) table.Cell().Element(Cell).Text(string.Join("\n", e.Ties.Select(t => t.Charge.ChargeNumber ?? $"Charge {t.Charge.ChargeId}"))).FontSize(7f);
+                }
+            });
+        }
+
+        var notes = new List<string>();
+        if (summary.UnidentifiedSecurityCases.Count > 0)
+            notes.Add($"{summary.UnidentifiedSecurityCases.Count} case(s) act on secured or attached property the orders describe only by reference (for example \"the mortgaged properties described in the schedule\").");
+        if (summary.MentionedOnly > 0) notes.Add($"{summary.MentionedOnly} more propert{(summary.MentionedOnly == 1 ? "y is" : "ies are")} named only in passing.");
+        if (summary.OrdersPending > 0) notes.Add($"{summary.OrdersPending} order(s) were still being read when this report was made.");
+        foreach (var n in notes) column.Item().Text(n).FontSize(7f).FontColor(Colors.Grey.Darken1);
+    }
+
     private void ComposeForumSummary(IContainer container)
     {
         // "Both sides" is a known result, kept apart from "not determined" (the side could not be told); each column only when used.

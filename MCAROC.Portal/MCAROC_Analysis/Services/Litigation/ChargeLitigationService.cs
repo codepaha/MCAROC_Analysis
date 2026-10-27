@@ -102,7 +102,7 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
         var extractions = await MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionService.LoadCompletedAsync(db, charges.SelectMany(c => c.Events), ct);
         var charged = MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyChargeMatcher.ChargedProperties(charges, extractions);
         var byCase = new Dictionary<long, MCAROC_Analysis.Services.PropertyParticulars.CaseOrderProperties>();
-        if (charged.Count == 0 || cases.Count == 0) return (byCase, charged);
+        if (cases.Count == 0) return (byCase, charged);
         var documentIds = docsByOrderId.Values.Select(d => d.LitigationOrderDocumentId).ToList();
         var readings = new Dictionary<long, LitigationOrderPropertyReading>();
         foreach (var chunk in documentIds.Chunk(2000))
@@ -129,7 +129,8 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
 
         var openChargeCount = await db.RocCharges.AsNoTracking()
             .CountAsync(c => c.RequestId == requestId && (runId == null || c.IngestionRunId == runId) && c.SatisfactionDate == null && c.ChargeStatus != "Satisfied", ct);
-        if (openChargeCount == 0) return ChargeLitigationSummary.Empty with { SnapshotId = snapshotId, Version = version };
+        // No early return without open charges: the properties the orders name are summarised for every company (#554), and with no charge
+        // every property in dispute is one no open charge secures.
 
         var source = await SourceAsync(requestId, ct);
         var key = CacheKey(requestId, version, runId, openChargeCount, source);
