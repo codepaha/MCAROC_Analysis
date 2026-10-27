@@ -64,6 +64,10 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                     FailureReason = j.FailureReason, RawResponseHash = j.RawResponseHash, KeywordsJson = j.KeywordsJson,
                     CreatedUtc = j.CreatedUtc, CompletedUtc = j.CompletedUtc }).FirstOrDefaultAsync(ct);
             litVm.SearchJob = job;
+            litVm.SearchedKeywords = LitigationKeyword.ParseJson(job?.KeywordsJson);
+            litVm.CanAddNameVariations = !string.IsNullOrWhiteSpace(request.Cin ?? request.Llpin);
+            litVm.NameVariations = await LitigationCompanyNames.ActiveVariationsAsync(db, request.Cin ?? request.Llpin, litCt);
+            litVm.UnsearchedVariationIds = (await NameVariationService.UnsearchedAsync(db, request, litCt)).Select(v => v.CompanyNameVariationId).ToHashSet();
 
             if (job is not null)
             {
@@ -348,10 +352,8 @@ public sealed class LitigationDetailsQuery(AppDbContext db,
                     // Age is measured to the day the data was retrieved (IST), so the page and the reports agree whenever opened.
                     var ageAsOf = DateOnly.FromDateTime(Ist.FromUtc(authoritativeSnapshot.RetrievedUtc));
                     litVm.AgeAsOf = ageAsOf;
-                    var companyNames = new List<string>();
-                    if (!string.IsNullOrWhiteSpace(request.CompanyName)) companyNames.Add(request.CompanyName);
-                    if (request.LatestCompletedIngestionRunId is { } nameRunId)
-                        companyNames.AddRange(vm.NameHistory.Where(h => !string.IsNullOrWhiteSpace(h.PreviousName)).Select(h => h.PreviousName!));
+                    var companyNames = await LitigationCompanyNames.ForAsync(db, id, request.CompanyName, request.Cin ?? request.Llpin,
+                        request.LatestCompletedIngestionRunId, ct);
                     var ageRows = await db.LitigationCases.AsNoTracking()
                         .Where(c => caseIdsQuery.Contains(c.LitigationCaseId))
                         .Select(c => new

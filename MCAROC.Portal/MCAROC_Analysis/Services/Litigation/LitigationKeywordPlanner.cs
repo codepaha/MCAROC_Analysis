@@ -30,16 +30,16 @@ public static partial class LitigationKeywordPlanner
         var results = new List<LitigationKeyword>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        void Add(string? text, LitigationKeywordSource source)
+        void Add(string? text, LitigationKeywordSource source, string? reason = null)
         {
             var display = NormalizeDisplay(text);
             if (display.Length == 0 || !seen.Add(CanonicalKey(display))) return;
-            results.Add(new LitigationKeyword(display, source));
+            results.Add(new LitigationKeyword(display, source, reason));
         }
 
         Add(legalName, LitigationKeywordSource.LegalName);
         foreach (var historicalName in historicalNames ?? []) Add(historicalName, LitigationKeywordSource.HistoricalLegalName);
-        foreach (var alias in approvedAliases ?? []) Add(alias.Value, alias.Source);
+        foreach (var alias in approvedAliases ?? []) Add(alias.Value, alias.Source, alias.Reason);
 
         // A legal suffix is routinely omitted in court data. These variants do not invent an acronym or
         // alter the commercial words, so they remain safe automatic candidates for an exact-match search.
@@ -102,7 +102,7 @@ public sealed record LitigationKeyword(string Value, LitigationKeywordSource Sou
     }
 }
 
-public sealed record ApprovedLitigationAlias(string Value, LitigationKeywordSource Source)
+public sealed record ApprovedLitigationAlias(string Value, LitigationKeywordSource Source, string? Reason = null)
 {
     public static ApprovedLitigationAlias Curated(string value) => new(value, LitigationKeywordSource.ApprovedAlias);
     public static ApprovedLitigationAlias Phonetic(string value) => new(value, LitigationKeywordSource.ApprovedPhoneticAlias);
@@ -126,5 +126,7 @@ public enum LitigationKeywordSource
     /// <summary>The initials of the name (BPCL). No longer generated (owner 2026-10-16); kept so searches that used them still read back.</summary>
     GeneratedAcronym,
     /// <summary>An acronym in the name written out, accepted only when its initials spell the acronym (#489).</summary>
-    GeneratedAcronymExpansion
+    GeneratedAcronymExpansion,
+    /// <summary>A name variation a person added for the company on the Litigation tab (<c>CompanyNameVariation</c>).</summary>
+    AddedNameVariation
 }

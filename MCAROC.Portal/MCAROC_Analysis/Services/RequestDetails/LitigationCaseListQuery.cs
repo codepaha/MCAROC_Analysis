@@ -92,7 +92,7 @@ public sealed class LitigationCaseListQuery(
         string? freshness = null, string? missingField = null)
     {
         var request = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId)
-            .Select(r => new { r.CompanyName, r.LatestCompletedIngestionRunId }).FirstOrDefaultAsync(ct);
+            .Select(r => new { r.CompanyName, r.Cin, r.Llpin, r.LatestCompletedIngestionRunId }).FirstOrDefaultAsync(ct);
         if (request is null) return null;
         var snapshot = await LitigationSnapshotSelection.ForRequest(db, requestId)
             .Select(s => new { s.LitigationReportSnapshotId, s.RetrievedUtc }).FirstOrDefaultAsync(ct);
@@ -112,11 +112,7 @@ public sealed class LitigationCaseListQuery(
             await unsegmented.CountAsync(LitigationCaseStatusClassifier.IsPendingExpr, ct),
             await unsegmented.CountAsync(LitigationCaseStatusClassifier.IsDisposedExpr, ct),
             await unsegmented.CountAsync(LitigationCaseStatusClassifier.IsUnknownExpr, ct));
-        var names = new List<string>();
-        if (!string.IsNullOrWhiteSpace(request.CompanyName)) names.Add(request.CompanyName);
-        if (request.LatestCompletedIngestionRunId is { } rid)
-            names.AddRange(await db.CompanyNameHistories.AsNoTracking().Where(h => h.RequestId == requestId && h.IngestionRunId == rid)
-                .Select(h => h.PreviousName).ToListAsync(ct));
+        var names = await LitigationCompanyNames.ForAsync(db, requestId, request.CompanyName, request.Cin ?? request.Llpin, request.LatestCompletedIngestionRunId, ct);
         // The register's order is the report's (LitigationCasePresentation.SortKey), which needs each case's forum, side and status exactly as
         // they are displayed. The side comes from the party names, so every matching case is read as a narrow projection (no orders, no
         // evidence, no PDF links) and ordered here; only the displayed page's rows are then read in full.

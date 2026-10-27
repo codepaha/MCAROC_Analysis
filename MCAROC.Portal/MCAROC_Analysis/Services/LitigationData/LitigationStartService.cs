@@ -50,9 +50,13 @@ public sealed class LitigationStartService(
             ? await db.CompanyNameHistories.Where(x => x.IngestionRunId == runId && !string.IsNullOrWhiteSpace(x.PreviousName))
                 .Select(x => x.PreviousName).ToListAsync(ct)
             : [];
+        // Name variations people added for the company are searched every time, with who added them as the reason.
+        var variations = (await LitigationCompanyNames.ActiveVariationsAsync(db, request.Cin ?? request.Llpin, ct))
+            .Select(v => new ApprovedLitigationAlias(v.Name, LitigationKeywordSource.AddedNameVariation, $"Added by {v.AddedBy} on {Ist.Date(v.AddedUtc)}"))
+            .ToList();
         var keywords = suggester is null
-            ? LitigationKeywordPlanner.Build(request.CompanyName, historicalNames)
-            : await suggester.SuggestAsync(request.CompanyName, historicalNames, request.RequestId, ct);
+            ? LitigationKeywordPlanner.Build(request.CompanyName, historicalNames, variations)
+            : await suggester.SuggestAsync(request.CompanyName, historicalNames, request.RequestId, ct, variations);
         var appCustomerId = !string.IsNullOrWhiteSpace(request.RequestNumber)
             ? request.RequestNumber.Trim()
             : $"REQ-{request.RequestId}";

@@ -80,15 +80,8 @@ public sealed class ChatSuggestions(AppDbContext db, QuestionRepositoryOptions? 
     }
 
     /// <summary>The company's current and former names, which decide its side in a case.</summary>
-    private async Task<List<string>> CompanyNamesAsync(long requestId, long run, CancellationToken ct)
-    {
-        var names = new List<string>();
-        if (await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId).Select(r => r.CompanyName).FirstOrDefaultAsync(ct) is { Length: > 0 } current)
-            names.Add(current);
-        names.AddRange(await db.CompanyNameHistories.AsNoTracking().Where(h => h.RequestId == requestId && h.IngestionRunId == run && h.PreviousName != "")
-            .Select(h => h.PreviousName).ToListAsync(ct));
-        return names;
-    }
+    private Task<List<string>> CompanyNamesAsync(long requestId, long run, CancellationToken ct) =>
+        LitigationCompanyNames.ForRequestAsync(db, requestId, ct);
 
     /// <summary>The document types present in the request's authoritative filing batch.</summary>
     private async Task<HashSet<string>> DocumentTypesAsync(long requestId, CancellationToken ct)

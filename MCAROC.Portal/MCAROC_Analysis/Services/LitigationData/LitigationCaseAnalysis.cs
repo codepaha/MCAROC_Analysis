@@ -106,6 +106,36 @@ public static class LitigationCaseAnalysisInputBuilder
 
     private static JsonArray Array(IEnumerable<string> values) => new(values.Select(v => (JsonNode)JsonValue.Create(v)!).ToArray());
 
+    /// <summary>Whether an earlier analysis's evidence still stands for <paramref name="input"/>. Byte-identical evidence does; so does evidence that
+    /// differs only in <c>target_names</c> while the names that are one of this case's parties are the same on both sides. The target names are
+    /// every name the company was searched under, so adding a name variation (or a generated form) changes them for every case; without this, one
+    /// added name would pay for re-analysing every case, when it only matters to the cases where it is a party (owner, 2026-10-26).</summary>
+    public static bool SameEvidence(string? priorEvidenceJson, CaseAnalysisInput input)
+    {
+        if (string.IsNullOrEmpty(priorEvidenceJson)) return false;
+        if (priorEvidenceJson == input.EvidenceJson) return true;
+        JsonObject? prior, now;
+        try
+        {
+            prior = JsonNode.Parse(priorEvidenceJson) as JsonObject;
+            now = JsonNode.Parse(input.EvidenceJson) as JsonObject;
+        }
+        catch (JsonException) { return false; }
+        if (prior is null || now is null) return false;
+        var priorNames = Strings(prior["target_names"]);
+        var nowNames = Strings(now["target_names"]);
+        prior.Remove("target_names");
+        now.Remove("target_names");
+        if (!JsonNode.DeepEquals(prior, now)) return false;
+        var parties = Strings(now["petitioners"]).Concat(Strings(now["respondents"])).ToList();
+        return NamesThatAreParties(priorNames, parties).SetEquals(NamesThatAreParties(nowNames, parties));
+
+        static List<string> Strings(JsonNode? node) => node is JsonArray a ? a.Select(x => x?.GetValue<string>() ?? "").Where(x => x.Length > 0).ToList() : [];
+        static HashSet<string> NamesThatAreParties(IEnumerable<string> names, IReadOnlyList<string> parties) =>
+            names.Where(n => parties.Any(p => LitigationModule.Refresh.WholeNamePartyMatcher.Match(p, [n]).Outcome == LitigationModule.Refresh.PartyMatchOutcome.Verified))
+                .Select(LitigationModule.Refresh.WholeNamePartyMatcher.Canonical).ToHashSet(StringComparer.Ordinal);
+    }
+
     private static string CourtType(LitigationCase c) => LitigationBaselineRisk.ForumOf(c.Type, c.Court, c.CourtCategory) switch
     {
         LitigationForum.SupremeCourt => "supreme", LitigationForum.HighCourt => "high", LitigationForum.DistrictCourt => "district",

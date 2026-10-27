@@ -71,6 +71,57 @@ public class LitigationController(
         return run is null ? NotFound() : Ok(run);
     }
 
+    /// <summary>Adds name variations for the request's company (one per line) and re-runs its search with them (see <see cref="NameVariationService"/>).
+    /// A client account is held to the refresh limits like any other re-run; the internal full-access user is not.</summary>
+    [HttpPost("/Requests/{id:long}/Litigation/NameVariations")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> AddNameVariations(long id, [FromForm] string? names, CancellationToken ct)
+    {
+        if (!await db.Requests.AnyAsync(r => r.RequestId == id, ct)) return NotFound();
+        var lines = (names ?? "").Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (lines.Length == 0)
+        {
+            TempData["LitigationSearchError"] = "Enter at least one name variation, one per line.";
+            return Redirect($"/Requests/{id}#tab-litigation");
+        }
+        if (!Services.AnalystAccess.PortalAccess.HasFullAccess(User)
+            && await LitigationRefreshPolicy.GetAsync(db, id, _opts, DateTime.UtcNow, ct) is { Allowed: false } refresh)
+        {
+            TempData["LitigationSearchError"] = refresh.Reason;
+            return Redirect($"/Requests/{id}#tab-litigation");
+        }
+
+        var service = HttpContext.RequestServices.GetRequiredService<NameVariationService>();
+        var outcome = await service.AddAsync(id, lines, User.Identity?.Name ?? "unknown", ct);
+        var summary = string.Join(" ", outcome.Results.Select(r => r.Status == NameVariationAddStatus.Added
+            ? $"Added \"{r.Name}\".{(r.Warning is null ? "" : " " + r.Warning)}"
+            : $"\"{r.Name}\" not added: {r.Message}"));
+        var search = outcome.Search switch
+        {
+            null => "",
+            { Started: true } => " The search has been started with the new names.",
+            { Denial: AdmissionDenial.InFlight } => " A search is already running; the new names are searched as soon as it finishes.",
+            { } s => $" The search could not be started: {s.Message}"
+        };
+        if (outcome.Problem is not null) TempData["LitigationSearchError"] = outcome.Problem;
+        else if (outcome.AddedCount > 0) TempData["LitigationSearchOk"] = summary + search;
+        else TempData["LitigationSearchError"] = summary;
+        return Redirect($"/Requests/{id}#tab-litigation");
+    }
+
+    /// <summary>Removes a name variation: it is no longer searched, and the cases it alone made the company's are assessed again without it.</summary>
+    [HttpPost("/Requests/{id:long}/Litigation/NameVariations/{variationId:long}/Remove")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> RemoveNameVariation(long id, long variationId, CancellationToken ct)
+    {
+        var service = HttpContext.RequestServices.GetRequiredService<NameVariationService>();
+        if (await service.RemoveAsync(id, variationId, User.Identity?.Name ?? "unknown", ct))
+            TempData["LitigationSearchOk"] = "Name variation removed. It is no longer searched; the cases it alone made the company's are being assessed again.";
+        else
+            TempData["LitigationSearchError"] = "That name variation was not found or was already removed.";
+        return Redirect($"/Requests/{id}#tab-litigation");
+    }
+
     /// <summary>Starts or reruns a BPR litigation search for the request. Evaluates fail-closed eligibility
     /// before queuing the job. The first search is free; once a report exists another search is a client refresh,
     /// which is chargeable and must carry <paramref name="confirmChargeableRefresh"/> (set by the tab's confirm

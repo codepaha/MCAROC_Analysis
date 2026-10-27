@@ -172,8 +172,10 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
         var casePromptHash = LitigationCaseAnalysisInputBuilder.Hash(LitigationCaseAnalysisPrompt.Instructions);
         foreach (var c in SelectForAnalysis(cases, context))
         {
-            var hash = context.Build(c).EvidenceHash;
-            if (!(prior.GetValueOrDefault(c.LitigationCaseId)?.Any(p => p.EvidenceHash == hash && p.PromptHash == casePromptHash) ?? false)) return true;
+            var input = context.Build(c);
+            var hash = input.EvidenceHash;
+            if (!(prior.GetValueOrDefault(c.LitigationCaseId)?.Any(p => p.PromptHash == casePromptHash
+                    && (p.EvidenceHash == hash || LitigationCaseAnalysisInputBuilder.SameEvidence(p.EvidenceJson, input))) ?? false)) return true;
         }
         // An order with retained text but no outcome classification for its current evidence (e.g. analysed
         // before #195's classification existed) is also work a run would do — never report "up to date" over it.
@@ -404,7 +406,9 @@ public sealed class LitigationAiAnalysisOrchestrator(AppDbContext db, ILitigatio
     {
         var input = context.Build(c);
         var casePromptHash = LitigationCaseAnalysisInputBuilder.Hash(LitigationCaseAnalysisPrompt.Instructions);
-        if (priorForCase?.FirstOrDefault(p => p.EvidenceHash == input.EvidenceHash && p.PromptHash == casePromptHash) is { } same)
+        // Reused when its evidence still stands: byte-identical, or different only in names that are none of this case's parties.
+        if (priorForCase?.FirstOrDefault(p => p.PromptHash == casePromptHash
+                && (p.EvidenceHash == input.EvidenceHash || LitigationCaseAnalysisInputBuilder.SameEvidence(p.EvidenceJson, input))) is { } same)
             return (new LitigationCaseAiAnalysis { LitigationAiAnalysisRunId = runId, LitigationCaseId = c.LitigationCaseId, EvidenceJson = input.EvidenceJson, EvidenceHash = input.EvidenceHash, PromptHash = casePromptHash,
                 RawResponseJson = same.RawResponseJson, ResponseHash = same.ResponseHash, Status = same.Status, AnalysisJson = same.AnalysisJson, CompletedUtc = DateTime.UtcNow }, true);
         return (await AnalyzeCaseFreshAsync(runId, token, c, context, input, casePromptHash, ct), false);

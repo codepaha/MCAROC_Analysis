@@ -70,6 +70,8 @@ public static class AuditRouteRegistry
             // Litigation
             { ("Litigation", "StartAnalysis"), (AuditActionType.LitigationAnalysisRequested, AuditRulePolicy.Always) },
             { ("Litigation", "StartSearch"), (AuditActionType.LitigationSearchRequested, AuditRulePolicy.Always) },
+            { ("Litigation", "AddNameVariations"), (AuditActionType.LitigationNameVariationAdded, AuditRulePolicy.Always) },
+            { ("Litigation", "RemoveNameVariation"), (AuditActionType.LitigationNameVariationRemoved, AuditRulePolicy.Always) },
 
             // Pipeline
             { ("Pipeline", "SelectCin"), (AuditActionType.IdentitySelected, AuditRulePolicy.Always) },

@@ -167,15 +167,8 @@ public sealed class LitigationCasePageService(
             .OrderByDescending(s => s.RetrievedUtc).FirstOrDefaultAsync(ct);
     }
 
-    private async Task<List<string>> CompanyNamesAsync(McaRequest request, CancellationToken ct)
-    {
-        var names = new List<string>();
-        if (!string.IsNullOrWhiteSpace(request.CompanyName)) names.Add(request.CompanyName);
-        if (request.LatestCompletedIngestionRunId is { } runId)
-            names.AddRange(await db.CompanyNameHistories.AsNoTracking().Where(h => h.IngestionRunId == runId && h.PreviousName != null && h.PreviousName != "")
-                .Select(h => h.PreviousName!).ToListAsync(ct));
-        return names;
-    }
+    private Task<List<string>> CompanyNamesAsync(McaRequest request, CancellationToken ct) =>
+        LitigationCompanyNames.ForAsync(db, request.RequestId, request.CompanyName, request.Cin ?? request.Llpin, request.LatestCompletedIngestionRunId, ct);
 
     /// <summary>The other cases of the report that name the same party as this one (the company itself excluded), up to ten, highest tier first.</summary>
     private async Task<IReadOnlyList<RelatedLitigationCase>> RelatedAsync(

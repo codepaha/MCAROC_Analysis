@@ -1,0 +1,106 @@
+@using MCAROC_Analysis.Models
+@using MCAROC_Analysis.Services.LitigationData
+@using MCAROC_Analysis.Services.LitigationModule.Refresh
+@model LitigationTabViewModel
+@{
+    // The names the search covers, and the variations people added for the company (2026-10-26): a name the court records use that the
+    // generated forms miss is added here, and the search runs again with it.
+    var reqId = Model.Request.RequestId;
+    var variationsByKey = Model.NameVariations.ToDictionary(v => v.NameKey);
+    var waiting = Model.NameVariations.Where(v => Model.UnsearchedVariationIds.Contains(v.CompanyNameVariationId)).ToList();
+
+    static string SourceLabel(LitigationKeywordSource source) => source switch
+    {
+        LitigationKeywordSource.LegalName => "Registered name",
+        LitigationKeywordSource.HistoricalLegalName => "Former name",
+        LitigationKeywordSource.GeneratedLegalSuffixVariant => "Without the legal suffix",
+        LitigationKeywordSource.GeneratedNameForm => "Another written form",
+        LitigationKeywordSource.GeneratedHindiSpelling or LitigationKeywordSource.ApprovedHindiAlias => "Hindi spelling",
+        LitigationKeywordSource.GeneratedPhoneticVariant or LitigationKeywordSource.ApprovedPhoneticAlias => "Spelling variant",
+        LitigationKeywordSource.GeneratedAcronymExpansion => "Acronym written out",
+        LitigationKeywordSource.GeneratedAcronym => "Initials",
+        LitigationKeywordSource.AddedNameVariation => "Added name variation",
+        _ => "Alias"
+    };
+}
+
+@if (TempData["LitigationSearchOk"] is string ok)
+{
+    <div class="alert alert-success py-2 px-3 small" role="status">@ok</div>
+}
+@if (TempData["LitigationSearchError"] is string error)
+{
+    <div class="alert alert-warning py-2 px-3 small" role="alert">@error</div>
+}
+
+<details class="mca-section litigation-names mb-3" id="litigation-names" open="@(Model.NameVariations.Count > 0 || waiting.Count > 0 ? "open" : null)">
+    <summary>
+        <strong>Names searched</strong>
+        <span class="badge text-bg-light ms-1">@Model.SearchedKeywords.Count</span>
+        <span class="text-muted small ms-2">Add a name variation if the court records use a form not listed here.</span>
+    </summary>
+
+    @if (Model.SearchedKeywords.Count > 0)
+    {
+        <div class="pi-table-wrap mt-2">
+            <table class="pi-results-table" id="litigation-names-table">
+                <thead><tr><th>Name</th><th>Searched as</th><th></th></tr></thead>
+                <tbody>
+                @foreach (var k in Model.SearchedKeywords)
+                {
+                    var added = k.Source == LitigationKeywordSource.AddedNameVariation && variationsByKey.TryGetValue(WholeNamePartyMatcher.Canonical(k.Value), out var v) ? v : null;
+                    <tr>
+                        <td>@k.Value</td>
+                        <td>
+                            @SourceLabel(k.Source)
+                            @if (!string.IsNullOrWhiteSpace(k.Reason)) { <span class="text-muted small d-block">@k.Reason</span> }
+                        </td>
+                        <td class="text-end">
+                            @if (added is not null)
+                            {
+                                <form method="post" action="/Requests/@reqId/Litigation/NameVariations/@added.CompanyNameVariationId/Remove" class="d-inline"
+                                      onsubmit="return confirm('Stop searching this name variation? The cases it alone attributed to the company are assessed again without it.');">
+                                    @Html.AntiForgeryToken()
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary">Remove</button>
+                                </form>
+                            }
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+    else
+    {
+        <p class="text-muted small mt-2 mb-0">No search has run yet. The registered and former names, their usual written forms and any variation added here are searched.</p>
+    }
+
+    @if (waiting.Count > 0)
+    {
+        <p class="small mt-2 mb-0" id="litigation-names-waiting">
+            <i class="bi bi-hourglass-split me-1"></i>Waiting to be searched: @string.Join(", ", waiting.Select(w => $"\"{w.Name}\"")).
+            The search runs again with them as soon as the current one finishes.
+        </p>
+    }
+
+    @if (Model.CanAddNameVariations)
+    {
+        <form method="post" action="/Requests/@reqId/Litigation/NameVariations" class="mt-3" id="litigation-names-add">
+            @Html.AntiForgeryToken()
+            <label for="litigation-names-input" class="form-label small mb-1">Name variations, one per line</label>
+            <textarea id="litigation-names-input" name="names" rows="2" class="form-control form-control-sm" maxlength="2000"
+                      placeholder="e.g. GODREJ PROPS LTD"></textarea>
+            <div class="form-text">
+                Kept for this company: every later request and refresh searches them too. Adding runs the search again with every name (one paid search).
+                A party that is exactly a variation counts as the company; a party that only contains it (&ldquo;Laxmi Vatika Limited&rdquo; for
+                &ldquo;Vatika Limited&rdquo;) is checked like any other and set aside if it is another company.
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary mt-2">Add and search</button>
+        </form>
+    }
+    else
+    {
+        <p class="text-muted small mt-2 mb-0">Name variations are kept per company, so the request needs a CIN or LLPIN before one can be added.</p>
+    }
+</details>
