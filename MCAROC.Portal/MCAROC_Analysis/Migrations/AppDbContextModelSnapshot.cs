@@ -1946,6 +1946,58 @@ namespace MCAROC_Analysis.Migrations
                     b.ToTable("CompanyNameTokens");
                 });
 
+            modelBuilder.Entity("MCAROC_Analysis.Data.Entities.CompanyNameVariation", b =>
+                {
+                    b.Property<long>("CompanyNameVariationId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("CompanyNameVariationId"));
+
+                    b.Property<string>("AddedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<long>("AddedOnRequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("AddedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Identifier")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("NameKey")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("RemovedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime?>("RemovedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("CompanyNameVariationId");
+
+                    b.HasIndex("AddedOnRequestId");
+
+                    b.HasIndex("Identifier", "NameKey")
+                        .IsUnique()
+                        .HasFilter("[RemovedUtc] IS NULL");
+
+                    b.ToTable("CompanyNameVariations");
+                });
+
             modelBuilder.Entity("MCAROC_Analysis.Data.Entities.CompanyOfficer", b =>
                 {
                     b.Property<long>("CompanyOfficerId")

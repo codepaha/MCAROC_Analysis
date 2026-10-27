@@ -170,6 +170,9 @@ builder.Services.AddScoped<MCAROC_Analysis.Services.Analysis.LitigationFindingsR
 builder.Services.AddHostedService<MCAROC_Analysis.Services.Analysis.LitigationFindingsRefreshWorker>();
 builder.Services.AddScoped<LitigationKeywordSuggester>();
 builder.Services.AddScoped<LitigationStartService>();
+// Name variations added on the Litigation tab: searched from then on, and the follow-up search and analysis finished in the background.
+builder.Services.AddScoped<NameVariationService>();
+builder.Services.AddHostedService<NameVariationSearchWorker>();
 builder.Services.AddScoped<ChargeLitigationService>();
 builder.Services.AddScoped<MCAROC_Analysis.Services.LitigationModule.Freshness.ICourtRefreshStatusService, MCAROC_Analysis.Services.LitigationModule.Freshness.CourtRefreshStatusService>();
 builder.Services.AddScoped<MCAROC_Analysis.Services.LitigationModule.Freshness.CourtRefreshStatusService>();

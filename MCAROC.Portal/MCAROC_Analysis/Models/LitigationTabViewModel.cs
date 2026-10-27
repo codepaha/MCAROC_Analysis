@@ -166,6 +166,16 @@ public sealed class LitigationTabViewModel
 {
     public required McaRequest Request { get; set; }
     public LitigationSearchJob? SearchJob { get; set; }
+
+    /// <summary>The names the latest search covered, each with where it came from (registered, former, generated, added).</summary>
+    public IReadOnlyList<LitigationKeyword> SearchedKeywords { get; set; } = [];
+
+    /// <summary>The name variations added for the company (kept per CIN/LLPIN); those not yet in a search are in <see cref="UnsearchedVariationIds"/>.</summary>
+    public IReadOnlyList<CompanyNameVariation> NameVariations { get; set; } = [];
+    public IReadOnlySet<long> UnsearchedVariationIds { get; set; } = new HashSet<long>();
+
+    /// <summary>Variations are kept per company, so the request needs a CIN or LLPIN to add one.</summary>
+    public bool CanAddNameVariations { get; set; }
     public LitigationReportSnapshot? AuthoritativeSnapshot { get; set; }
     public LitigationReportSnapshot? CurrentAttemptSnapshot { get; set; }
     public SnapshotImportState ImportState { get; set; } = SnapshotImportState.NotCreated;

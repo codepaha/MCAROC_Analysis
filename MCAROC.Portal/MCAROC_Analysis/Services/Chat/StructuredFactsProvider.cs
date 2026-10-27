@@ -311,15 +311,8 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
     }
 
     /// <summary>The company's current name and the names it has had, which a party list may use.</summary>
-    internal async Task<List<string>> CompanyNamesAsync(long requestId, string companyName, long? ingestionRunId, CancellationToken ct)
-    {
-        var names = new List<string>();
-        if (!string.IsNullOrWhiteSpace(companyName)) names.Add(companyName);
-        if (ingestionRunId is { } runId)
-            names.AddRange(await db.CompanyNameHistories.AsNoTracking().Where(h => h.RequestId == requestId && h.IngestionRunId == runId)
-                .Select(h => h.PreviousName).ToListAsync(ct));
-        return names.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
-    }
+    internal Task<List<string>> CompanyNamesAsync(long requestId, string companyName, long? ingestionRunId, CancellationToken ct) =>
+        LitigationCompanyNames.ForRequestAsync(db, requestId, ct);
 
     private static HashSet<string> DetermineDetailedDomains(QuestionHints hints)
     {

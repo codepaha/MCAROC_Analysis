@@ -44,11 +44,8 @@ public sealed record LitigationEvidence(bool Searched, IReadOnlyList<LitigationC
         var cases = await db.LitigationCases.AsNoTracking().Where(c => caseIds.Contains(c.LitigationCaseId))
             .OrderBy(c => c.LitigationCaseId).ToListAsync(ct);
 
-        var names = new List<string>();
-        if (!string.IsNullOrWhiteSpace(companyName)) names.Add(companyName);
-        if (ingestionRunId is { } runId)
-            names.AddRange(await db.CompanyNameHistories.AsNoTracking().Where(h => h.RequestId == requestId && h.IngestionRunId == runId)
-                .Select(h => h.PreviousName).ToListAsync(ct));
-        return new LitigationEvidence(true, cases, names.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList(), version);
+        var identifier = await db.Requests.AsNoTracking().Where(r => r.RequestId == requestId).Select(r => r.Cin ?? r.Llpin).FirstOrDefaultAsync(ct);
+        var names = await LitigationCompanyNames.ForAsync(db, requestId, companyName, identifier, ingestionRunId, ct);
+        return new LitigationEvidence(true, cases, names, version);
     }
 }

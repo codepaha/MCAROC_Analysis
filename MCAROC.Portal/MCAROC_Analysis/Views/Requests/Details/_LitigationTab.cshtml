@@ -114,6 +114,7 @@
     }
     <form id="litigation-analysis-token" class="d-none">@Html.AntiForgeryToken()</form>
     <div id="litigation-action-message" class="alert alert-secondary py-2 px-3 small d-none" role="status"></div>
+    @await Html.PartialAsync("~/Views/Requests/Details/_LitigationNames.cshtml", lake)
 
     var courtRefreshService = Context?.RequestServices?.GetService(typeof(ICourtRefreshStatusService)) as ICourtRefreshStatusService;
     var courtStatus = courtRefreshService != null && reqId > 0

@@ -15,7 +15,9 @@ public sealed record RuleAssessment(LitigationAttributionOutcome? Outcome, strin
 /// <summary>
 /// The deterministic part of attribution (#489, decision a), always applied before any judgement and never overridden by one:
 /// <list type="number">
-/// <item>a party that is the company by the whole-name rule (current or former name, or an office acting for it) makes the case the company's;</item>
+/// <item>a party that is the company by the whole-name rule (current or former name, or an office acting for it) makes the case the company's; so does a
+/// party that is exactly a name variation a person added for the company (<c>exact-name-variation</c>) — only exactly: a party that merely contains
+/// it ("Laxmi Vatika Limited" for "Vatika Limited") is judged like any other;</item>
 /// <item>when every party that shares a word with the company's names is another body named after it (its employees' union, a cooperative society, a
 /// trust...) and no party is written in Devanagari, the case is not the company's;</item>
 /// <item>otherwise the parties that share a word (or a sound) with its names are judged; when none does, which happens for a case found through a Hindi or
@@ -38,8 +40,14 @@ public static class CaseAttributionRules
         "LIMITED", "PRIVATE", "LLP", "PUBLIC", "COMPANY", "CO", "CORPORATION", "CORP", "INC", "AND", "THE", "OF", "INDIA", "INDIAN", "NEW", "M", "S", "MS"
     };
 
-    public static RuleAssessment Assess(IReadOnlyList<string> parties, IReadOnlyCollection<string> currentNames, IReadOnlyCollection<string> formerNames)
+    /// <summary>The rule for a party that is exactly a name variation added for the company.</summary>
+    public const string NameVariationRule = "exact-name-variation";
+
+    /// <param name="variations">The name variations people added for the company (<see cref="CompanyNameVariation"/>).</param>
+    public static RuleAssessment Assess(IReadOnlyList<string> parties, IReadOnlyCollection<string> currentNames, IReadOnlyCollection<string> formerNames,
+        IReadOnlyCollection<string>? variations = null)
     {
+        variations ??= [];
         if (parties.Count == 0)
             return new(LitigationAttributionOutcome.Ambiguous, "no-parties", null, "The record lists no parties, so it cannot be told whose case it is.", []);
 
@@ -49,8 +57,13 @@ public static class CaseAttributionRules
             if (match.Outcome == PartyMatchOutcome.Verified)
                 return new(LitigationAttributionOutcome.Attributed, match.Rule, party, ReasonFor(match), [], MatchedName: match.MatchedName);
         }
+        foreach (var party in parties)
+            if (MatchingVariation(party, variations) is { } variation)
+                return new(LitigationAttributionOutcome.Attributed, NameVariationRule, party,
+                    $"A party is the name variation \"{variation}\" added for the company.", [], MatchedName: variation);
 
-        var companyWords = currentNames.Concat(formerNames).SelectMany(DistinctiveWords).ToHashSet(StringComparer.Ordinal);
+        // A variation's words count for resemblance too, so a party that only shares them is judged rather than passed over.
+        var companyWords = currentNames.Concat(formerNames).Concat(variations).SelectMany(DistinctiveWords).ToHashSet(StringComparer.Ordinal);
         var companySounds = companyWords.Select(NamePhoneticKey.WordKey).Where(k => k.Length >= 3).ToHashSet(StringComparer.Ordinal);
         var resembling = parties.Where(p => Resembles(p, companyWords, companySounds)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
@@ -82,6 +95,14 @@ public static class CaseAttributionRules
         "exact-former-name-representative" => $"A party is the company's former name ({match.MatchedName}), named through the office acting for it.",
         _ => "A party is the company."
     };
+
+    /// <summary>The variation the party is exactly (whole name, canonical form), or null.</summary>
+    public static string? MatchingVariation(string party, IReadOnlyCollection<string> variations)
+    {
+        if (variations.Count == 0) return null;
+        var key = WholeNamePartyMatcher.Canonical(party);
+        return key.Length == 0 ? null : variations.FirstOrDefault(v => WholeNamePartyMatcher.Canonical(v) == key);
+    }
 
     internal static IEnumerable<string> DistinctiveWords(string? name) =>
         WholeNamePartyMatcher.Canonical(name).Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(w => w.Length >= 3 && !NotDistinctive.Contains(w));

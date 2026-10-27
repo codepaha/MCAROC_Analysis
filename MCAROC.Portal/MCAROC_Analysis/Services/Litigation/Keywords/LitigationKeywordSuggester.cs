@@ -28,9 +28,12 @@ public sealed class LitigationKeywordSuggester(CompanyNameSuggestionService sugg
 {
     public const int MaxKeywords = 20;
 
-    public async Task<IReadOnlyList<LitigationKeyword>> SuggestAsync(string legalName, IEnumerable<string>? historicalNames, long? requestId, CancellationToken ct)
+    /// <param name="approvedAliases">Names added for the company (its name variations): searched right after the registered and former names, ahead of
+    /// every generated form, so the keyword cap never drops one.</param>
+    public async Task<IReadOnlyList<LitigationKeyword>> SuggestAsync(string legalName, IEnumerable<string>? historicalNames, long? requestId, CancellationToken ct,
+        IEnumerable<ApprovedLitigationAlias>? approvedAliases = null)
     {
-        var planned = LitigationKeywordPlanner.Build(legalName, historicalNames);
+        var planned = LitigationKeywordPlanner.Build(legalName, historicalNames, approvedAliases);
         if (options?.Value.UseGeneratedKeywords != true) return planned;
         var forms = NameFormVariants.Generate(legalName);
         var englishForms = planned.Select(k => k.Value).Concat(forms.Where(f => f.Source == LitigationKeywordSource.GeneratedNameForm).Select(f => f.Value)).ToList();

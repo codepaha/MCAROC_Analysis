@@ -117,5 +117,9 @@ public enum AuditActionType
 
     // E2E run record (#514): what a run's record shows that no other table holds.
     DossierDownloaded,
-    PreflightRun
+    PreflightRun,
+
+    // Name variations added for a company on the Litigation tab (2026-10-26).
+    LitigationNameVariationAdded,
+    LitigationNameVariationRemoved
 }

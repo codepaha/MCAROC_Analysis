@@ -74,19 +74,9 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
     private async Task<CaseSetSource> SourceAsync(long requestId, CancellationToken ct) =>
         readerGate is null ? CaseSetSource.Legacy : await readerGate.ResolveChargeLinksAsync(requestId, ct);
 
-    /// <summary>The company's registered name and its former names (latest completed ingestion): what decides its side of a case.</summary>
-    public static async Task<List<string>> CompanyNamesAsync(AppDbContext db, long requestId, CancellationToken ct)
-    {
-        var r = await db.Requests.AsNoTracking().Where(x => x.RequestId == requestId)
-            .Select(x => new { x.CompanyName, x.LatestCompletedIngestionRunId }).FirstOrDefaultAsync(ct);
-        if (r is null) return [];
-        var names = new List<string> { r.CompanyName };
-        if (r.LatestCompletedIngestionRunId is { } runId)
-            names.AddRange(await db.CompanyNameHistories.AsNoTracking()
-                .Where(h => h.RequestId == requestId && h.IngestionRunId == runId && h.PreviousName != null && h.PreviousName != "")
-                .Select(h => h.PreviousName!).ToListAsync(ct));
-        return names.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-    }
+    /// <summary>The company's registered, former and added names (<see cref="LitigationCompanyNames"/>): what decides its side of a case.</summary>
+    public static Task<List<string>> CompanyNamesAsync(AppDbContext db, long requestId, CancellationToken ct) =>
+        LitigationCompanyNames.ForRequestAsync(db, requestId, ct);
 
     public async Task<ChargeLitigationSummary> GetAsync(long requestId, CancellationToken ct = default)
     {

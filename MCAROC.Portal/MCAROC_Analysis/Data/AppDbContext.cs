@@ -50,6 +50,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ShareholdingPatternRow> ShareholdingPatternRows => Set<ShareholdingPatternRow>();
     public DbSet<LlpContribution> LlpContributions => Set<LlpContribution>();
     public DbSet<CompanyNameHistory> CompanyNameHistories => Set<CompanyNameHistory>();
+    public DbSet<CompanyNameVariation> CompanyNameVariations => Set<CompanyNameVariation>();
     public DbSet<PrincipalBusinessActivity> PrincipalBusinessActivities => Set<PrincipalBusinessActivity>();
     public DbSet<RelatedCorporate> RelatedCorporates => Set<RelatedCorporate>();
     public DbSet<RelatedPartyTransaction> RelatedPartyTransactions => Set<RelatedPartyTransaction>();
@@ -308,6 +309,20 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.Identifier).HasMaxLength(30).IsRequired();
             e.Property(x => x.State).HasConversion<string>().HasMaxLength(20);
             e.Property(x => x.RowVersion).IsRowVersion();
+        });
+
+        modelBuilder.Entity<CompanyNameVariation>(e =>
+        {
+            e.HasKey(x => x.CompanyNameVariationId);
+            e.Property(x => x.Identifier).HasMaxLength(30).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(300).IsRequired();
+            e.Property(x => x.NameKey).HasMaxLength(300).IsRequired();
+            e.Property(x => x.AddedBy).HasMaxLength(200).IsRequired();
+            e.Property(x => x.RemovedBy).HasMaxLength(200);
+            e.Ignore(x => x.IsActive);
+            // One active variation per name per company; removed ones stay for audit.
+            e.HasIndex(x => new { x.Identifier, x.NameKey }).IsUnique().HasFilter("[RemovedUtc] IS NULL");
+            e.HasIndex(x => x.AddedOnRequestId);
         });
 
         modelBuilder.Entity<UnlockApproval>(e =>

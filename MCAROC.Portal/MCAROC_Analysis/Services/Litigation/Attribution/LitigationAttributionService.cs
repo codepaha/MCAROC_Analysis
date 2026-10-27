@@ -43,6 +43,9 @@ public sealed class LitigationAttributionService(AppDbContext db, IServiceProvid
         if (cases.Count == 0) return new(0, 0, 0, 0, 0, 0);
 
         var (subject, names) = await SubjectAsync(requestId, request.CompanyName!, request.Cin ?? request.Llpin, request.LatestCompletedIngestionRunId, ct);
+        // Name variations people added for the company: a party that is exactly one is the company's (CaseAttributionRules.NameVariationRule).
+        var variations = await LitigationCompanyNames.ActiveVariationsAsync(db, request.Cin ?? request.Llpin, ct);
+        var variationNames = variations.Select(v => v.Name).ToList();
         var subjectKey = SubjectKey(request.Cin ?? request.Llpin, request.CompanyName!);
         var now = DateTime.UtcNow;
         var before = cases.ToDictionary(c => c.LitigationCaseId, c => LitigationAttribution.Shown(c.AttributionOutcome));
@@ -53,7 +56,10 @@ public sealed class LitigationAttributionService(AppDbContext db, IServiceProvid
         var holders = new Dictionary<(string Name, bool Former), (IReadOnlyList<NameHolder> Others, bool Known)>();
         foreach (var c in cases)
         {
-            var assessment = CaseAttributionRules.Assess(PartiesOf(c), [subject.LegalName], subject.FormerNames);
+            var assessment = CaseAttributionRules.Assess(PartiesOf(c), [subject.LegalName], subject.FormerNames, variationNames);
+            if (assessment.Rule == CaseAttributionRules.NameVariationRule
+                && variations.FirstOrDefault(v => v.Name == assessment.MatchedName) is { } added)
+                assessment = assessment with { Reason = $"A party is the name variation \"{added.Name}\" added for the company by {added.AddedBy} on {Ist.Date(added.AddedUtc)}." };
             if (assessment.NeedsJudgement) { needing.Add((c, assessment.Candidates, assessment)); continue; }
             if (assessment.Outcome == LitigationAttributionOutcome.Attributed && assessment.MatchedName is { } matched
                 && (FormerNameCaseRules.IsFormerNameRule(assessment.Rule) || FormerNameCaseRules.IsCurrentNameRule(assessment.Rule)))
