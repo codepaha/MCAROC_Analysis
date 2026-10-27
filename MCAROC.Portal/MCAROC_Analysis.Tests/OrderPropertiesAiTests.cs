@@ -222,6 +222,31 @@ public class OrderPropertiesAiTests
         Assert.False(CaseOrderProperties.SameProperty(Land("75A", "Kirol", "Mumbai"), Land("76", "Kirol", "Mumbai")));
     }
 
+    /// <summary>Review of #557 (a6e9ff0): "1/23" and "12/3" are two parcels; stripping the separator made both "123", and one parcel's
+    /// attachment showed against the other.</summary>
+    [Fact]
+    public void Survey_numbers_that_differ_only_in_their_separators_are_two_parcels()
+    {
+        var attached = new OrderProperty(1, OrderPropertyRole.Attached, OrderPropertyRelation.Unknown, null,
+            [new OrderPropertyDirection(OrderPropertyDirectionKind.Attachment, "survey no. 1/23 is attached")], Land("1/23", "Kirol", "Mumbai"));
+        var disputed = new OrderProperty(1, OrderPropertyRole.Disputed, OrderPropertyRelation.OtherParty, OrderPropertyIssue.Title, [], Land("12/3", "Kirol", "Mumbai"));
+        var readings = new Dictionary<long, LitigationOrderPropertyReading> { [101] = Reading(101, attached), [102] = Reading(102, disputed) };
+
+        var props = CaseOrderProperties.Build([Order(1, "01-01-2025"), Order(2, "01-02-2025")], readings);
+
+        Assert.Equal(2, props.Properties.Count);
+        Assert.Empty(Assert.Single(props.Properties, p => p.Role == OrderPropertyRole.Disputed).Directions);
+        Assert.False(CaseOrderProperties.SameProperty(Land("1/23", "Kirol", "Mumbai"), Land("12/3", "Kirol", "Mumbai")));
+        Assert.True(CaseOrderProperties.SameProperty(Land("1 / 23", "Kirol", "Mumbai"), Land("1/23", "kirol", null)));   // spacing and case do not matter
+    }
+
+    [Fact]
+    public void Unit_numbers_that_differ_only_in_their_separators_are_two_units()
+    {
+        Assert.False(CaseOrderProperties.SameProperty(Unit("B-21", null, "Godrej Serenity", "Mumbai"), Unit("B2-1", null, "Godrej Serenity", "Mumbai")));
+        Assert.True(CaseOrderProperties.SameProperty(Unit("B-21", null, "Godrej Serenity", "Mumbai"), Unit("b–21", null, "Godrej Serenity", null)));  // an en dash is a dash
+    }
+
     [Fact]
     public void A_unit_matches_only_with_its_building_or_project_and_no_conflicting_place()
     {

@@ -81,7 +81,7 @@ public sealed record CaseOrderProperties(
     /// </list></summary>
     public static bool SameProperty(AiProperty a, AiProperty b)
     {
-        if (Conflict(a.UnitNumber, b.UnitNumber) || Conflict(a.Building, b.Building) || Conflict(a.Project, b.Project)
+        if (IdConflict(a.UnitNumber, b.UnitNumber) || Conflict(a.Building, b.Building) || Conflict(a.Project, b.Project)
             || Conflict(a.Village, b.Village) || Conflict(a.City, b.City) || Conflict(a.Pin, b.Pin))
             return false;
         var surveysA = Surveys(a);
@@ -91,7 +91,7 @@ public sealed record CaseOrderProperties(
 
         var sameVillageOrPin = Same(a.Village, b.Village) || Same(a.Pin, b.Pin);
         if (a.UnitNumber is not null && b.UnitNumber is not null)
-            return Same(a.UnitNumber, b.UnitNumber) && (Same(a.Building, b.Building) || Same(a.Project, b.Project));
+            return SameId(a.UnitNumber, b.UnitNumber) && (Same(a.Building, b.Building) || Same(a.Project, b.Project));
         if (surveysA.Count > 0 && surveysB.Count > 0)
             return surveysA.Keys.Intersect(surveysB.Keys).Any() && sameVillageOrPin;
         if (a.UnitNumber is null && b.UnitNumber is null && surveysA.Count == 0 && surveysB.Count == 0)
@@ -103,8 +103,15 @@ public sealed record CaseOrderProperties(
     private static bool Same(string? a, string? b) => a is not null && b is not null && N(a).Length > 0 && N(a) == N(b);
     private static bool Conflict(string? a, string? b) => a is not null && b is not null && N(a).Length > 0 && N(b).Length > 0 && N(a) != N(b);
 
+    /// <summary>A unit or survey number compared as written, but for spacing, case and the dash used: its separators are part of it
+    /// ("1/23" and "12/3" are two parcels, "B-21" and "B2-1" two flats). Names and places are compared on letters and digits only.</summary>
+    internal static string Id(string? s) =>
+        new((s ?? "").Where(c => !char.IsWhiteSpace(c)).Select(c => c is '\u2013' or '\u2014' or '\u2212' ? '-' : char.ToUpperInvariant(c)).ToArray());
+    private static bool SameId(string? a, string? b) => a is not null && b is not null && Id(a).Length > 0 && Id(a) == Id(b);
+    private static bool IdConflict(string? a, string? b) => a is not null && b is not null && Id(a).Length > 0 && Id(b).Length > 0 && Id(a) != Id(b);
+
     private static Dictionary<string, HashSet<string>> Surveys(AiProperty p) =>
-        p.SurveyNumbers.GroupBy(g => g.Scheme).ToDictionary(g => g.Key, g => g.SelectMany(x => x.Numbers).Select(N).ToHashSet());
+        p.SurveyNumbers.GroupBy(g => g.Scheme).ToDictionary(g => g.Key, g => g.SelectMany(x => x.Numbers).Select(Id).Where(n => n.Length > 0).ToHashSet());
 
     private static int Richness(AiProperty p) =>
         (p.UnitNumber is null ? 0 : 1) + (p.Building is null ? 0 : 1) + (p.Project is null ? 0 : 1) + p.SurveyNumbers.Count + p.Areas.Count
