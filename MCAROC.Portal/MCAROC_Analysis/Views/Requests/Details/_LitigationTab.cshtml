@@ -496,6 +496,12 @@
         })();
     </script>
 
+    @* #554: every property the orders name, charged first, then other property in dispute. *@
+    @if (Model.ChargeLitigation?.PropertyLitigation is { ShouldShow: true } propertyLitigation)
+    {
+        @await Html.PartialAsync("~/Views/Requests/Details/_PropertyLitigation.cshtml", propertyLitigation, new ViewDataDictionary(ViewData) { ["RequestId"] = reqId })
+    }
+
     @* Charged property vs cases. Only Strong links are shown; silence is explained, never presented as "clean". *@
     @if (Model.ChargeLitigation is { } chl)
     {

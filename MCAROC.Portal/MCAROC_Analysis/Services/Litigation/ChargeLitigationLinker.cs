@@ -41,10 +41,12 @@ public sealed record ChargeLitigationLink(
     public string CaseKey => Case.LitigationCaseId is { } c ? $"lake:{c}" : $"wb:{Case.LitigationId}";
 }
 
+/// <param name="PropertyLitigation">Every property the cases' orders name, by charged / charged project / not under a charge (#554).</param>
 public sealed record ChargeLitigationSummary(
     IReadOnlyList<ChargeLitigationLink> Links, int CasesScanned, int OrdersScanned, int OrdersWithoutText, bool NcltOrdersSkipped,
     int ChargesWithIdentifiers = 0, int MovableChargesWithoutIdentifiers = 0,
-    long? SnapshotId = null, string? Version = null)
+    long? SnapshotId = null, string? Version = null,
+    MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary? PropertyLitigation = null)
 {
     public static ChargeLitigationSummary Empty { get; } = new([], 0, 0, 0, false);
 
@@ -83,8 +85,12 @@ public static partial class ChargeLitigationLinker
         IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargedProperty>? charged = null)
     {
         var links = new List<ChargeLitigationLink>();
+        var propertyLitigation = orderProperties is null ? null
+            : MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary.Build(cases,
+                orderProperties.ToDictionary(kv => kv.Key, kv => kv.Value.WithTies(charged ?? [], companyNames)),
+                openCharges.Count, ChargesNotComparable(openCharges, charged ?? []));
         if (openCharges.Count == 0)
-            return new ChargeLitigationSummary([], cases.Count, 0, 0, cases.Any(LitigationOrderAddressMatcher.IsNcltCase));
+            return new ChargeLitigationSummary([], cases.Count, 0, 0, cases.Any(LitigationOrderAddressMatcher.IsNcltCase), PropertyLitigation: propertyLitigation);
 
         // Never from word matching (#554: any number plus any word made a "strong" match, 426 false links on Godrej, none real): the properties
         // each order names are read and compared with the charged properties field by field.
@@ -104,8 +110,16 @@ public static partial class ChargeLitigationLinker
             OrdersWithoutText: orders.Count - withText,
             NcltOrdersSkipped: cases.Any(LitigationOrderAddressMatcher.IsNcltCase),
             ChargesWithIdentifiers: identifiersByCharge.Count,
-            MovableChargesWithoutIdentifiers: openCharges.Count(c => IsMovableCharge(c) && !identifiersByCharge.ContainsKey(c.ChargeId)));
+            MovableChargesWithoutIdentifiers: openCharges.Count(c => IsMovableCharge(c) && !identifiersByCharge.ContainsKey(c.ChargeId)),
+            PropertyLitigation: propertyLitigation);
     }
+
+    /// <summary>Open charges over immovable property whose description names nothing an order's property could be compared with (no unit,
+    /// survey number, building, project or place): a property in dispute that matched no charge may still be under one of these.</summary>
+    private static int ChargesNotComparable(IReadOnlyList<RocCharge> openCharges, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargedProperty> charged) =>
+        openCharges.Count(c =>
+            (c.Events.Any(e => e.PropertyType?.Contains("immovable", StringComparison.OrdinalIgnoreCase) == true) || charged.Any(p => p.ChargeId == c.ChargeId))
+            && !charged.Any(p => p.ChargeId == c.ChargeId && MCAROC_Analysis.Services.PropertyParticulars.OrderPropertiesAi.Identifiable(p.Property)));
 
     // ── Signals: the charged property, or a project under a charge, named in an order (#554) ───────────────
     private static IEnumerable<ChargeLitigationLink> PropertyLinks(IReadOnlyList<LitigationCase> cases,

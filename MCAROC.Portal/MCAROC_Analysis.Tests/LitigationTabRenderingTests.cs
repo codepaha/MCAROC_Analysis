@@ -249,6 +249,48 @@ public class LitigationTabRenderingTests
         Assert.DoesNotContain("reused from another request", html);
     }
 
+    // ── property in litigation (#554) ────────────────────────────────────────────────────────────────────
+
+    private static MCAROC_Analysis.Services.LitigationData.ChargeLitigationSummary WithProperty(MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary s) =>
+        MCAROC_Analysis.Services.LitigationData.ChargeLitigationSummary.Empty with { PropertyLitigation = s };
+
+    /// <summary>Review of #560: with every reading still pending, or only passing mentions, the section shows and says so rather than disappearing.</summary>
+    [Fact]
+    public async Task Property_in_litigation_shows_while_orders_are_read_and_for_passing_mentions_only()
+    {
+        var pending = new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary([], [], [], 0, [], 0, OrdersPending: 4);
+        var mentioned = new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary([], [], [], 3, [], 2, 0);
+
+        var pendingHtml = await RenderLitigationTabAsync(LakeModel(WithProperty(pending)));
+        var mentionedHtml = await RenderLitigationTabAsync(LakeModel(WithProperty(mentioned)));
+        var emptyHtml = await RenderLitigationTabAsync(LakeModel(WithProperty(MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary.Empty)));
+
+        Assert.Contains("id=\"property-litigation\"", pendingHtml);
+        Assert.Contains("No property in issue has been read from the orders yet.", pendingHtml);
+        Assert.Contains("4 orders are still being read.", pendingHtml);
+        Assert.Contains("id=\"property-litigation\"", mentionedHtml);
+        Assert.Contains("3 more properties are named only in passing.", mentionedHtml);
+        Assert.DoesNotContain("id=\"property-litigation\"", emptyHtml);
+    }
+
+    [Fact]
+    public async Task Property_not_matched_to_a_charge_is_not_called_unsecured()
+    {
+        var flat = new MCAROC_Analysis.Services.PropertyParticulars.AiProperty(MCAROC_Analysis.Services.Excel.Parsers.PropertyAssetClass.Immovable,
+            MCAROC_Analysis.Services.Excel.Parsers.PropertyKind.Premises, null, "1804", null, null, "Godrej Alpine", [], null, [], [], null, null, null, "Mangalore", null, null);
+        var entry = new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationEntry(flat, "Unit 1804 · Godrej Alpine",
+            MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyRole.Disputed, MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyRelation.SoldByTarget, null, [], [],
+            [new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationCase(1, "CC 3/2020", "Consumer Court", "Pending")]);
+        var s = new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary([], [], [entry], 0, [], 1, 0, OpenCharges: 6, ChargesNotComparable: 2);
+
+        var html = System.Net.WebUtility.HtmlDecode(await RenderLitigationTabAsync(LakeModel(WithProperty(s))));
+
+        Assert.Contains("Not matched to an open charge", html);
+        Assert.Contains("not proof it is unsecured", html);
+        Assert.Contains("2 of 6 open charge(s)", html);
+        Assert.DoesNotContain("not under any open charge", html);
+    }
+
     // ── charged-property banner and case marker ──────────────────────────────────────────────────────────
 
     private static RequestDetailsViewModel LakeModel(MCAROC_Analysis.Services.LitigationData.ChargeLitigationSummary? summary, bool withCard = false)

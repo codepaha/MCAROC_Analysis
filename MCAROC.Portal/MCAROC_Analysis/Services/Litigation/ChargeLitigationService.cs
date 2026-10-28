@@ -52,7 +52,18 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
             .GroupBy(_ => 1).Select(g => new { Count = g.Count(), Last = g.Max(r => r.CompletedUtc) }).FirstOrDefaultAsync(ct);
         var properties = await MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionService.VersionAsync(db, requestId, ct);
 
-        return $"{sid}-{extracted?.Count ?? 0}-{extracted?.Last?.Ticks ?? 0}-L{live}-R{read?.Count ?? 0}-{read?.Last?.Ticks ?? 0}-{properties}";
+        // The property summary's pending count depends on every downloaded order, not only the extracted ones: a new download adds a pending order,
+        // and an extraction ending without text (failed, corrupt...) removes one without any extracted text or reading changing.
+        // Two plain counts, not a grouped aggregate: grouping makes EF select the text column in a subquery, and the text must never be read here.
+        var downloadedOrders = db.LitigationOrderDocuments.AsNoTracking()
+            .Where(d => orderIds.Contains(d.LitigationCaseOrderId) && d.Status == LitigationOrderDocumentStatus.Downloaded);
+        var downloadedCount = await downloadedOrders.CountAsync(ct);
+        var endedWithoutText = await downloadedOrders.CountAsync(d => d.ExtractedText == null && (d.TextExtractionStatus == FilingDocumentProcessingStatus.Failed
+            || d.TextExtractionStatus == FilingDocumentProcessingStatus.Skipped || d.TextExtractionStatus == FilingDocumentProcessingStatus.PasswordProtected
+            || d.TextExtractionStatus == FilingDocumentProcessingStatus.CorruptPdf || d.TextExtractionStatus == FilingDocumentProcessingStatus.UnsupportedPdf), ct);
+
+        return $"{sid}-{extracted?.Count ?? 0}-{extracted?.Last?.Ticks ?? 0}-L{live}-R{read?.Count ?? 0}-{read?.Last?.Ticks ?? 0}-{properties}"
+            + $"-D{downloadedCount}-{endedWithoutText}";
     }
 
     private static Task<long?> AuthoritativeSnapshotIdAsync(AppDbContext db, long requestId, CancellationToken ct) =>
@@ -92,6 +103,15 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
             .Include(c => c.Events)
             .ToListAsync(ct);
 
+    /// <summary>The orders whose properties the summary counts, read or still to be read (#554): downloaded, with text or with its text still to come.
+    /// An order whose text could not be extracted at all (failed, password-protected, corrupt, unsupported) will never be read and is not pending.
+    /// One rule for every caller, so the Litigation tab and the report count the same orders.</summary>
+    public static bool CountsForProperties(LitigationOrderDocument d) =>
+        d.Status == LitigationOrderDocumentStatus.Downloaded
+        && (d.ExtractedText != null || d.TextExtractionStatus is not (FilingDocumentProcessingStatus.Failed or FilingDocumentProcessingStatus.Skipped
+            or FilingDocumentProcessingStatus.PasswordProtected or FilingDocumentProcessingStatus.CorruptPdf or FilingDocumentProcessingStatus.UnsupportedPdf));
+    // The evidence version (SnapshotVersionAsync) counts the same "ended without text" statuses, so a change here belongs there too.
+
     /// <summary>What the property links are made from (#554): the properties each case's orders name (from their readings) and the open charges'
     /// immovable properties (from the charge extraction, else the rules reading).</summary>
     public static async Task<(IReadOnlyDictionary<long, MCAROC_Analysis.Services.PropertyParticulars.CaseOrderProperties> OrderProperties,
@@ -102,7 +122,7 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
         var extractions = await MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionService.LoadCompletedAsync(db, charges.SelectMany(c => c.Events), ct);
         var charged = MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyChargeMatcher.ChargedProperties(charges, extractions);
         var byCase = new Dictionary<long, MCAROC_Analysis.Services.PropertyParticulars.CaseOrderProperties>();
-        if (charged.Count == 0 || cases.Count == 0) return (byCase, charged);
+        if (cases.Count == 0) return (byCase, charged);
         var documentIds = docsByOrderId.Values.Select(d => d.LitigationOrderDocumentId).ToList();
         var readings = new Dictionary<long, LitigationOrderPropertyReading>();
         foreach (var chunk in documentIds.Chunk(2000))
@@ -111,7 +131,7 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
         foreach (var c in cases)
         {
             var orders = c.Orders.Where(o => o.CollapsedIntoOrderId == null && !o.IsSuperseded).OrderBy(o => o.LitigationCaseOrderId)
-                .Where(o => docsByOrderId.TryGetValue(o.LitigationCaseOrderId, out var d) && d.Status == LitigationOrderDocumentStatus.Downloaded)
+                .Where(o => docsByOrderId.TryGetValue(o.LitigationCaseOrderId, out var d) && CountsForProperties(d))
                 .Select(o => (o, docsByOrderId[o.LitigationCaseOrderId])).ToList();
             if (orders.Count > 0) byCase[c.LitigationCaseId] = MCAROC_Analysis.Services.PropertyParticulars.CaseOrderProperties.Build(orders, readings);
         }
@@ -129,7 +149,8 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
 
         var openChargeCount = await db.RocCharges.AsNoTracking()
             .CountAsync(c => c.RequestId == requestId && (runId == null || c.IngestionRunId == runId) && c.SatisfactionDate == null && c.ChargeStatus != "Satisfied", ct);
-        if (openChargeCount == 0) return ChargeLitigationSummary.Empty with { SnapshotId = snapshotId, Version = version };
+        // No early return without open charges: the properties the orders name are summarised for every company (#554), and with no charge
+        // every property in dispute is one no open charge secures.
 
         var source = await SourceAsync(requestId, ct);
         var key = CacheKey(requestId, version, runId, openChargeCount, source);
@@ -139,6 +160,7 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
 
         var cases = new List<LitigationCase>();
         var docs = new Dictionary<long, LitigationOrderDocument>();
+        var propertyDocs = new Dictionary<long, LitigationOrderDocument>();
         if (snapshotId is { } sid)
         {
             // The same definition of "the request's cases" as the register and the case page (plan section 12.6). The Version above stays on the legacy set on
@@ -152,10 +174,19 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
                 .Where(d => orderIds.Contains(d.LitigationCaseOrderId) && d.ExtractedText != null)
                 .ToListAsync(ct);
             docs = withText.ToDictionary(d => d.LitigationCaseOrderId);
+            // The property summary counts every downloaded order, text or not yet: one awaiting its text is still to be read (pending), as the
+            // report assembler, which loads every document, counts it. "" marks text without loading it again.
+            propertyDocs = (await db.LitigationOrderDocuments.AsNoTracking()
+                .Where(d => orderIds.Contains(d.LitigationCaseOrderId) && d.Status == LitigationOrderDocumentStatus.Downloaded)
+                .Select(d => new LitigationOrderDocument
+                {
+                    LitigationOrderDocumentId = d.LitigationOrderDocumentId, LitigationCaseOrderId = d.LitigationCaseOrderId, Status = d.Status,
+                    TextExtractionStatus = d.TextExtractionStatus, ExtractedText = d.ExtractedText != null ? "" : null
+                }).ToListAsync(ct)).ToDictionary(d => d.LitigationCaseOrderId);
         }
 
         // Version/SnapshotId let a consumer that caches or stores its own output (the dossier) key on the evidence used.
-        var (orderProperties, charged) = await PropertyEvidenceAsync(db, charges, cases, docs, ct);
+        var (orderProperties, charged) = await PropertyEvidenceAsync(db, charges, cases, propertyDocs, ct);
         var summary = ChargeLitigationLinker.Build(charges, cases, docs, await CompanyNamesAsync(db, requestId, ct), orderProperties, charged)
             with { SnapshotId = snapshotId, Version = version };
 
