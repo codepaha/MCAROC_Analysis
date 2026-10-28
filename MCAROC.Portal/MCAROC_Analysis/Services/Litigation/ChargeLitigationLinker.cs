@@ -87,7 +87,8 @@ public static partial class ChargeLitigationLinker
         var links = new List<ChargeLitigationLink>();
         var propertyLitigation = orderProperties is null ? null
             : MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary.Build(cases,
-                orderProperties.ToDictionary(kv => kv.Key, kv => kv.Value.WithTies(charged ?? [], companyNames)));
+                orderProperties.ToDictionary(kv => kv.Key, kv => kv.Value.WithTies(charged ?? [], companyNames)),
+                openCharges.Count, ChargesNotComparable(openCharges, charged ?? []));
         if (openCharges.Count == 0)
             return new ChargeLitigationSummary([], cases.Count, 0, 0, cases.Any(LitigationOrderAddressMatcher.IsNcltCase), PropertyLitigation: propertyLitigation);
 
@@ -112,6 +113,13 @@ public static partial class ChargeLitigationLinker
             MovableChargesWithoutIdentifiers: openCharges.Count(c => IsMovableCharge(c) && !identifiersByCharge.ContainsKey(c.ChargeId)),
             PropertyLitigation: propertyLitigation);
     }
+
+    /// <summary>Open charges over immovable property whose description names nothing an order's property could be compared with (no unit,
+    /// survey number, building, project or place): a property in dispute that matched no charge may still be under one of these.</summary>
+    private static int ChargesNotComparable(IReadOnlyList<RocCharge> openCharges, IReadOnlyList<MCAROC_Analysis.Services.PropertyParticulars.ChargedProperty> charged) =>
+        openCharges.Count(c =>
+            (c.Events.Any(e => e.PropertyType?.Contains("immovable", StringComparison.OrdinalIgnoreCase) == true) || charged.Any(p => p.ChargeId == c.ChargeId))
+            && !charged.Any(p => p.ChargeId == c.ChargeId && MCAROC_Analysis.Services.PropertyParticulars.OrderPropertiesAi.Identifiable(p.Property)));
 
     // ── Signals: the charged property, or a project under a charge, named in an order (#554) ───────────────
     private static IEnumerable<ChargeLitigationLink> PropertyLinks(IReadOnlyList<LitigationCase> cases,

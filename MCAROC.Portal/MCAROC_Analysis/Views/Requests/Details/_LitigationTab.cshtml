@@ -497,7 +497,7 @@
     </script>
 
     @* #554: every property the orders name, charged first, then other property in dispute. *@
-    @if (Model.ChargeLitigation?.PropertyLitigation is { HasAny: true } propertyLitigation)
+    @if (Model.ChargeLitigation?.PropertyLitigation is { ShouldShow: true } propertyLitigation)
     {
         @await Html.PartialAsync("~/Views/Requests/Details/_PropertyLitigation.cshtml", propertyLitigation, new ViewDataDictionary(ViewData) { ["RequestId"] = reqId })
     }

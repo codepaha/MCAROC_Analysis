@@ -69,6 +69,23 @@ public sealed class LitigationReportArtifactsTests
         Assert.Contains("BENCH", text);
     }
 
+    /// <summary>Review of #560: with every reading still pending, the report still has the section and says the orders are being read.</summary>
+    [SkippableFact]
+    public void RenderPdf_shows_the_property_section_while_orders_are_read()
+    {
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "PdfPig text extraction is unreliable off Windows fonts; covered by the windows-tests CI job.");
+        var pending = new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary([], [], [], 0, [], 0, OrdersPending: 4);
+        var report = ReportWithSingleCase("csp-42") with { ChargeLinks = ChargeLitigationSummary.Empty with { PropertyLitigation = pending } };
+
+        using var doc = PdfDocument.Open(new MemoryStream(LitigationReportArtifacts.RenderPdf(report)));
+        var text = string.Concat(doc.GetPages().Select(p => p.Text));
+
+        Assert.Contains("PROPERTY IN LITIGATION", text);
+        Assert.Contains("No property in issue has been read from the orders yet.", text);
+        Assert.Contains("4 order(s) were", text);                     // "still" is set with a "ti" ligature the text extraction splits
+    }
+
     /// <summary>#554: the report lists the property in litigation before the cases, charged first, with the other property in dispute stated as such.</summary>
     [SkippableFact]
     public void RenderPdf_lists_the_property_in_litigation()
@@ -81,14 +98,15 @@ public sealed class LitigationReportArtifactsTests
             MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyRole.Disputed, MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyRelation.SoldByTarget,
             MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyIssue.DelayedPossession, [], [],
             [new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationCase(1, "CC 3/2020", "Consumer Court", "Pending")]);
-        var property = new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary([], [], [entry], 2, [], 1, 0);
+        var property = new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary([], [], [entry], 2, [], 1, 0, OpenCharges: 6, ChargesNotComparable: 2);
         var report = ReportWithSingleCase("csp-42") with { ChargeLinks = ChargeLitigationSummary.Empty with { PropertyLitigation = property } };
 
         using var doc = PdfDocument.Open(new MemoryStream(LitigationReportArtifacts.RenderPdf(report)));
         var text = string.Concat(doc.GetPages().Select(p => p.Text));
 
         Assert.Contains("PROPERTY IN LITIGATION", text);
-        Assert.Contains("OTHER PROPERTY IN DISPUTE", text);
+        Assert.Contains("NOT MATCHED TO AN OPEN CHARGE", text);
+        Assert.Contains("not proof it is unsecured", text);
         Assert.Contains("Godrej Alpine", text);
         Assert.Contains("delayed possession", text);
         Assert.Contains("CC 3/2020", text);

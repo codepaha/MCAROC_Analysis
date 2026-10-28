@@ -70,7 +70,7 @@ public sealed class PropertyLitigationSummaryTests
         Assert.Equal([OrderPropertyDirectionKind.Attachment], chargedEntry.Directions);
         Assert.Equal("100603359", Assert.Single(chargedEntry.Ties).Charge.ChargeNumber);
         Assert.Equal(2, Assert.Single(s.InChargedProject).Cases.Single().LitigationCaseId);
-        var other = Assert.Single(s.NotUnderCharge);
+        var other = Assert.Single(s.NotMatchedToCharge);
         Assert.Equal([3L, 4L], other.Cases.Select(c => c.LitigationCaseId).ToArray());
         Assert.Equal(1, s.MentionedOnly);
         Assert.Equal(6, Assert.Single(s.UnidentifiedSecurityCases).LitigationCaseId);
@@ -85,7 +85,7 @@ public sealed class PropertyLitigationSummaryTests
             Case(3, "CC 3/2020", null, Op(OrderPropertyRole.Disputed, P(unit: "1804", project: "Godrej Alpine", city: "Mangalore"), OrderPropertyRelation.SoldByTarget)));
 
         Assert.Empty(summary.Links);
-        var other = Assert.Single(summary.PropertyLitigation!.NotUnderCharge);
+        var other = Assert.Single(summary.PropertyLitigation!.NotMatchedToCharge);
         Assert.Equal("1804", other.Property.UnitNumber);
     }
 
@@ -96,5 +96,58 @@ public sealed class PropertyLitigationSummaryTests
         var summary = ChargeLitigationLinker.Build([], [c], new Dictionary<long, LitigationOrderDocument>(), Godrej, null, null);
 
         Assert.Null(summary.PropertyLitigation);
+    }
+
+    // ── review of #560 ──────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>An order that only mentions the charged office does not put it under "charged property in litigation": it is counted as mentioned.</summary>
+    [Fact]
+    public void A_charged_asset_only_mentioned_is_counted_not_listed()
+    {
+        var charges = new List<RocCharge> { new() { ChargeId = 1, RocChargeNumber = "100603359", LatestChargeHolderRaw = "HDFC Bank Limited", ChargeStatus = "Open", Events = [] } };
+        var charged = new[] { new ChargedProperty(1, "100603359", "HDFC Bank Limited", P(unit: "5C", building: "Godrej One", city: "Mumbai")) };
+
+        var s = Summarise(charges, charged, Case(1, "WP 1/2020", null, Op(OrderPropertyRole.Mentioned, P(unit: "5C", building: "Godrej One", city: "Mumbai")))).PropertyLitigation!;
+
+        Assert.Empty(s.ChargedProperty);
+        Assert.Equal(1, s.MentionedOnly);
+        Assert.False(s.HasAny);
+        Assert.True(s.ShouldShow);                       // shown, with the passing mention disclosed
+    }
+
+    [Fact]
+    public void Orders_still_being_read_show_the_section_with_nothing_listed()
+    {
+        var (c, doc, reading) = Case(1, "CC 1/2020", null);
+        reading.Status = LitigationOrderPropertyReadingStatus.Pending;
+        reading.ResultJson = null;
+
+        var s = Summarise([], [], (c, doc, reading)).PropertyLitigation!;
+
+        Assert.False(s.HasAny);
+        Assert.Equal(1, s.OrdersPending);
+        Assert.True(s.ShouldShow);
+    }
+
+    /// <summary>No match is not proof a property is unsecured: the note says how many open charges could not be compared, or that there is none.</summary>
+    [Fact]
+    public void Not_matched_says_what_could_not_be_compared()
+    {
+        var thin = new RocCharge { ChargeId = 1, RocChargeNumber = "CHG-1", LatestChargeHolderRaw = "SBI", ChargeStatus = "Open",
+            Events = [new RocChargeEvent { ChargeEventId = 1, PropertyType = "Immovable property", PropertyParticulars = "Immovable property of the company" }] };
+        var stock = new RocCharge { ChargeId = 2, RocChargeNumber = "CHG-2", LatestChargeHolderRaw = "SBI", ChargeStatus = "Open",
+            Events = [new RocChargeEvent { ChargeEventId = 2, PropertyType = "Movable property (not being pledge)", PropertyParticulars = "Hypothecation of stock and book debts" }] };
+        var flat = Case(3, "CC 3/2020", null, Op(OrderPropertyRole.Disputed, P(unit: "1804", project: "Godrej Alpine", city: "Mangalore"), OrderPropertyRelation.SoldByTarget));
+
+        var withCharges = Summarise([thin, stock], OrderPropertyChargeMatcher.ChargedProperties([thin, stock], null), flat).PropertyLitigation!;
+        var none = Summarise([], [], flat).PropertyLitigation!;
+
+        Assert.Single(withCharges.NotMatchedToCharge);
+        Assert.Equal(2, withCharges.OpenCharges);
+        Assert.Equal(1, withCharges.ChargesNotComparable);           // the thin immovable charge; the stock charge secures no immovable property
+        Assert.Contains("not proof it is unsecured", withCharges.NotMatchedNote());
+        Assert.Contains("1 of 2 open charge(s)", withCharges.NotMatchedNote());
+        Assert.Contains("no open charge", none.NotMatchedNote());
+        Assert.DoesNotContain("not under any open charge", withCharges.NotMatchedNote());
     }
 }

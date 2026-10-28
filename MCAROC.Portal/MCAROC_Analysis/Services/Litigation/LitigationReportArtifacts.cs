@@ -393,7 +393,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
                 column.Spacing(9);
                 ComposeCover(column);
                 // #554: every property the orders name, before the cases, charged first.
-                if (report.ChargeLinks?.PropertyLitigation is { HasAny: true } property)
+                if (report.ChargeLinks?.PropertyLitigation is { ShouldShow: true } property)
                 {
                     column.Item().PageBreak();
                     ComposePropertyLitigation(column, property);
@@ -564,7 +564,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         {
             ("Charged property in litigation", "The order names the property an open charge secures.", summary.ChargedProperty),
             ("Units of charged projects", "Another unit or part of a project or building an open charge secures.", summary.InChargedProject),
-            ("Other property in dispute", "In dispute, under a lender's security or attached, and not under any open charge.", summary.NotUnderCharge)
+            ("Not matched to an open charge", summary.NotMatchedNote(), summary.NotMatchedToCharge)
         })
         {
             if (entries.Count == 0) continue;
@@ -607,6 +607,10 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
         }
 
         var notes = new List<string>();
+        if (!summary.HasAny)
+            notes.Add(summary.OrdersPending > 0
+                ? "No property in issue has been read from the orders yet."
+                : "The orders name no property in issue (in dispute, under a lender's security or attached).");
         if (summary.UnidentifiedSecurityCases.Count > 0)
             notes.Add($"{summary.UnidentifiedSecurityCases.Count} case(s) act on secured or attached property the orders describe only by reference (for example \"the mortgaged properties described in the schedule\").");
         if (summary.MentionedOnly > 0) notes.Add($"{summary.MentionedOnly} more propert{(summary.MentionedOnly == 1 ? "y is" : "ies are")} named only in passing.");

@@ -15,21 +15,39 @@ public sealed record PropertyLitigationEntry(
     public bool IsInChargedProject => !IsChargedProperty && Ties.Any(t => t.Kind == PropertyChargeTieKind.ChargedProject);
 }
 
-/// <summary>Every property the request's court orders name (#554), for the Litigation tab, the litigation report and the dossier: first the charged
-/// properties in litigation, then units of charged projects, then the properties in dispute that no open charge secures. A property only mentioned
-/// in passing is counted, not listed; party addresses are never part of it. <see cref="UnidentifiedSecurityCases"/>: cases whose orders act on
-/// properties they do not describe ("sale of the mortgaged properties as described in the schedule").</summary>
+/// <summary>Every property the request's court orders name (#554), for the Litigation tab and the litigation report: first the charged properties in
+/// litigation, then units of charged projects, then the properties in dispute that matched no open charge. Only a property the orders put in issue
+/// (disputed, a lender's security, attached) is listed; one only mentioned in passing is counted, whatever it matches; party addresses are never
+/// part of it. <see cref="UnidentifiedSecurityCases"/>: cases whose orders act on properties they do not describe ("sale of the mortgaged properties
+/// as described in the schedule").
+/// <para>Not matching a charge is not proof a property is unsecured: a charge or an order may describe it too thinly to compare.
+/// <see cref="ChargesNotComparable"/> counts the open charges over immovable property whose description names nothing to compare, and
+/// <see cref="NotMatchedNote"/> says so wherever the group is shown.</para></summary>
 public sealed record PropertyLitigationSummary(
     IReadOnlyList<PropertyLitigationEntry> ChargedProperty, IReadOnlyList<PropertyLitigationEntry> InChargedProject,
-    IReadOnlyList<PropertyLitigationEntry> NotUnderCharge, int MentionedOnly, IReadOnlyList<PropertyLitigationCase> UnidentifiedSecurityCases,
-    int CasesRead, int OrdersPending)
+    IReadOnlyList<PropertyLitigationEntry> NotMatchedToCharge, int MentionedOnly, IReadOnlyList<PropertyLitigationCase> UnidentifiedSecurityCases,
+    int CasesRead, int OrdersPending, int OpenCharges = 0, int ChargesNotComparable = 0)
 {
     public static PropertyLitigationSummary Empty { get; } = new([], [], [], 0, [], 0, 0);
 
-    public bool HasAny => ChargedProperty.Count > 0 || InChargedProject.Count > 0 || NotUnderCharge.Count > 0 || UnidentifiedSecurityCases.Count > 0;
+    public bool HasAny => ChargedProperty.Count > 0 || InChargedProject.Count > 0 || NotMatchedToCharge.Count > 0 || UnidentifiedSecurityCases.Count > 0;
+
+    /// <summary>Whether to show the section: something to list, or something to disclose (orders still being read, properties only mentioned).</summary>
+    public bool ShouldShow => HasAny || MentionedOnly > 0 || OrdersPending > 0;
+
+    /// <summary>What "not matched" can and cannot say, for the tab and the report alike.</summary>
+    public string NotMatchedNote() =>
+        OpenCharges == 0
+            ? "In dispute, under a lender's security or attached. The company has no open charge."
+            : "In dispute, under a lender's security or attached, and no open charge's property description matched it. That is not proof it is unsecured: "
+              + (ChargesNotComparable == 0
+                  ? "a charge or an order may describe the property in words that cannot be compared."
+                  : $"{ChargesNotComparable} of {OpenCharges} open charge(s) describe the immovable property they secure too thinly to compare.");
 
     /// <param name="orderProperties">Each case's properties, with their charge ties (<see cref="CaseOrderProperties.WithTies"/>).</param>
-    public static PropertyLitigationSummary Build(IReadOnlyList<LitigationCase> cases, IReadOnlyDictionary<long, CaseOrderProperties> orderProperties)
+    /// <param name="openCharges">The company's open charges, and how many of them secure immovable property described too thinly to compare.</param>
+    public static PropertyLitigationSummary Build(IReadOnlyList<LitigationCase> cases, IReadOnlyDictionary<long, CaseOrderProperties> orderProperties,
+        int openCharges = 0, int chargesNotComparable = 0)
     {
         var groups = new List<List<(CaseOrderProperty P, LitigationCase Case)>>();
         var unidentified = new List<PropertyLitigationCase>();
@@ -61,13 +79,14 @@ public sealed record PropertyLitigationSummary(
                 g.Select(i => i.Case).DistinctBy(c => c.LitigationCaseId).Select(CaseOf).ToList());
         }).OrderBy(e => CaseOrderProperties.Weight(e.Role)).ThenByDescending(e => e.Cases.Count).ToList();
 
-        var inDispute = entries.Where(e => e.Role != OrderPropertyRole.Mentioned).ToList();
+        // Only what the orders put in issue is listed, in every group: a charged asset merely mentioned is not "charged property in litigation".
+        var inIssue = entries.Where(e => e.Role != OrderPropertyRole.Mentioned).ToList();
         return new PropertyLitigationSummary(
-            entries.Where(e => e.IsChargedProperty).ToList(),
-            entries.Where(e => e.IsInChargedProject).ToList(),
-            inDispute.Where(e => e.Ties.Count == 0).ToList(),
-            entries.Count(e => e.Role == OrderPropertyRole.Mentioned && e.Ties.Count == 0),
-            unidentified, read, pending);
+            inIssue.Where(e => e.IsChargedProperty).ToList(),
+            inIssue.Where(e => e.IsInChargedProject).ToList(),
+            inIssue.Where(e => e.Ties.Count == 0).ToList(),
+            entries.Count(e => e.Role == OrderPropertyRole.Mentioned),
+            unidentified, read, pending, openCharges, chargesNotComparable);
     }
 
     private static PropertyLitigationCase CaseOf(LitigationCase c) => new(c.LitigationCaseId, c.CaseNumber ?? c.Cnr, c.Court, c.CaseStatus);

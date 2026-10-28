@@ -14,7 +14,7 @@
         <span class="text-muted small ms-2">
             @Model.ChargedProperty.Count charged propert@(Model.ChargedProperty.Count == 1 ? "y" : "ies") ·
             @Model.InChargedProject.Count in charged projects ·
-            @Model.NotUnderCharge.Count other propert@(Model.NotUnderCharge.Count == 1 ? "y" : "ies") in dispute
+            @Model.NotMatchedToCharge.Count not matched to an open charge
         </span>
     </summary>
 
@@ -22,7 +22,7 @@
     {
         ("Charged property in litigation", "The order names the property an open charge secures.", Model.ChargedProperty, "property-litigation-charged"),
         ("Units of charged projects", "Another unit or part of a project or building an open charge secures (for example a buyer's flat in a mortgaged project).", Model.InChargedProject, "property-litigation-project"),
-        ("Other property in dispute", "In dispute, under a lender's security or attached, and not under any open charge.", Model.NotUnderCharge, "property-litigation-other")
+        ("Not matched to an open charge", Model.NotMatchedNote(), Model.NotMatchedToCharge, "property-litigation-other")
     })
     {
         if (entries.Count == 0) continue;
@@ -69,6 +69,12 @@
         </div>
     }
 
+    @if (!Model.HasAny)
+    {
+        <div class="text-muted small mt-2" id="property-litigation-none">@(Model.OrdersPending > 0
+            ? "No property in issue has been read from the orders yet."
+            : "The orders name no property in issue (in dispute, under a lender's security or attached).")</div>
+    }
     <div class="text-muted small mt-2">
         @if (Model.UnidentifiedSecurityCases.Count > 0)
         {
