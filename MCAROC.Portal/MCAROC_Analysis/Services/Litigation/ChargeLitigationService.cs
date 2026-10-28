@@ -54,20 +54,16 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
 
         // The property summary's pending count depends on every downloaded order, not only the extracted ones: a new download adds a pending order,
         // and an extraction ending without text (failed, corrupt...) removes one without any extracted text or reading changing.
-        var downloaded = await db.LitigationOrderDocuments.AsNoTracking()
-            .Where(d => orderIds.Contains(d.LitigationCaseOrderId) && d.Status == LitigationOrderDocumentStatus.Downloaded)
-            .GroupBy(_ => 1)
-            .Select(g => new
-            {
-                Count = g.Count(),
-                EndedWithoutText = g.Count(d => d.ExtractedText == null && (d.TextExtractionStatus == FilingDocumentProcessingStatus.Failed
-                    || d.TextExtractionStatus == FilingDocumentProcessingStatus.Skipped || d.TextExtractionStatus == FilingDocumentProcessingStatus.PasswordProtected
-                    || d.TextExtractionStatus == FilingDocumentProcessingStatus.CorruptPdf || d.TextExtractionStatus == FilingDocumentProcessingStatus.UnsupportedPdf))
-            })
-            .FirstOrDefaultAsync(ct);
+        // Two plain counts, not a grouped aggregate: grouping makes EF select the text column in a subquery, and the text must never be read here.
+        var downloadedOrders = db.LitigationOrderDocuments.AsNoTracking()
+            .Where(d => orderIds.Contains(d.LitigationCaseOrderId) && d.Status == LitigationOrderDocumentStatus.Downloaded);
+        var downloadedCount = await downloadedOrders.CountAsync(ct);
+        var endedWithoutText = await downloadedOrders.CountAsync(d => d.ExtractedText == null && (d.TextExtractionStatus == FilingDocumentProcessingStatus.Failed
+            || d.TextExtractionStatus == FilingDocumentProcessingStatus.Skipped || d.TextExtractionStatus == FilingDocumentProcessingStatus.PasswordProtected
+            || d.TextExtractionStatus == FilingDocumentProcessingStatus.CorruptPdf || d.TextExtractionStatus == FilingDocumentProcessingStatus.UnsupportedPdf), ct);
 
         return $"{sid}-{extracted?.Count ?? 0}-{extracted?.Last?.Ticks ?? 0}-L{live}-R{read?.Count ?? 0}-{read?.Last?.Ticks ?? 0}-{properties}"
-            + $"-D{downloaded?.Count ?? 0}-{downloaded?.EndedWithoutText ?? 0}";
+            + $"-D{downloadedCount}-{endedWithoutText}";
     }
 
     private static Task<long?> AuthoritativeSnapshotIdAsync(AppDbContext db, long requestId, CancellationToken ct) =>

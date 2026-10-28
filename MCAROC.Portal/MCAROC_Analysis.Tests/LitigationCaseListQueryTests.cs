@@ -75,7 +75,7 @@ public class LitigationCaseListQueryTests(ITestOutputHelper output)
         Assert.All(first.Cases, c => Assert.Empty(c.Orders));
         Assert.True(first.Cases[0].Analysis!.ActiveRestraint); Assert.True(first.Cases[0].Analysis!.LisPendens);
         Assert.True(first.Cases[0].IsAnalysisStaleComparedToCase); Assert.Null(first.Cases[0].Analysis!.Summary);
-        Assert.DoesNotContain(capture.Commands, sql => sql.Contains("ExtractedText") || sql.Contains("PdfUrl") || sql.Contains("RawReportBytes") || sql.Contains("RawResponseJson"));
+        Assert.DoesNotContain(capture.Commands, sql => LoadsOrderText(sql) || sql.Contains("PdfUrl") || sql.Contains("RawReportBytes") || sql.Contains("RawResponseJson"));
         // The order needs each matching case's forum, side and status as displayed, so keys are read for every match (never orders or
         // evidence) and the displayed page is then fetched by id.
         Assert.Contains(capture.Commands, sql => sql.Contains("[LitigationCaseId] IN ("));
@@ -143,7 +143,7 @@ public class LitigationCaseListQueryTests(ITestOutputHelper output)
         }
         cache.Compact(1);
         Assert.Equal(409, Assert.IsType<StatusCodeResult>(await withLinks.LitigationCases(request.RequestId, page: 2)).StatusCode);
-        Assert.DoesNotContain(capture.Commands, sql => sql.Contains("ExtractedText") || sql.Contains("PdfUrl") || sql.Contains("EvidenceJson"));
+        Assert.DoesNotContain(capture.Commands, sql => LoadsOrderText(sql) || sql.Contains("PdfUrl") || sql.Contains("EvidenceJson"));
     }
 
     [Fact]
@@ -153,6 +153,21 @@ public class LitigationCaseListQueryTests(ITestOutputHelper output)
         var url = model.PageUrl(3);
         Assert.Contains("q=A%20%26%20B", url); Assert.Contains("page=3", url);
         Assert.Contains("pageSize=50", url); Assert.EndsWith("#tab-litigation", url);
+    }
+
+    /// <summary>The order text is read into memory: the column is selected. A null check on it inside SQL (the charge links' evidence version
+    /// counts the orders whose extraction ended without text) reads no text and is not a body load.</summary>
+    private static bool LoadsOrderText(string sql) =>
+        System.Text.RegularExpressions.Regex.Replace(sql, @"\[\w+\]\.\[ExtractedText\]\s+IS\s+(?:NOT\s+)?NULL", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Contains("ExtractedText", StringComparison.Ordinal);
+
+    [Fact]
+    public void A_null_check_on_the_order_text_is_not_a_body_load()
+    {
+        Assert.False(LoadsOrderText("SELECT COUNT(*) FROM [LitigationOrderDocuments] AS [l] WHERE [l].[ExtractedText] IS NULL AND [l].[Status] = 2"));
+        Assert.False(LoadsOrderText("SELECT CASE WHEN [l].[ExtractedText] IS NOT NULL THEN N'' END FROM [LitigationOrderDocuments] AS [l]"));
+        Assert.True(LoadsOrderText("SELECT [l].[LitigationOrderDocumentId], [l].[ExtractedText] FROM [LitigationOrderDocuments] AS [l]"));
+        Assert.True(LoadsOrderText("SELECT [l].[ExtractedText] FROM [LitigationOrderDocuments] AS [l] WHERE [l].[ExtractedText] IS NOT NULL"));
     }
 
     private sealed class CaptureSql : DbCommandInterceptor
