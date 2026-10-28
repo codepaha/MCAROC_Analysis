@@ -52,7 +52,22 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
             .GroupBy(_ => 1).Select(g => new { Count = g.Count(), Last = g.Max(r => r.CompletedUtc) }).FirstOrDefaultAsync(ct);
         var properties = await MCAROC_Analysis.Services.PropertyParticulars.PropertyParticularsExtractionService.VersionAsync(db, requestId, ct);
 
-        return $"{sid}-{extracted?.Count ?? 0}-{extracted?.Last?.Ticks ?? 0}-L{live}-R{read?.Count ?? 0}-{read?.Last?.Ticks ?? 0}-{properties}";
+        // The property summary's pending count depends on every downloaded order, not only the extracted ones: a new download adds a pending order,
+        // and an extraction ending without text (failed, corrupt...) removes one without any extracted text or reading changing.
+        var downloaded = await db.LitigationOrderDocuments.AsNoTracking()
+            .Where(d => orderIds.Contains(d.LitigationCaseOrderId) && d.Status == LitigationOrderDocumentStatus.Downloaded)
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                Count = g.Count(),
+                EndedWithoutText = g.Count(d => d.ExtractedText == null && (d.TextExtractionStatus == FilingDocumentProcessingStatus.Failed
+                    || d.TextExtractionStatus == FilingDocumentProcessingStatus.Skipped || d.TextExtractionStatus == FilingDocumentProcessingStatus.PasswordProtected
+                    || d.TextExtractionStatus == FilingDocumentProcessingStatus.CorruptPdf || d.TextExtractionStatus == FilingDocumentProcessingStatus.UnsupportedPdf))
+            })
+            .FirstOrDefaultAsync(ct);
+
+        return $"{sid}-{extracted?.Count ?? 0}-{extracted?.Last?.Ticks ?? 0}-L{live}-R{read?.Count ?? 0}-{read?.Last?.Ticks ?? 0}-{properties}"
+            + $"-D{downloaded?.Count ?? 0}-{downloaded?.EndedWithoutText ?? 0}";
     }
 
     private static Task<long?> AuthoritativeSnapshotIdAsync(AppDbContext db, long requestId, CancellationToken ct) =>
@@ -99,6 +114,7 @@ public sealed class ChargeLitigationService(AppDbContext db, IMemoryCache cache,
         d.Status == LitigationOrderDocumentStatus.Downloaded
         && (d.ExtractedText != null || d.TextExtractionStatus is not (FilingDocumentProcessingStatus.Failed or FilingDocumentProcessingStatus.Skipped
             or FilingDocumentProcessingStatus.PasswordProtected or FilingDocumentProcessingStatus.CorruptPdf or FilingDocumentProcessingStatus.UnsupportedPdf));
+    // The evidence version (SnapshotVersionAsync) counts the same "ended without text" statuses, so a change here belongs there too.
 
     /// <summary>What the property links are made from (#554): the properties each case's orders name (from their readings) and the open charges'
     /// immovable properties (from the charge extraction, else the rules reading).</summary>

@@ -188,10 +188,9 @@ public sealed class PropertyLitigationSummaryTests : IAsyncLifetime
     /// <summary>Review of #560: an order downloaded but awaiting its text is still to be read. Through the real loaders the Litigation tab
     /// (ChargeLitigationService) and the report (LitigationReportAssembler) both count it pending; an order whose text could not be extracted at
     /// all is not pending, as it will never be read.</summary>
-    [Fact]
-    public async Task An_order_awaiting_its_text_is_pending_on_the_tab_and_in_the_report_alike()
+    /// <summary>A request with one case per extraction status, each with one downloaded order without text; returns the request and the documents.</summary>
+    private static async Task<(long RequestId, List<long> Documents)> SeedOrdersWithoutTextAsync(AppDbContext db, params FilingDocumentProcessingStatus[] extractions)
     {
-        await using var db = CreateContext();
         var client = new Client { ClientCode = "PLS" + Guid.NewGuid().ToString("N")[..7], ClientName = "Property Summary Co", CreatedDate = DateTime.UtcNow };
         var request = new McaRequest { Client = client, EntityType = EntityType.Company, CompanyName = "Godrej Properties Limited", RequestNumber = $"PLS-{Guid.NewGuid():N}", CreatedDate = DateTime.UtcNow };
         db.Requests.Add(request);
@@ -203,9 +202,11 @@ public sealed class PropertyLitigationSummaryTests : IAsyncLifetime
             Status = LitigationReportSnapshotStatus.Completed, RetrievedUtc = DateTime.UtcNow, CreatedUtc = DateTime.UtcNow };
         db.LitigationReportSnapshots.Add(snapshot);
         await db.SaveChangesAsync();
-        foreach (var (number, extraction) in new[] { ("CC 1/2020", FilingDocumentProcessingStatus.TextExtracting), ("CC 2/2020", FilingDocumentProcessingStatus.CorruptPdf) })
+        var documents = new List<long>();
+        var n = 0;
+        foreach (var extraction in extractions)
         {
-            var c = new LitigationCase { RequestId = request.RequestId, Court = "Consumer Court", CaseNumber = number, CaseStatus = "Pending", FirstSeenUtc = DateTime.UtcNow,
+            var c = new LitigationCase { RequestId = request.RequestId, Court = "Consumer Court", CaseNumber = $"CC {++n}/2020", CaseStatus = "Pending", FirstSeenUtc = DateTime.UtcNow,
                 LastSeenUtc = DateTime.UtcNow, PetitionersJson = "[\"Nupur Bansal\"]", RespondentsJson = "[\"Godrej Properties Limited\"]" };
             db.LitigationCases.Add(c);
             await db.SaveChangesAsync();
@@ -213,16 +214,47 @@ public sealed class PropertyLitigationSummaryTests : IAsyncLifetime
             var order = new LitigationCaseOrder { LitigationCaseId = c.LitigationCaseId, OrderDate = "01-01-2020", OrderType = "Order", CreatedUtc = DateTime.UtcNow };
             db.LitigationCaseOrders.Add(order);
             await db.SaveChangesAsync();
-            db.LitigationOrderDocuments.Add(new LitigationOrderDocument { LitigationCaseOrderId = order.LitigationCaseOrderId, Status = LitigationOrderDocumentStatus.Downloaded,
-                RetainedUntilUtc = DateTime.UtcNow.AddDays(7), ExtractedText = null, TextExtractionStatus = extraction });
+            var document = new LitigationOrderDocument { LitigationCaseOrderId = order.LitigationCaseOrderId, Status = LitigationOrderDocumentStatus.Downloaded,
+                RetainedUntilUtc = DateTime.UtcNow.AddDays(7), ExtractedText = null, TextExtractionStatus = extraction };
+            db.LitigationOrderDocuments.Add(document);
             await db.SaveChangesAsync();
+            documents.Add(document.LitigationOrderDocumentId);
         }
+        return (request.RequestId, documents);
+    }
 
-        var tab = (await new ChargeLitigationService(db, new MemoryCache(new MemoryCacheOptions { SizeLimit = 256 })).GetAsync(request.RequestId)).PropertyLitigation!;
-        var report = (await new LitigationReportAssembler(db).AssembleAsync(request.RequestId, default, includeAnalysis: false))!.ChargeLinks!.PropertyLitigation!;
+    [Fact]
+    public async Task An_order_awaiting_its_text_is_pending_on_the_tab_and_in_the_report_alike()
+    {
+        await using var db = CreateContext();
+        var (requestId, _) = await SeedOrdersWithoutTextAsync(db, FilingDocumentProcessingStatus.TextExtracting, FilingDocumentProcessingStatus.CorruptPdf);
+
+        var tab = (await new ChargeLitigationService(db, new MemoryCache(new MemoryCacheOptions { SizeLimit = 256 })).GetAsync(requestId)).PropertyLitigation!;
+        var report = (await new LitigationReportAssembler(db).AssembleAsync(requestId, default, includeAnalysis: false))!.ChargeLinks!.PropertyLitigation!;
 
         Assert.Equal(1, tab.OrdersPending);                // the order awaiting its text; not the corrupt one
         Assert.True(tab.ShouldShow);
         Assert.Equal(tab.OrdersPending, report.OrdersPending);
+    }
+
+    /// <summary>Review of #560: a summary cached while an order's text is extracting must not keep calling it "being read" once the extraction
+    /// ends without text; the cached comparison's version moves, so the next read through the same cache is fresh.</summary>
+    [Fact]
+    public async Task An_extraction_ending_without_text_moves_the_cached_summary()
+    {
+        await using var db = CreateContext();
+        var (requestId, documents) = await SeedOrdersWithoutTextAsync(db, FilingDocumentProcessingStatus.TextExtracting);
+        var cache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 256 });
+
+        var before = await new ChargeLitigationService(db, cache).GetAsync(requestId);
+        Assert.Equal(1, before.PropertyLitigation!.OrdersPending);
+
+        await db.LitigationOrderDocuments.Where(d => d.LitigationOrderDocumentId == documents[0])
+            .ExecuteUpdateAsync(u => u.SetProperty(d => d.TextExtractionStatus, (FilingDocumentProcessingStatus?)FilingDocumentProcessingStatus.CorruptPdf));
+        var after = await new ChargeLitigationService(db, cache).GetAsync(requestId);   // same cache
+
+        Assert.NotEqual(before.Version, after.Version);
+        Assert.Equal(0, after.PropertyLitigation!.OrdersPending);
+        Assert.False(after.PropertyLitigation.ShouldShow);
     }
 }
