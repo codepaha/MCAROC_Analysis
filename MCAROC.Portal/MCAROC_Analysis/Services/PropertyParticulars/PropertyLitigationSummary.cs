@@ -2,11 +2,14 @@ using MCAROC_Analysis.Data.Entities;
 
 namespace MCAROC_Analysis.Services.PropertyParticulars;
 
-/// <summary>A case in which a property is named.</summary>
-public sealed record PropertyLitigationCase(long LitigationCaseId, string? CaseNumber, string? Court, string? Status);
+/// <summary>A case in which a property is named, with what that case's own orders say about it: an attachment in one case is never shown against
+/// another case that only mentions the property.</summary>
+public sealed record PropertyLitigationCase(long LitigationCaseId, string? CaseNumber, string? Court, string? Status,
+    OrderPropertyRole Role = OrderPropertyRole.Mentioned, OrderPropertyIssue? Issue = null, IReadOnlyList<OrderPropertyDirectionKind>? Directions = null);
 
 /// <summary>One property across the request's cases: the same asset named in several cases is one entry (<see cref="CaseOrderProperties.SameProperty"/>).
-/// <see cref="Role"/> is the weightiest any order gives it; <see cref="Ties"/> the open charges it is, or lies in the project of.</summary>
+/// <see cref="Role"/> is the weightiest any order gives it, for ordering and grouping only: what each case's orders say is on that case
+/// (<see cref="PropertyLitigationCase.Role"/>). <see cref="Ties"/>: the open charges it is, or lies in the project of.</summary>
 public sealed record PropertyLitigationEntry(
     AiProperty Property, string Description, OrderPropertyRole Role, OrderPropertyRelation Relation, OrderPropertyIssue? Issue,
     IReadOnlyList<OrderPropertyDirectionKind> Directions, IReadOnlyList<PropertyChargeTie> Ties, IReadOnlyList<PropertyLitigationCase> Cases)
@@ -64,7 +67,7 @@ public sealed record PropertyLitigationSummary(
                 else group.Add((p, c));
             }
             if (props.Unidentified.Any(u => u.Role is OrderPropertyRole.Security or OrderPropertyRole.Attached))
-                unidentified.Add(CaseOf(c));
+                unidentified.Add(CaseOf(c, []));
         }
 
         var entries = groups.Select(g =>
@@ -76,7 +79,7 @@ public sealed record PropertyLitigationSummary(
                 g.Select(i => i.P.Issue).FirstOrDefault(i => i is not null),
                 g.SelectMany(i => i.P.Directions.Select(d => d.Direction.Kind)).Distinct().ToList(),
                 g.SelectMany(i => i.P.Ties ?? []).GroupBy(t => (t.Charge.ChargeId, t.Kind)).Select(t => t.First()).ToList(),
-                g.Select(i => i.Case).DistinctBy(c => c.LitigationCaseId).Select(CaseOf).ToList());
+                g.GroupBy(i => i.Case.LitigationCaseId).Select(byCase => CaseOf(byCase.First().Case, byCase.Select(i => i.P).ToList())).ToList());
         }).OrderBy(e => CaseOrderProperties.Weight(e.Role)).ThenByDescending(e => e.Cases.Count).ToList();
 
         // Only what the orders put in issue is listed, in every group: a charged asset merely mentioned is not "charged property in litigation".
@@ -89,5 +92,18 @@ public sealed record PropertyLitigationSummary(
             unidentified, read, pending, openCharges, chargesNotComparable);
     }
 
-    private static PropertyLitigationCase CaseOf(LitigationCase c) => new(c.LitigationCaseId, c.CaseNumber ?? c.Cnr, c.Court, c.CaseStatus);
+    /// <summary>The case, with the weightiest role, an issue and the directions its own orders give the property.</summary>
+    private static PropertyLitigationCase CaseOf(LitigationCase c, IReadOnlyList<CaseOrderProperty> own) =>
+        new(c.LitigationCaseId, c.CaseNumber ?? c.Cnr, c.Court, c.CaseStatus,
+            own.Count == 0 ? OrderPropertyRole.Mentioned : own.Select(p => p.Role).OrderBy(CaseOrderProperties.Weight).First(),
+            own.Select(p => p.Issue).FirstOrDefault(i => i is not null),
+            own.SelectMany(p => p.Directions.Select(d => d.Direction.Kind)).Distinct().ToList());
+
+    /// <summary>"Attached: possession (Attachment)" — what one case's orders say about the property.</summary>
+    public static string Says(PropertyLitigationCase c)
+    {
+        var issue = OrderPropertyLabels.Issue(c.Issue);
+        var directions = c.Directions is { Count: > 0 } d ? " (" + string.Join(", ", d.Select(OrderPropertyLabels.Direction)) + ")" : "";
+        return OrderPropertyLabels.Role(c.Role) + (issue is null ? "" : ": " + issue) + directions;
+    }
 }

@@ -575,7 +575,7 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
             {
                 table.ColumnsDefinition(columns =>
                 {
-                    columns.RelativeColumn(3.4f); columns.RelativeColumn(2); columns.RelativeColumn(1.8f);
+                    columns.RelativeColumn(3.2f); columns.RelativeColumn(3.4f);
                     if (withCharge) columns.RelativeColumn(1.2f);
                 });
                 IContainer Head(IContainer c) => c.Background("#EAF2FD").BorderBottom(1).BorderColor(Navy).Padding(4);
@@ -583,24 +583,24 @@ internal sealed class LitigationReportPdfDocument(StandaloneLitigationReport rep
                 table.Header(header =>
                 {
                     header.Cell().Element(Head).Text("PROPERTY").Bold().FontSize(7).FontColor(Navy);
-                    header.Cell().Element(Head).Text("WHAT THE ORDERS SAY").Bold().FontSize(7).FontColor(Navy);
-                    header.Cell().Element(Head).Text("CASES").Bold().FontSize(7).FontColor(Navy);
+                    header.Cell().Element(Head).Text("EACH CASE, AND WHAT ITS OWN ORDERS SAY").Bold().FontSize(7).FontColor(Navy);
                     if (withCharge) header.Cell().Element(Head).Text("CHARGE").Bold().FontSize(7).FontColor(Navy);
                 });
                 foreach (var e in entries)
                 {
                     var relation = MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyLabels.Relation(e.Relation);
-                    var issue = MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyLabels.Issue(e.Issue);
                     table.Cell().Element(Cell).Text(e.Description + (relation is null ? "" : " — " + relation)).FontSize(7.5f);
+                    // Per case: one case's attachment is never shown against another case that only mentions the property.
                     table.Cell().Element(Cell).Text(t =>
                     {
-                        t.Span(MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyLabels.Role(e.Role) + (issue is null ? "" : ": " + issue)).FontSize(7.5f).Bold();
-                        if (e.Directions.Count > 0)
-                            t.Line("").FontSize(4);
-                        if (e.Directions.Count > 0)
-                            t.Span(string.Join(", ", e.Directions.Select(MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyLabels.Direction))).FontSize(7f);
+                        for (var i = 0; i < e.Cases.Count; i++)
+                        {
+                            var c = e.Cases[i];
+                            if (i > 0) t.Line("").FontSize(3);
+                            t.Span((c.CaseNumber ?? $"Case #{c.LitigationCaseId}") + ": ").FontSize(7f).Bold();
+                            t.Span(MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary.Says(c)).FontSize(7f);
+                        }
                     });
-                    table.Cell().Element(Cell).Text(string.Join("\n", e.Cases.Select(c => c.CaseNumber ?? $"Case #{c.LitigationCaseId}"))).FontSize(7f);
                     if (withCharge) table.Cell().Element(Cell).Text(string.Join("\n", e.Ties.Select(t => t.Charge.ChargeNumber ?? $"Charge {t.Charge.ChargeId}"))).FontSize(7f);
                 }
             });

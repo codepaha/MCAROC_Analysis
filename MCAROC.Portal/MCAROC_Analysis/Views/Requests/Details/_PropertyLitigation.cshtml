@@ -31,25 +31,23 @@
             <div class="text-muted small mb-1">@note</div>
             <div class="pi-table-wrap">
                 <table class="pi-results-table">
-                    <thead><tr><th>Property</th><th>What the orders say</th><th>Cases</th>@if (entries.Any(e => e.Ties.Count > 0)) { <th>Charge</th> }</tr></thead>
+                    <thead><tr><th>Property</th><th>Each case, and what its own orders say</th>@if (entries.Any(e => e.Ties.Count > 0)) { <th>Charge</th> }</tr></thead>
                     <tbody>
                     @foreach (var e in entries.Take(MaxRows))
                     {
                         var relation = OrderPropertyLabels.Relation(e.Relation);
-                        var issue = OrderPropertyLabels.Issue(e.Issue);
                         <tr>
                             <td>@e.Description@(relation is null ? "" : " — " + relation)</td>
                             <td>
-                                <span class="mca-badge @OrderPropertyLabels.RoleCss(e.Role)">@OrderPropertyLabels.Role(e.Role)@(issue is null ? "" : ": " + issue)</span>
-                                @if (e.Directions.Count > 0) { <span class="small d-block">@string.Join(", ", e.Directions.Select(OrderPropertyLabels.Direction))</span> }
-                            </td>
-                            <td>
-                                @for (var i = 0; i < Math.Min(3, e.Cases.Count); i++)
+                                @* Per case: one case's attachment is never shown against another case that only mentions the property. *@
+                                @foreach (var c in e.Cases.Take(5))
                                 {
-                                    var c = e.Cases[i];
-                                    <a class="d-block" href="/Requests/@reqId/Litigation/Cases/@c.LitigationCaseId">@(c.CaseNumber ?? "Case #" + c.LitigationCaseId)</a>
+                                    <div data-property-case>
+                                        <a href="/Requests/@reqId/Litigation/Cases/@c.LitigationCaseId">@(c.CaseNumber ?? "Case #" + c.LitigationCaseId)</a>
+                                        <span class="mca-badge @OrderPropertyLabels.RoleCss(c.Role)">@PropertyLitigationSummary.Says(c)</span>
+                                    </div>
                                 }
-                                @if (e.Cases.Count > 3) { <span class="text-muted small">and @(e.Cases.Count - 3) more (@Cases(e))</span> }
+                                @if (e.Cases.Count > 5) { <span class="text-muted small">and @(e.Cases.Count - 5) more (@Cases(e))</span> }
                             </td>
                             @if (entries.Any(x => x.Ties.Count > 0))
                             {

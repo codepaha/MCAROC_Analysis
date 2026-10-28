@@ -97,7 +97,8 @@ public sealed class LitigationReportArtifactsTests
         var entry = new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationEntry(flat, "Premises / unit · Unit 1804 · Godrej Alpine · Mangalore",
             MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyRole.Disputed, MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyRelation.SoldByTarget,
             MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyIssue.DelayedPossession, [], [],
-            [new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationCase(1, "CC 3/2020", "Consumer Court", "Pending")]);
+            [new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationCase(1, "CC 3/2020", "Consumer Court", "Pending",
+                MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyRole.Disputed, MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyIssue.DelayedPossession, [])]);
         var property = new MCAROC_Analysis.Services.PropertyParticulars.PropertyLitigationSummary([], [], [entry], 2, [], 1, 0, OpenCharges: 6, ChargesNotComparable: 2);
         var report = ReportWithSingleCase("csp-42") with { ChargeLinks = ChargeLitigationSummary.Empty with { PropertyLitigation = property } };
 
