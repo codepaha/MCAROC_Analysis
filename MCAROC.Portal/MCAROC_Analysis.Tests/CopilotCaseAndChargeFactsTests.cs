@@ -1,3 +1,5 @@
+using MCAROC_Analysis.Services.Excel.Parsers;
+using MCAROC_Analysis.Services.PropertyParticulars;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
@@ -264,6 +266,48 @@ public class CopilotCaseAndChargeFactsTests
         var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default, question);
 
         Assert.Equal(expectListed, facts.Any(f => f.EntityType == "RocCharge" && f.Text.Contains("SMALL-2011")));
+    }
+
+    /// <summary>Found by running 300 real addresses through both readers: a number followed by letters was cut back to a partial number ("RS NO 82NR RATNA" gave
+    /// "8"), which would have matched an unrelated charge. Digits are atomic now; a glued number is simply not read.</summary>
+    [Theory]
+    [InlineData("FLAT-1,FLOOR-1 SURYA RESIDENCY A TYPE RS NO 82NR RATNA VILLA", new string[] { })]
+    [InlineData("UNIT-34 CHANDRAKALA TOWNSHIP PH I S NO T.S.NOS.32/3B,33/2B,WARD35, BLOCK I", new[] { "32/3B", "33/2B" })]
+    [InlineData("PLOT-365 SREE CITY S NO 40/3B(P); 41/1, 2, 3, 5A, 42/1(P), 3", new[] { "365", "40/3B" })] // PLOT-365 is a plot number; the list stops at "(P)"
+    [InlineData("Property in S. No 1341, Vavilalpalli, admeasuring 3602.5 Sq yards", new[] { "1341" })]
+    public void Property_identifiers_are_read_as_real_addresses_write_them(string text, string[] expected) =>
+        Assert.Equal(expected.OrderBy(x => x), StructuredFactsProvider.PropertyIds(text).Select(i => i.Text).OrderBy(x => x));
+
+    /// <summary>Gemini has already split each charge's particulars into properties with grounded survey numbers; the regex reading stops early on some long lists
+    /// ("Plot No.3(SP) in TS Nos. 11/3, 19/1(P)" gives only "3"). A charge's identifiers are both readings, so a question naming a parcel only Gemini listed
+    /// still finds the charge, however small it is and however many charges there are.</summary>
+    [Fact]
+    public async Task A_stored_gemini_extraction_adds_the_survey_numbers_the_regex_reading_missed()
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        for (var i = 0; i < 60; i++)
+            db.RocCharges.Add(new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = $"BIG-{i:D2}", LatestChargeHolderRaw = "BIG BANK",
+                ChargeStatus = "Open", CurrentAmount = 1000m + i, CreationDate = new DateOnly(2012, 5, 5) });
+        var small = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "SMALL-TS", LatestChargeHolderRaw = "SOME BANK",
+            ChargeStatus = "Open", CurrentAmount = 1m, CreationDate = new DateOnly(2014, 1, 1) };
+        db.RocCharges.Add(small);
+        await db.SaveChangesAsync();
+        var text = $"Exclusive charge on stocks and book debts; land admeasuring 1 acre situated at Plot No.3(SP) in TS Nos. 11/3, 19/1(P), 53/1(P) of Nagpur, ref {Guid.NewGuid():N}"; // unique: extractions are keyed by text in a shared database
+        AddPropertyEvent(db, requestId, runId, small.ChargeId, text);
+        var extraction = new PropertyParticularsAiResult([new AiProperty(PropertyAssetClass.Immovable, Enum.GetValues<PropertyKind>().First(), null, null, null, null, null,
+            [], null, [new SurveyNumberGroup("Survey", null, ["11/3", "19/1(P)", "53/1(P)"])], [], null, null, null, "Nagpur", null, null)]);
+        db.PropertyParticularsExtractions.Add(new PropertyParticularsExtraction
+        {
+            TextHash = PropertyParticularsAi.HashOf(text, null), PromptVersion = PropertyParticularsAi.PromptVersion, ModelId = "m", SourceText = text,
+            Status = PropertyParticularsExtractionStatus.Completed, ExtractionJson = PropertyParticularsAi.Serialize(extraction), CreatedUtc = DateTime.UtcNow, CompletedUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default,
+            "Which charges cover survey no. 11/3?");
+
+        Assert.Contains(facts, f => f.EntityType == "RocCharge" && f.Text.Contains("SMALL-TS"));
     }
 
     [Fact]

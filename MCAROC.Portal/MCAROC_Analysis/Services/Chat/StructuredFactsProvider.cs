@@ -1,3 +1,4 @@
+using MCAROC_Analysis.Services.PropertyParticulars;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
@@ -142,11 +143,17 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
                 // list never hides the row asked for.
                 // What each charge says about its property (the register's own particulars, latest event): the only link from a question about a
                 // piece of land to the charges on it. Without it the model can name only the charge whose deed text it happened to retrieve.
-                var propertyByCharge = await LatestPropertyParticularsAsync(relevant.Select(c => c.ChargeId).ToList(), ct);
+                var latestEvents = await LatestPropertyEventsAsync(relevant.Select(c => c.ChargeId).ToList(), ct);
+                var propertyByCharge = latestEvents.ToDictionary(kv => kv.Key, kv => kv.Value.PropertyParticulars!);
+                // Gemini has already split each charge's particulars into properties with grounded survey numbers (stored, so no new call). Its reading and the
+                // regex reading are complementary: Gemini recovers long lists the regex stops early on, the regex finds numbers Gemini drops (on a sample of 300
+                // real addresses each found identifiers the other missed), so a charge's identifiers are both.
+                var extractions = await PropertyParticularsExtractionService.LoadCompletedAsync(db, latestEvents.Values, ct);
+                var idsByCharge = latestEvents.ToDictionary(kv => kv.Key, kv => ChargeIds(kv.Value, extractions));
                 var questionIds = PropertyIds(question);
                 var asksAboutProperty = AsksAboutProperty(question);
-                bool NamesProperty(RocCharge c) => questionIds.Count > 0 && propertyByCharge.TryGetValue(c.ChargeId, out var p)
-                    && SharesProperty(questionIds, PropertyIds(p));
+                bool NamesProperty(RocCharge c) => questionIds.Count > 0 && idsByCharge.TryGetValue(c.ChargeId, out var charged)
+                    && SharesProperty(questionIds, charged);
                 bool Asked(RocCharge c) =>
                     (hints.LenderNameKeyword is { } lender && c.LatestChargeHolderRaw.Contains(lender, StringComparison.OrdinalIgnoreCase))
                     || (hints.Year is { } year && (c.CreationDate?.Year == year || c.SatisfactionDate?.Year == year))
@@ -333,10 +340,10 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
     // (S NO, SY.NO., SURVEY NOS., RS NO, KH NO, KHASRA, KHATA, GAT, GUT, PLOT, FP, TPS, CTS, C.S.NO., RECT, HISSA), e.g. "S NO 358, 364" or
     // "Survey Nos. 3/ 2840, 3/ 2841 & 2842". An identifier may be multi-part (3/2840, 43/1/3/2, 1-2-2870) and may end in one letter (2A, 204/P). Numbers are
     // identifiers only here: a year, an area, a floor or a PIN code is never read as one because of its digits, but any number a label introduces is.
-    private const string IdPattern = @"\d+[A-Za-z]?(?![A-Za-z])(?:\s*[/\-.]\s*(?:\d+[A-Za-z]?(?![A-Za-z])|[A-Za-z](?![A-Za-z])))*";
+    private const string IdPattern = @"(?>\d+)[A-Za-z]?(?![A-Za-z])(?:\s*[/\-.]\s*(?:(?>\d+)[A-Za-z]?(?![A-Za-z])|[A-Za-z](?![A-Za-z])))*";
     private static readonly System.Text.RegularExpressions.Regex IdListAfterLabel = new(
-        @"(?<![A-Za-z])(?:r\.?\s*s\.?\s*no|re\.?\s*sy\.?\s*no|sy\.?\s*no|s\.?\s*no|survey(?:\s*(?:nos?|numbers?))?|kh\.?\s*no|khas+a?ra(?:\s*no)?|khat+h?a(?:\s*no)?"
-        + @"|gat|gut|plot(?:\s*no)?|f\.?\s*p(?:\s*no)?|t\.?\s*p\.?\s*s(?:\s*no)?|c\.?\s*t\.?\s*s(?:\s*no)?|c\.?\s*s\.?\s*no|rect(?:\s*no)?|hissa(?:\s*no)?|t\.?\s*s\.?\s*no)"
+        @"(?<![A-Za-z])(?:r\.?\s*s\.?\s*nos?|re\.?\s*sy\.?\s*nos?|sy\.?\s*nos?|s\.?\s*nos?|survey(?:\s*(?:nos?|numbers?))?|kh\.?\s*nos?|khas+a?ra(?:\s*nos?)?|khat+h?a(?:\s*nos?)?"
+        + @"|gat|gut|plot(?:\s*nos?)?|f\.?\s*p(?:\s*nos?)?|t\.?\s*p\.?\s*s(?:\s*nos?)?|c\.?\s*t\.?\s*s(?:\s*nos?)?|c\.?\s*s\.?\s*nos?|rect(?:\s*nos?)?|hissa(?:\s*nos?)?|t\.?\s*s\.?\s*nos?)"
         + @"(?![A-Za-z])(?:\s*(?:nos?|numbers?)(?![A-Za-z]))?[.:\-\s]*(" + IdPattern + @"(?:\s*(?:,|&|;|\+|and|to)\s*" + IdPattern + @")*)",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
     private static readonly System.Text.RegularExpressions.Regex OneId = new(IdPattern, System.Text.RegularExpressions.RegexOptions.Compiled);
@@ -378,15 +385,40 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
     internal static bool AsksAboutProperty(string? question) => question is not null
         && System.Text.RegularExpressions.Regex.IsMatch(question, @"\b(propert(y|ies)|land|plot|survey|CTS|premises|security|secured|collateral|asset|mortgage[ds]?)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
-    /// <summary>The property particulars of each charge's most recent event that has any.</summary>
-    private async Task<Dictionary<long, string>> LatestPropertyParticularsAsync(IReadOnlyCollection<long> chargeIds, CancellationToken ct)
+    /// <summary>The most recent event of each charge that has property particulars (text and property type, which the stored extraction is keyed by).</summary>
+    private async Task<Dictionary<long, RocChargeEvent>> LatestPropertyEventsAsync(IReadOnlyCollection<long> chargeIds, CancellationToken ct)
     {
         if (chargeIds.Count == 0) return [];
         var rows = await db.RocChargeEvents.AsNoTracking()
             .Where(e => chargeIds.Contains(e.RocChargeId) && e.PropertyParticulars != null && e.PropertyParticulars != "")
-            .Select(e => new { e.RocChargeId, e.EventDate, e.ChargeEventId, e.PropertyParticulars }).ToListAsync(ct);
-        return rows.GroupBy(r => r.RocChargeId)
-            .ToDictionary(g => g.Key, g => g.OrderByDescending(r => r.EventDate).ThenByDescending(r => r.ChargeEventId).First().PropertyParticulars!);
+            .Select(e => new { e.RocChargeId, e.EventDate, e.ChargeEventId, e.PropertyParticulars, e.PropertyType }).ToListAsync(ct);
+        return rows.GroupBy(r => r.RocChargeId).ToDictionary(g => g.Key, g =>
+        {
+            var latest = g.OrderByDescending(r => r.EventDate).ThenByDescending(r => r.ChargeEventId).First();
+            return new RocChargeEvent { RocChargeId = latest.RocChargeId, PropertyParticulars = latest.PropertyParticulars, PropertyType = latest.PropertyType };
+        });
+    }
+
+    /// <summary>A charge's property identifiers: the regex reading of its particulars plus the survey numbers of its stored Gemini extraction, if any.</summary>
+    internal static List<PropertyId> ChargeIds(RocChargeEvent latest, IReadOnlyDictionary<string, PropertyParticularsExtraction> extractions)
+    {
+        var ids = PropertyIds(latest.PropertyParticulars);
+        if (PropertyParticularsAi.IsExtractable(latest.PropertyParticulars)
+            && extractions.TryGetValue(PropertyParticularsAi.HashOf(latest.PropertyParticulars!, latest.PropertyType), out var stored)
+            && PropertyParticularsAi.Deserialize(stored.ExtractionJson) is { } result)
+            foreach (var number in result.Properties.SelectMany(p => p.SurveyNumbers).SelectMany(g => g.Numbers))
+            {
+                var id = AsPropertyId(number);
+                if (id is { } parsed && !ids.Contains(parsed)) ids.Add(parsed);
+            }
+        return ids;
+    }
+
+    private static PropertyId? AsPropertyId(string number)
+    {
+        var normalised = System.Text.RegularExpressions.Regex.Replace(number, @"\s+", "").ToUpperInvariant();
+        var parts = System.Text.RegularExpressions.Regex.Matches(normalised, @"\d+").Select(m => m.Value).ToArray();
+        return parts.Length == 0 ? null : new PropertyId(normalised, parts);
     }
 
     /// <summary>The company's current name and the names it has had, which a party list may use.</summary>
