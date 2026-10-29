@@ -323,10 +323,18 @@ public sealed class ChargeInstrumentExtractionServiceTests : IAsyncLifetime, IDi
         Assert.Equal(1, await service.ScheduleForBatchAsync(s.Batch.BatchId, CancellationToken.None));
         Assert.Equal(0, await service.ScheduleForBatchAsync(s.Batch.BatchId, CancellationToken.None));
 
-        var scheduled = await db.ChargeInstrumentExtractions.AsNoTracking().Where(x => x.RequestId == s.Request.RequestId).Select(x => x.FilingDocumentId).ToListAsync();
-        Assert.Equal([plain.FilingDocumentId], scheduled);
-        Assert.DoesNotContain(xfaText.FilingDocumentId, scheduled);
-        Assert.DoesNotContain(withForm.FilingDocumentId, scheduled);
+        var rows = await db.ChargeInstrumentExtractions.AsNoTracking().Where(x => x.RequestId == s.Request.RequestId)
+            .Select(x => new { x.FilingDocumentId, x.Status, x.ResultJson }).ToListAsync();
+        // Only the plain deed is sent to the model.
+        Assert.Equal(ChargeInstrumentExtractionStatus.Pending, Assert.Single(rows, r => r.FilingDocumentId == plain.FilingDocumentId).Status);
+        // A document labelled as read from form data has nothing to quote and is never a candidate (recovery excludes it by the same rule).
+        Assert.DoesNotContain(rows, r => r.FilingDocumentId == xfaText.FilingDocumentId);
+        // A document whose form data was saved beside its text is recorded as finished with no passages: a terminal answer that nothing displays, so a
+        // recovery sweep does not find it unscheduled again and again.
+        var marker = Assert.Single(rows, r => r.FilingDocumentId == withForm.FilingDocumentId);
+        Assert.Equal(ChargeInstrumentExtractionStatus.Completed, marker.Status);
+        Assert.Empty(ChargeInstrumentAi.Deserialize(marker.ResultJson)!.Passages);
+        Assert.Empty(await ChargeInstrumentExtractionService.LoadAsync(db, [withForm.FilingDocumentId], CancellationToken.None));
     }
 
     /// <summary>A refreshed batch holds the same PDFs: the earlier result is copied and the model is not called again.</summary>

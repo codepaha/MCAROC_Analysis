@@ -72,9 +72,22 @@ public class ChargeInstrumentExtractionService(
         var created = 0;
         foreach (var d in docs.Where(d => !have.Contains(d.FilingDocumentId)))
         {
-            // A form read exactly from its own data is part 1's; nothing to quote.
+            // A form read exactly from its own data is part 1's; nothing to quote. It is recorded as finished with no passages (which nothing displays), so
+            // it is a terminal answer and not a document that every recovery sweep would find unscheduled again and again.
             var resolvedSidecar = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(d.ExtractedTextPath);
-            if (await XfaFormReader.ReadSidecarAsync(resolvedSidecar, ct) is { Count: > 0 }) continue;
+            if (await XfaFormReader.ReadSidecarAsync(resolvedSidecar, ct) is { Count: > 0 })
+            {
+                var marker = new ChargeInstrumentExtraction
+                {
+                    RequestId = d.RequestId, FilingDocumentId = d.FilingDocumentId, PromptVersion = ChargeInstrumentAi.PromptVersion, ModelId = PropertyParticularsAi.ModelId,
+                    CreatedUtc = DateTime.UtcNow, CompletedUtc = DateTime.UtcNow, Status = ChargeInstrumentExtractionStatus.Completed,
+                    ResultJson = ChargeInstrumentAi.Serialize(new ChargeInstrumentAiResult([]))
+                };
+                db.ChargeInstrumentExtractions.Add(marker);
+                try { await db.SaveChangesAsync(ct); }
+                catch (DbUpdateException ex) when (ex.InnerException is SqlException { Number: 2627 or 2601 }) { db.Entry(marker).State = EntityState.Detached; } // another scheduler recorded it first
+                continue;
+            }
 
             var earlier = string.IsNullOrEmpty(d.FileHash) ? null : await (
                 from x in db.ChargeInstrumentExtractions.AsNoTracking()
