@@ -23,13 +23,16 @@ public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOpt
     {
         if (litigationAnalysis is null) return false;
         var latest = await db.LitigationAiAnalysisRuns.AsNoTracking().Where(r => r.RequestId == requestId)
-            .OrderByDescending(r => r.LitigationAiAnalysisRunId).Select(r => new { r.Status, r.CompletedUtc }).FirstOrDefaultAsync(ct);
+            .OrderByDescending(r => r.LitigationAiAnalysisRunId).Select(r => new { r.Status, r.CompletedUtc, r.StartedUtc }).FirstOrDefaultAsync(ct);
         if (latest is null || latest.Status is not (LitigationAiAnalysisRunStatus.Completed or LitigationAiAnalysisRunStatus.CompletedWithErrors)) return false;
         if (latest.CompletedUtc is not { } done) return false;
+        // The analysis loads its evidence near its START, so an order that arrived while it was running is not in it even though it arrived before it
+        // finished: evidence is measured against when the run began, not when it completed.
+        var readBoundary = latest.StartedUtc ?? done;
         // Two durable reasons to look again: a court update that finished after the analysis, or an order that became readable after it (an
         // earlier download failure the gate had stopped waiting for). Either way the evidence comparison decides whether a run is really needed.
         var courtNewer = courtUpdate?.FinishedUtc is { } courtFinished && done < courtFinished;
-        if (!courtNewer && !await OrderEvidenceAddedSinceAsync(db, requestId, done, ct)) return false;
+        if (!courtNewer && !await OrderEvidenceAddedSinceAsync(db, requestId, readBoundary, ct)) return false;
         return !await litigationAnalysis.IsUpToDateAsync(requestId, ct);
     }
 

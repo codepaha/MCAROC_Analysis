@@ -41,4 +41,9 @@ public sealed record RequestPageVersion(long? Ingestion, long? Analysis, Analysi
     }
 }
 
-public sealed class RequestPageChangedException : Exception;
+public sealed class RequestPageChangedException : Exception
+{
+    /// <summary>True when only the live-data counter moved while the page loaded (an import still running): the page may be read again ignoring that
+    /// counter. Any other change (ingestion, analysis, filings, snapshot) must send the user to a refresh.</summary>
+    public bool LiveDataOnly { get; init; }
+}

@@ -490,7 +490,7 @@ public partial class RequestsController(
             // A litigation import bumps the live-data counter with every order document, so the strict fence can fail on every load:
             // retry once ignoring only that counter, so the page (and the unlock approval on it) stays reachable during an import.
             try { vm = await Build(false); }
-            catch (Services.RequestDetails.RequestPageChangedException) { vm = await Build(true); }
+            catch (Services.RequestDetails.RequestPageChangedException first) when (first.LiveDataOnly) { vm = await Build(true); }
             return vm is null ? NotFound() : View(vm);
         }
         catch (Services.RequestDetails.RequestPageChangedException)
