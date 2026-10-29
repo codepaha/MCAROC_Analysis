@@ -242,6 +242,8 @@ public class CopilotCaseAndChargeFactsTests
     }
 
     [Theory]
+    [InlineData("Which charges cover survey no. 42?", true)]      // a short number after a label is an identifier
+    [InlineData("Which charges cover survey no. 123456?", true)]  // so is a six-digit one
     [InlineData("Which charges cover survey no. 2011?", true)]    // a year-like number is a survey number when the text says so
     [InlineData("Which charges were created in 2011?", false)]    // ...and only then
     [InlineData("Which charges cover plot 400013?", false)]       // a plot that is not in the particulars
@@ -256,7 +258,7 @@ public class CopilotCaseAndChargeFactsTests
             ChargeStatus = "Open", CurrentAmount = 1m, CreationDate = new DateOnly(2014, 1, 1) };
         db.RocCharges.Add(small);
         await db.SaveChangesAsync();
-        AddPropertyEvent(db, requestId, runId, small.ChargeId, "Land at Pune, survey no. 2011, pin code 400013, admeasuring 1800 sq mtrs");
+        AddPropertyEvent(db, requestId, runId, small.ChargeId, "Land at Pune, survey no. 2011 and plot 123456, gat no. 42, pin code 400013, admeasuring 1800 sq mtrs");
         await db.SaveChangesAsync();
 
         var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default, question);

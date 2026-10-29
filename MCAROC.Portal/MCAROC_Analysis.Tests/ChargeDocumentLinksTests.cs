@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using System.Security.Cryptography;
 using System.Text;
 using MCAROC_Analysis.Data.Entities;
@@ -223,6 +224,72 @@ public sealed class ChargeDocumentLinkBuilderTests : IAsyncLifetime, IDisposable
         Assert.DoesNotContain(old.BatchId, builder.Requested);
         Assert.DoesNotContain(running.BatchId, builder.Requested);
         Assert.Equal(builder.Requested.Count, count);
+    }
+
+    private sealed class RecordingScheduler(MCAROC_Analysis.Data.AppDbContext db, IServiceProvider services)
+        : ChargeInstrumentExtractionService(db, new ChargeInstrumentExtractionQueue(), Microsoft.Extensions.Options.Options.Create(new ChargeInstrumentExtractionOptions()),
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+                { ["GoogleCloud:ProjectId"] = "p", ["GoogleCloud:CredentialsPath"] = "c" }).Build(),
+            services, NullLogger<ChargeInstrumentExtractionService>.Instance)
+    {
+        public static readonly List<long> Scheduled = [];
+        public override Task<int> ScheduleForBatchAsync(long batchId, CancellationToken ct) { lock (Scheduled) Scheduled.Add(batchId); return Task.FromResult(1); }
+    }
+
+    /// <summary>The builder stamps before it schedules extraction, so recovery also re-schedules for stamped batches. It must pick only batches with a linked
+    /// document the scheduler would accept (readable text, not read from form data, no extraction at the current prompt version): batches whose only
+    /// unscheduled documents are ones the scheduler skips on purpose would stay candidates forever and starve the ones that need it.</summary>
+    [Fact]
+    public async Task Recovery_reschedules_extraction_only_for_batches_with_a_document_the_scheduler_would_accept()
+    {
+        await using var db = CreateContext();
+        var request = new McaRequest { ClientId = 1, EntityType = EntityType.Company, CompanyName = "Reschedule Co", RequestNumber = $"RS-{Guid.NewGuid():N}",
+            RequestStatus = RequestStatus.DataExtracted, CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        async Task<long> BatchWithLinkedDocumentAsync(string? textPath, TextExtractionMethod method, bool alreadyExtracted)
+        {
+            var batch = new McaFilingBatch { RequestId = request.RequestId, Status = FilingBatchStatus.Completed, StartedDate = DateTime.UtcNow.AddHours(-3),
+                CompletedDate = DateTime.UtcNow.AddHours(-2), ChargeLinksStamp = "stamped" };
+            db.McaFilingBatches.Add(batch);
+            await db.SaveChangesAsync();
+            var filing = new McaFiling { BatchId = batch.BatchId, RequestId = request.RequestId, Srn = "SRN-" + Guid.NewGuid().ToString("N")[..6], NestedZipName = "n.zip" };
+            db.McaFilings.Add(filing);
+            await db.SaveChangesAsync();
+            var doc = new McaFilingDocument
+            {
+                FilingId = filing.FilingId, BatchId = batch.BatchId, RequestId = request.RequestId, OriginalFileName = "deed.pdf", StoragePath = "",
+                ExtractedTextPath = textPath, FileHash = Guid.NewGuid().ToString("N"), ProcessingStatus = FilingDocumentProcessingStatus.Completed,
+                Category = FilingCategory.Charge, TextExtractionMethod = method, UpdatedAt = DateTime.UtcNow
+            };
+            db.McaFilingDocuments.Add(doc);
+            await db.SaveChangesAsync();
+            db.ChargeDocumentLinks.Add(new ChargeDocumentLink { RequestId = request.RequestId, BatchId = batch.BatchId, RocChargeNumber = "C-1",
+                FilingDocumentId = doc.FilingDocumentId, Method = ChargeDocumentLinkMethod.FileName });
+            if (alreadyExtracted)
+                db.ChargeInstrumentExtractions.Add(new ChargeInstrumentExtraction { RequestId = request.RequestId, FilingDocumentId = doc.FilingDocumentId,
+                    PromptVersion = ChargeInstrumentAi.PromptVersion, ModelId = "m", Status = ChargeInstrumentExtractionStatus.Completed, CreatedUtc = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+            return batch.BatchId;
+        }
+
+        var wanted = await BatchWithLinkedDocumentAsync("t.txt", TextExtractionMethod.Native, alreadyExtracted: false);
+        var formData = await BatchWithLinkedDocumentAsync("t.txt", TextExtractionMethod.Xfa, alreadyExtracted: false);   // read exactly from form data: skipped on purpose
+        var noText = await BatchWithLinkedDocumentAsync(null, TextExtractionMethod.Native, alreadyExtracted: false);     // nothing readable to quote
+        var done = await BatchWithLinkedDocumentAsync("t.txt", TextExtractionMethod.Native, alreadyExtracted: true);     // already extracted
+
+        var services = new ServiceCollection().AddScoped(_ => CreateContext())
+            .AddScoped<ChargeInstrumentExtractionService>(sp => new RecordingScheduler(sp.GetRequiredService<MCAROC_Analysis.Data.AppDbContext>(), sp))
+            .BuildServiceProvider();
+        RecordingScheduler.Scheduled.Clear();
+        var builder = new RecordingScopedBuilder(services.GetRequiredService<IServiceScopeFactory>());
+        await builder.RecoverPendingAsync(CancellationToken.None, maxBatches: 1000);
+
+        Assert.Contains(wanted, RecordingScheduler.Scheduled);
+        Assert.DoesNotContain(formData, RecordingScheduler.Scheduled);
+        Assert.DoesNotContain(noText, RecordingScheduler.Scheduled);
+        Assert.DoesNotContain(done, RecordingScheduler.Scheduled);
     }
 
     private static string Hash(string content) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content)));

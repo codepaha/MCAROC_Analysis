@@ -180,10 +180,14 @@ public class ChargeDocumentLinkBuilder(IServiceScopeFactory scopes, ChargeFormBa
         var rescheduled = 0;
         if (scope.ServiceProvider.GetService<ChargeInstrumentExtractionService>() is { IsActive: true } instruments)
         {
+            // Only batches with a linked document the scheduler would actually accept (the same rule as ScheduleForBatchAsync: readable text, not read from
+            // form data) and no extraction at the current prompt version. A batch whose only unscheduled documents are ones the scheduler skips on purpose
+            // must not stay a candidate, or enough of them would starve the batches that need this; oldest first, as those leave the window first.
             var unscheduled = await recent
                 .Where(b => b.ChargeLinksStamp != null && db.ChargeDocumentLinks.Any(l => l.BatchId == b.BatchId
-                    && !db.ChargeInstrumentExtractions.Any(e => e.FilingDocumentId == l.FilingDocumentId)))
-                .OrderByDescending(b => b.BatchId).Take(maxBatches).Select(b => b.BatchId).ToListAsync(ct);
+                    && db.McaFilingDocuments.Any(d => d.FilingDocumentId == l.FilingDocumentId && d.ExtractedTextPath != null && d.TextExtractionMethod != TextExtractionMethod.Xfa)
+                    && !db.ChargeInstrumentExtractions.Any(e => e.FilingDocumentId == l.FilingDocumentId && e.PromptVersion == ChargeInstrumentAi.PromptVersion)))
+                .OrderBy(b => b.CompletedDate).ThenBy(b => b.BatchId).Take(maxBatches).Select(b => b.BatchId).ToListAsync(ct);
             foreach (var id in unscheduled)
             {
                 try { rescheduled += await instruments.ScheduleForBatchAsync(id, ct) > 0 ? 1 : 0; }

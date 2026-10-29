@@ -332,12 +332,12 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
     // Property identifiers as Indian address and deed text writes them (checked against ~143,000 delivered property addresses): a list introduced by a label
     // (S NO, SY.NO., SURVEY NOS., RS NO, KH NO, KHASRA, KHATA, GAT, GUT, PLOT, FP, TPS, CTS, C.S.NO., RECT, HISSA), e.g. "S NO 358, 364" or
     // "Survey Nos. 3/ 2840, 3/ 2841 & 2842". An identifier may be multi-part (3/2840, 43/1/3/2, 1-2-2870) and may end in one letter (2A, 204/P). Numbers are
-    // identifiers only here: a year, an area, a floor or a PIN code is never read as one because of its digits.
+    // identifiers only here: a year, an area, a floor or a PIN code is never read as one because of its digits, but any number a label introduces is.
     private const string IdPattern = @"\d+[A-Za-z]?(?![A-Za-z])(?:\s*[/\-.]\s*(?:\d+[A-Za-z]?(?![A-Za-z])|[A-Za-z](?![A-Za-z])))*";
     private static readonly System.Text.RegularExpressions.Regex IdListAfterLabel = new(
         @"(?<![A-Za-z])(?:r\.?\s*s\.?\s*no|re\.?\s*sy\.?\s*no|sy\.?\s*no|s\.?\s*no|survey(?:\s*(?:nos?|numbers?))?|kh\.?\s*no|khas+a?ra(?:\s*no)?|khat+h?a(?:\s*no)?"
         + @"|gat|gut|plot(?:\s*no)?|f\.?\s*p(?:\s*no)?|t\.?\s*p\.?\s*s(?:\s*no)?|c\.?\s*t\.?\s*s(?:\s*no)?|c\.?\s*s\.?\s*no|rect(?:\s*no)?|hissa(?:\s*no)?|t\.?\s*s\.?\s*no)"
-        + @"(?![A-Za-z])[.:\-\s]*(" + IdPattern + @"(?:\s*(?:,|&|;|\+|and|to)\s*" + IdPattern + @")*)",
+        + @"(?![A-Za-z])(?:\s*(?:nos?|numbers?)(?![A-Za-z]))?[.:\-\s]*(" + IdPattern + @"(?:\s*(?:,|&|;|\+|and|to)\s*" + IdPattern + @")*)",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
     private static readonly System.Text.RegularExpressions.Regex OneId = new(IdPattern, System.Text.RegularExpressions.RegexOptions.Compiled);
     private static readonly System.Text.RegularExpressions.Regex SlashPair = new(@"(?<![\w/])\d{1,3}\s*/\s*\d{3,6}(?![\d/])", System.Text.RegularExpressions.RegexOptions.Compiled);
@@ -356,10 +356,10 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
         if (string.IsNullOrWhiteSpace(text)) return [];
         void Add(string raw)
         {
+            // Whatever a label introduces is an identifier, however short ("Survey No. 42") or long ("Survey No. 123456"): the text says it is one.
             var normalised = System.Text.RegularExpressions.Regex.Replace(raw, @"\s+", "").ToUpperInvariant();
             var parts = System.Text.RegularExpressions.Regex.Matches(normalised, @"\d+").Select(m => m.Value).ToArray();
-            if (parts.Length == 0 || normalised.All(char.IsDigit) && (parts[0].Length < 3 || parts[0].Length == 6)) return; // too short to identify, or a PIN code
-            ids.TryAdd(normalised, new PropertyId(normalised, parts));
+            if (parts.Length > 0) ids.TryAdd(normalised, new PropertyId(normalised, parts));
         }
         foreach (System.Text.RegularExpressions.Match list in IdListAfterLabel.Matches(text))
             foreach (System.Text.RegularExpressions.Match one in OneId.Matches(list.Groups[1].Value)) Add(one.Value);
