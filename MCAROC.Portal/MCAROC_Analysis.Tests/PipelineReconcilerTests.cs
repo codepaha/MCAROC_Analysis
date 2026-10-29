@@ -183,6 +183,73 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
         Assert.Equal("AWAITING_ORDER_PROCESSING", analysis.ReasonCode);
     }
 
+    /// <summary>An order document whose download keeps failing (an expired link, an error page served for the PDF) is retried for days. The
+    /// automatic stage must not wait that long: once it has failed <see cref="PipelineSnapshotReader.OrderDownloadGiveUpAttempts"/> times it
+    /// no longer holds LitigationAnalysis, while one still early in its retries does.</summary>
+    [Theory]
+    [InlineData(PipelineSnapshotReader.OrderDownloadGiveUpAttempts - 1, true)]
+    [InlineData(PipelineSnapshotReader.OrderDownloadGiveUpAttempts, false)]
+    public async Task LitigationAnalysis_stops_waiting_for_an_order_download_that_keeps_failing(int attempts, bool stillWaiting)
+    {
+        var requestId = await SeedManualRequestAsync(analysed: true);
+        await using (var seed = CreateContext())
+        {
+            var (_, orderId) = await SeedCompletedSearchWithOneOrderAsync(seed, requestId);
+            seed.LitigationOrderDocuments.Add(new LitigationOrderDocument
+            {
+                LitigationCaseOrderId = orderId, Status = LitigationOrderDocumentStatus.Failed, AttemptCount = attempts,
+                FailureReason = "Downloaded content does not start with the PDF signature",
+                RetainedUntilUtc = DateTime.UtcNow.AddDays(6), CreatedUtc = DateTime.UtcNow.AddHours(-3)
+            });
+            await seed.SaveChangesAsync();
+        }
+        var runId = await NewRunAsync(requestId, new PipelineOptions { Enabled = true, Policy = { LitigationAnalysis = true } });
+
+        Assert.True(await ReconcileAsync(runId));
+
+        await using var db = CreateContext();
+        var analysis = await db.PipelineStageStates.AsNoTracking().SingleAsync(s => s.PipelineRunId == runId && s.Stage == PipelineStage.LitigationAnalysis);
+        Assert.Equal(stillWaiting, analysis.ReasonCode == "AWAITING_ORDER_PROCESSING");
+    }
+
+    /// <summary>The gate stops waiting for an order that keeps failing, so the analysis can finish without it. If that order downloads and is chunked later,
+    /// that must count as new evidence (it cannot depend on a court update happening to finish after the analysis).</summary>
+    [Theory]
+    [InlineData(1, true, true)]    // text became readable (chunked) after the boundary: new evidence
+    [InlineData(-1, true, false)]  // chunked before the boundary: the analysis could already read it
+    [InlineData(1, false, false)]  // downloaded but not chunked yet: not readable, so no chunks, so nothing new
+    public async Task Order_text_that_becomes_readable_after_the_analysis_began_counts_as_new_evidence(int hoursAfterBoundary, bool hasChunk, bool expected)
+    {
+        var requestId = await SeedManualRequestAsync(analysed: true);
+        var boundaryUtc = DateTime.UtcNow.AddHours(-2); // when the analysis began reading its chunks
+        await using (var seed = CreateContext())
+        {
+            var (caseId, orderId) = await SeedCompletedSearchWithOneOrderAsync(seed, requestId);
+            // Downloaded long BEFORE the boundary: only when it became readable (chunked) matters.
+            var document = new LitigationOrderDocument
+            {
+                LitigationCaseOrderId = orderId, Status = LitigationOrderDocumentStatus.Downloaded, ChunkingStatus = hasChunk ? ChunkingStatus.Chunked : ChunkingStatus.Pending,
+                DownloadedUtc = boundaryUtc.AddHours(-5), RetainedUntilUtc = DateTime.UtcNow.AddDays(6), CreatedUtc = DateTime.UtcNow.AddDays(-1)
+            };
+            seed.LitigationOrderDocuments.Add(document);
+            await seed.SaveChangesAsync();
+            if (hasChunk)
+            {
+                seed.LitigationOrderChunks.Add(new LitigationOrderChunk
+                {
+                    RequestId = requestId, LitigationOrderDocumentId = document.LitigationOrderDocumentId, LitigationCaseOrderId = orderId, LitigationCaseId = caseId,
+                    ChunkIndex = 0, PageNumber = 1, ChunkText = "order text", Embedding = new Microsoft.Data.SqlTypes.SqlVector<float>(new float[MCAROC_Analysis.Services.Chat.EmbeddingService.Dimensions]),
+                    EmbeddingModel = MCAROC_Analysis.Services.Chat.EmbeddingService.ModelId, EmbeddingDimensions = MCAROC_Analysis.Services.Chat.EmbeddingService.Dimensions,
+                    ChunkingVersion = "2.0", CreatedDate = boundaryUtc.AddHours(hoursAfterBoundary)
+                });
+                await seed.SaveChangesAsync();
+            }
+        }
+
+        await using var db = CreateContext();
+        Assert.Equal(expected, await PipelineSnapshotReader.OrderEvidenceAddedSinceAsync(db, requestId, boundaryUtc, CancellationToken.None));
+    }
+
     /// <summary>A Completed search job + Completed snapshot + one case + one order — the shared setup every
     /// order-document test in this class builds on before adding its own document row.</summary>
     private static async Task<(long CaseId, long OrderId)> SeedCompletedSearchWithOneOrderAsync(AppDbContext db, long requestId)
