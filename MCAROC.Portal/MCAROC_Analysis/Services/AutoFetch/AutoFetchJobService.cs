@@ -327,14 +327,16 @@ public sealed class AutoFetchJobService(
                 await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
                 await SetStageAsync(job, correlationId, AutoFetchJobStatus.Ingesting, 28, "Extracting workbook data…", ct);
                 await EnsureNotCancelledAsync(job.AutoFetchJobId, correlationId, ct);
-                await SaveRequestAsync(request, () =>
-                {
-                    request.IsManualReviewRequired = false;
-                    request.ManualReviewReason = null;
-                    request.RequestStatus = RequestStatus.DocumentsUploaded;
-                    request.AnalysisRetryAfter = null; // a new ingestion starts clean: no old retry wait
-                    request.AnalysisStartedDate = DateTime.UtcNow;
-                }, ct);
+                var startedUtc = DateTime.UtcNow;
+                var markedForIngestion = await RequestGuarded(job.AutoFetchJobId, request.RequestId, correlationId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(r => r.IsManualReviewRequired, false)
+                        .SetProperty(r => r.ManualReviewReason, (string?)null)
+                        .SetProperty(r => r.RequestStatus, RequestStatus.DocumentsUploaded)
+                        .SetProperty(r => r.AnalysisRetryAfter, (DateTime?)null) // a new ingestion starts clean: no old retry wait
+                        .SetProperty(r => r.AnalysisStartedDate, startedUtc), ct);
+                if (markedForIngestion == 0) throw new AutoFetchJobCancelledException(job.AutoFetchJobId);
+                await db.Entry(request).ReloadAsync(ct);
 
                 var run = await orchestrator.RunAsync(request.RequestId, job.RocDocumentId!.Value, job.ChargeDocumentId, ct,
                     autoFetchJobId: job.AutoFetchJobId);
@@ -361,7 +363,10 @@ public sealed class AutoFetchJobService(
                     .FirstOrDefaultAsync(ct);
                 if (!string.IsNullOrWhiteSpace(profileName))
                 {
-                    await SaveRequestAsync(request, () => request.CompanyName = profileName, ct);
+                    var named = await RequestGuarded(job.AutoFetchJobId, request.RequestId, correlationId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(r => r.CompanyName, profileName), ct);
+                    if (named == 0) throw new AutoFetchJobCancelledException(job.AutoFetchJobId);
+                    await db.Entry(request).ReloadAsync(ct);
                 }
             }
 
@@ -975,18 +980,12 @@ public sealed class AutoFetchJobService(
             && j.Status != AutoFetchJobStatus.Failed
             && !db.Requests.Any(r => r.RequestId == j.RequestId && r.RequestStatus == RequestStatus.Cancelled));
 
-    /// <summary>Saves a change to the request row. Other workers (the litigation import bumps the live-data counter with every order document)
-    /// update that row while a job runs, so the copy this job loaded is stale by the time it saves; reload, re-apply and retry instead of failing the job.</summary>
-    private async Task SaveRequestAsync(McaRequest request, Action apply, CancellationToken ct)
-    {
-        for (var attempt = 0; ; attempt++)
-        {
-            await db.Entry(request).ReloadAsync(ct);
-            apply();
-            try { await db.SaveChangesAsync(ct); return; }
-            catch (DbUpdateConcurrencyException) when (attempt < 4) { }
-        }
-    }
+    /// <summary>The request row, but only while this job still owns it and the request is not cancelled. Other workers (the litigation import bumps the
+    /// live-data counter with every order document) update that row while a job runs, so a tracked save of the copy this job loaded fails on its row
+    /// version; an atomic update has no stale copy to fail, and checks cancellation and ownership in the same statement.</summary>
+    private IQueryable<McaRequest> RequestGuarded(long jobId, long requestId, string correlationId) =>
+        db.Requests.Where(r => r.RequestId == requestId && r.RequestStatus != RequestStatus.Cancelled
+            && db.AutoFetchJobs.Any(j => j.AutoFetchJobId == jobId && j.CorrelationId == correlationId && j.Status != AutoFetchJobStatus.Failed));
 
     private async Task EnsureNotCancelledAsync(long jobId, string correlationId, CancellationToken ct)
     {

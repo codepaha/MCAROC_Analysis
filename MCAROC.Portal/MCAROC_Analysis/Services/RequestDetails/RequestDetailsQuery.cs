@@ -103,7 +103,9 @@ public sealed class RequestDetailsQuery(AppDbContext db, DossierCache dossierCac
             || (dossier is not null && dossier.IngestionRunId != vm.Request.LatestCompletedIngestionRunId)
             || (vm.ChargeLitigation is { } links && links.SnapshotId != vm.LitigationDataLake?.AuthoritativeSnapshot?.LitigationReportSnapshotId))
             throw new RequestPageChangedException();
-        if (vm.LitigationDataLake?.CaseList is { } list) list.Generation = (ignoreLiveData ? after : version)?.Key;
+        // The relaxed read can mix live-data states across the model's separate queries, so it must not certify a generation: the case-list and
+        // analysis-availability endpoints take the generation as proof that their data matches this overview. Without one they fence only on themselves.
+        if (vm.LitigationDataLake?.CaseList is { } list) list.Generation = ignoreLiveData ? null : version?.Key;
         return vm;
     }
 }

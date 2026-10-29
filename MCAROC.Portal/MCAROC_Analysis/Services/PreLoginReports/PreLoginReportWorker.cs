@@ -15,11 +15,9 @@ public sealed class PreLoginReportWorker(IServiceScopeFactory scopes, PreLoginRe
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // An unhandled exception here stops the whole host (default BackgroundService behaviour), so a SQL
-        // timeout during recovery must not take the portal down; the queue loop below still has to start.
-        try { await RecoverAsync(stoppingToken); }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-        catch (Exception ex) { logger.LogError(ex, "Pre-login report startup recovery failed; continuing without it"); }
+        // A failed recovery faults the worker on purpose: SupervisedBackgroundService restarts it with a growing wait, so recovery is retried
+        // (all of it; every step is safe to repeat) instead of the queue loop starting with interrupted jobs left in the database.
+        await RecoverAsync(stoppingToken);
         await foreach (var jobId in queue.ReadAllAsync(stoppingToken))
         {
             await concurrency.WaitAsync(stoppingToken);

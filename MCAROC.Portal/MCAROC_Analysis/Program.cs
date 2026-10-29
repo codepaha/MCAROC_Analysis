@@ -82,9 +82,6 @@ builder.Services.AddScoped<BorrowerRequestDocumentReader>();
 builder.Services.AddScoped<IBorrowerAssignmentAiExtractor, BorrowerAssignmentAiExtractor>();
 builder.Services.AddScoped<BorrowerAssignmentIntake>();
 builder.Services.AddScoped<BorrowerAssignmentIdentityResolver>();
-// ~25 background workers share this host; by default one uncaught exception (e.g. a SQL timeout) in any of
-// them stops the whole portal. Log it and keep serving instead.
-builder.Services.Configure<HostOptions>(o => o.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore);
 builder.Services.AddHostedService<PreLoginReportWorker>();
 builder.Services.AddHostedService<PreLoginLitigationTargetWorker>();
 
@@ -527,6 +524,9 @@ builder.Services.AddRateLimiter(options =>
         }));
 });
 
+// ~25 background workers share this host. One uncaught exception in any of them (e.g. a SQL timeout) would stop the whole portal, and
+// ignoring it would leave that worker dead until the next restart. Each worker is supervised instead: restarted after a growing wait.
+MCAROC_Analysis.Services.Hosting.SupervisedBackgroundServiceExtensions.SuperviseBackgroundServices(builder.Services);
 var app = builder.Build();
 MCAROC_Analysis.Services.Storage.StoragePathHelper.Initialize(app.Services.GetRequiredService<MCAROC_Analysis.Services.Storage.IStoragePathResolver>());
 MCAROC_Analysis.Services.AiUsage.AiUsageLog.Configure(app.Services.GetRequiredService<MCAROC_Analysis.Services.AiUsage.AiUsageQueue>());
