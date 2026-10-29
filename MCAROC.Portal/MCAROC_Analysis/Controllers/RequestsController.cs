@@ -483,15 +483,26 @@ public partial class RequestsController(
             bprOptions, litigationAnalysis, chargeLitigation, orderOutcomes, fullTextStatus, readerGate, courtRefreshStatus);
         try
         {
-            var vm = await query.BuildAsync(id, charge, court, status, page, outcome, focusCase,
-                  PortalAccess.HasFullAccess(User), HttpContext?.RequestServices, HttpContext?.RequestAborted ?? CancellationToken.None,
-                  q, pageSize, compactLitigation: true);
+            var ct = HttpContext?.RequestAborted ?? CancellationToken.None;
+            Task<Models.RequestDetailsViewModel?> Build(bool ignoreLiveData) => query.BuildAsync(id, charge, court, status, page, outcome, focusCase,
+                  PortalAccess.HasFullAccess(User), HttpContext?.RequestServices, ct, q, pageSize, compactLitigation: true, ignoreLiveData: ignoreLiveData);
+            Models.RequestDetailsViewModel? vm;
+            // A litigation import bumps the live-data counter with every order document, so the strict fence can fail on every load:
+            // retry once ignoring only that counter, so the page (and the unlock approval on it) stays reachable during an import.
+            try { vm = await Build(false); }
+            catch (Services.RequestDetails.RequestPageChangedException) { vm = await Build(true); }
             return vm is null ? NotFound() : View(vm);
         }
         catch (Services.RequestDetails.RequestPageChangedException)
         {
             if (HttpContext is not null) Response.StatusCode = StatusCodes.Status409Conflict;
             return View("RefreshRequired", id);
+        }
+        catch (OperationCanceledException) when (HttpContext?.RequestAborted.IsCancellationRequested == true)
+        {
+            // The browser abandoned this page load (reload, navigation, or the unlock redirect replacing it); nobody is
+            // waiting for a response, and the cancellation must not escape as an unhandled exception.
+            return new EmptyResult();
         }
         finally
         {

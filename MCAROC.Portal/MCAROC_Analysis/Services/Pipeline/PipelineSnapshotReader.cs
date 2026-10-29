@@ -15,6 +15,9 @@ namespace MCAROC_Analysis.Services.Pipeline;
 public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOptions<BprLitigationOptions> bprOptions,
     IOptions<ReferenceToolOptions> referenceToolOptions, IOptions<ResolverOptions>? resolverOptions = null, LitigationAiAnalysisOrchestrator? litigationAnalysis = null)
 {
+    /// <summary>Failed order-document downloads after which the automatic litigation-analysis gate stops waiting for that document.</summary>
+    public const int OrderDownloadGiveUpAttempts = 5;
+
     /// <summary>Cheap first (timestamps), and only then the evidence check: it runs only in the window after a court update finished and before a re-analysis caught up.</summary>
     private async Task<bool> ReanalysisDueAsync(long requestId, MCAROC_Analysis.Services.LitigationModule.Fetching.RefreshRunProgress? courtUpdate, CancellationToken ct)
     {
@@ -123,9 +126,13 @@ public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOpt
 
             var orderDocs = await db.LitigationOrderDocuments.AsNoTracking()
                 .Where(d => d.Order!.Case!.RequestId == requestId)
-                .Select(d => new { d.Status, d.ChunkingStatus, d.CreatedUtc }).ToListAsync(ct);
+                .Select(d => new { d.Status, d.ChunkingStatus, d.CreatedUtc, d.AttemptCount }).ToListAsync(ct);
+            // A download that keeps failing (an expired link or an error page served in place of the PDF) is retried for days; the automatic
+            // stage must not wait that long for an order the source cannot serve. After OrderDownloadGiveUpAttempts it counts as settled
+            // (the case is analysed without that order's text, and a later successful download still refreshes the findings).
             var ordersFullyProcessed = orderDocs.All(d =>
                 d.Status is LitigationOrderDocumentStatus.Expired or LitigationOrderDocumentStatus.NotPublished
+                || (d.Status == LitigationOrderDocumentStatus.Failed && d.AttemptCount >= OrderDownloadGiveUpAttempts)
                 || (d.Status == LitigationOrderDocumentStatus.Downloaded && d.ChunkingStatus is ChunkingStatus.Chunked or ChunkingStatus.Failed));
             // #554: the properties each order names are read before the litigation stage moves on, so the report and dossier carry them.
             var readingOptions = new MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyReadingOptions

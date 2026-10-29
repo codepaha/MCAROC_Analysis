@@ -927,6 +927,28 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
         Assert.Equal("[Page 5]", minimal);
     }
 
+    /// <summary>A blank or near-blank OCR scan legitimately yields no chunks. It was re-queued on every pass (no stored chunks = outdated), flipped back
+    /// to Pending each time and held the pipeline's order-processing gate open; it is now looked at again at most once a day.</summary>
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(2, true)]
+    public async Task GetOutdatedDocumentIdsAsync_does_not_requeue_a_chunkless_document_tried_within_a_day(int daysSinceLastAttempt, bool outdated)
+    {
+        await using var db = CreateContext();
+        var (request, _, order) = await SeedOrderAsync(db, "CL" + daysSinceLastAttempt);
+        var document = await SeedDownloadedDocumentAsync(db, order.LitigationCaseOrderId, "--- Page 1 (OCR) ---\n  ");
+        document.ExtractedText = "--- Page 1 (OCR) ---\nabc";
+        document.ChunkingStatus = ChunkingStatus.Chunked;
+        document.ChunkingLastAttemptUtc = DateTime.UtcNow.AddDays(-daysSinceLastAttempt);
+        await db.SaveChangesAsync();
+
+        var orchestrator = new LitigationOrderChunkingOrchestrator(db, new StubEmbeddingService(n => Enumerable.Range(0, n).Select(_ => Axis(0)).ToList()),
+            new LitigationOrderChunkingQueue(), NullLogger<LitigationOrderChunkingOrchestrator>.Instance);
+
+        var ids = await orchestrator.GetOutdatedDocumentIdsAsync(10, CancellationToken.None, request.RequestId);
+        Assert.Equal(outdated, ids.Contains(document.LitigationOrderDocumentId));
+    }
+
     [Fact]
     public async Task RechunkOutdatedDocumentsAsync_upgrades_v1_documents_to_v2_with_context_header_atomically()
     {

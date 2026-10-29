@@ -24,7 +24,7 @@ public sealed class RequestDetailsQuery(AppDbContext db, DossierCache dossierCac
 {
     public async Task<RequestDetailsViewModel?> BuildAsync(long id, long? charge, string? court, string? status,
         int page, string? outcome, long? focusCase, bool hasFullAccess, IServiceProvider? services, CancellationToken ct,
-        string? search = null, int pageSize = 25, bool compactLitigation = false)
+        string? search = null, int pageSize = 25, bool compactLitigation = false, bool ignoreLiveData = false)
     {
         var version = await RequestPageVersion.ReadAsync(db, id, ct);
         var request = await db.Requests.AsNoTracking().Include(r => r.Client).FirstOrDefaultAsync(r => r.RequestId == id, ct);
@@ -95,11 +95,15 @@ public sealed class RequestDetailsQuery(AppDbContext db, DossierCache dossierCac
             }
         }
 
-        if (version != await RequestPageVersion.ReadAsync(db, id, ct)
+        // ignoreLiveData: while litigation orders are being imported the live-data counter moves with every document, so a strict
+        // fence never lets the page load. The retry ignores that counter only; ingestion, analysis and snapshot changes still fence it.
+        var after = await RequestPageVersion.ReadAsync(db, id, ct);
+        var moved = ignoreLiveData ? version?.WithoutLiveData() != after?.WithoutLiveData() : version != after;
+        if (moved
             || (dossier is not null && dossier.IngestionRunId != vm.Request.LatestCompletedIngestionRunId)
             || (vm.ChargeLitigation is { } links && links.SnapshotId != vm.LitigationDataLake?.AuthoritativeSnapshot?.LitigationReportSnapshotId))
             throw new RequestPageChangedException();
-        if (vm.LitigationDataLake?.CaseList is { } list) list.Generation = version?.Key;
+        if (vm.LitigationDataLake?.CaseList is { } list) list.Generation = (ignoreLiveData ? after : version)?.Key;
         return vm;
     }
 }

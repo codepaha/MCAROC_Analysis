@@ -15,6 +15,8 @@ public sealed record RequestPageVersion(long? Ingestion, long? Analysis, Analysi
         System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(new
         { Ingestion, Analysis, AnalysisStatus, FilingBatch, LitigationSnapshot, SearchHash, LitigationAnalysis, LitigationAnalysisStatus, LiveData }))));
 
+    public RequestPageVersion WithoutLiveData() => this with { LiveData = 0 };
+
     public static Task<RequestPageVersion?> ReadAsync(AppDbContext db, long id, CancellationToken ct)
     {
         var snapshots = LitigationSnapshotSelection.ForRequest(db, id);

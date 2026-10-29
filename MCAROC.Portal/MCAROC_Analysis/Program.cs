@@ -82,6 +82,9 @@ builder.Services.AddScoped<BorrowerRequestDocumentReader>();
 builder.Services.AddScoped<IBorrowerAssignmentAiExtractor, BorrowerAssignmentAiExtractor>();
 builder.Services.AddScoped<BorrowerAssignmentIntake>();
 builder.Services.AddScoped<BorrowerAssignmentIdentityResolver>();
+// ~25 background workers share this host; by default one uncaught exception (e.g. a SQL timeout) in any of
+// them stops the whole portal. Log it and keep serving instead.
+builder.Services.Configure<HostOptions>(o => o.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore);
 builder.Services.AddHostedService<PreLoginReportWorker>();
 builder.Services.AddHostedService<PreLoginLitigationTargetWorker>();
 
