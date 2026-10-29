@@ -28,7 +28,7 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
     internal const int MaxChargeRows = 40;
     internal const int MaxHoldersListed = 12;
 
-    public async Task<List<StructuredFact>> BuildDigestAsync(long requestId, QuestionHints hints, CancellationToken ct)
+    public async Task<List<StructuredFact>> BuildDigestAsync(long requestId, QuestionHints hints, CancellationToken ct, string? question = null)
     {
         var request = await db.Requests.FirstAsync(r => r.RequestId == requestId, ct);
         var facts = new List<StructuredFact>();
@@ -140,16 +140,26 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
             {
                 // The largest charges, plus every charge the question points at (a lender it names, a year it asks about), so a capped
                 // list never hides the row asked for.
+                // What each charge says about its property (the register's own particulars, latest event): the only link from a question about a
+                // piece of land to the charges on it. Without it the model can name only the charge whose deed text it happened to retrieve.
+                var propertyByCharge = await LatestPropertyParticularsAsync(relevant.Select(c => c.ChargeId).ToList(), ct);
+                var questionNumbers = NumberTokens(question);
+                var asksAboutProperty = AsksAboutProperty(question);
+                bool NamesProperty(RocCharge c) => questionNumbers.Count >= 2 && propertyByCharge.TryGetValue(c.ChargeId, out var p)
+                    && NumberTokens(p).Intersect(questionNumbers).Count() >= 2;
                 bool Asked(RocCharge c) =>
                     (hints.LenderNameKeyword is { } lender && c.LatestChargeHolderRaw.Contains(lender, StringComparison.OrdinalIgnoreCase))
-                    || (hints.Year is { } year && (c.CreationDate?.Year == year || c.SatisfactionDate?.Year == year));
+                    || (hints.Year is { } year && (c.CreationDate?.Year == year || c.SatisfactionDate?.Year == year))
+                    || NamesProperty(c);
                 var listed = relevant.OrderByDescending(Asked).ThenByDescending(c => c.CurrentAmount ?? 0m).ThenBy(c => c.RocChargeNumber, StringComparer.Ordinal)
                     .Take(Math.Max(MaxChargeRows, relevant.Count(Asked))).ToList();
                 foreach (var c in listed.OrderByDescending(c => c.CurrentAmount ?? 0m).ThenBy(c => c.RocChargeNumber, StringComparer.Ordinal))
                     facts.Add(new StructuredFact("Charges",
                         $"Charge {c.RocChargeNumber}: Holder {c.LatestChargeHolderRaw}, Amount ₹{c.CurrentAmount} Cr, Status {c.ChargeStatus}"
                             + (c.CreationDate is { } created ? $", Created {created:yyyy-MM-dd}" : "")
-                            + (c.SatisfactionDate is { } sd ? $", Satisfied {sd:yyyy-MM-dd}" : ""),
+                            + (c.SatisfactionDate is { } sd ? $", Satisfied {sd:yyyy-MM-dd}" : "")
+                            + (propertyByCharge.TryGetValue(c.ChargeId, out var property) && (asksAboutProperty || NamesProperty(c))
+                                ? $", Property per register: {Clip(property, MaxPropertyChars)}" : ""),
                         "RocCharge", c.ChargeId));
                 if (listed.Count < relevant.Count)
                     facts.Add(new StructuredFact("Charges",
@@ -308,6 +318,34 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
                 : new StructuredFact("CompanyProfile", text, nameof(CompanyNameHistory), c.HistoryRow?.CompanyNameHistoryId, ingestionRunId));
         }
         return facts;
+    }
+
+    /// <summary>Characters of a charge's property particulars put in one prompt row.</summary>
+    internal const int MaxPropertyChars = 320;
+
+    private static string Clip(string text, int max)
+    {
+        var flat = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        return flat.Length <= max ? flat : flat[..max] + "…";
+    }
+
+    /// <summary>The runs of three or more digits in a text (survey numbers, CTS numbers, areas): what a question about a property shares with a charge's particulars.</summary>
+    internal static HashSet<string> NumberTokens(string? text) => text is null ? []
+        : System.Text.RegularExpressions.Regex.Matches(text, @"\d{3,}").Select(m => m.Value).ToHashSet(StringComparer.Ordinal);
+
+    /// <summary>True when the question is about a piece of land or other security, so every listed charge should show what it says about its property.</summary>
+    internal static bool AsksAboutProperty(string? question) => question is not null
+        && System.Text.RegularExpressions.Regex.IsMatch(question, @"\b(propert(y|ies)|land|plot|survey|CTS|premises|security|secured|collateral|asset|mortgage[ds]?)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>The property particulars of each charge's most recent event that has any.</summary>
+    private async Task<Dictionary<long, string>> LatestPropertyParticularsAsync(IReadOnlyCollection<long> chargeIds, CancellationToken ct)
+    {
+        if (chargeIds.Count == 0) return [];
+        var rows = await db.RocChargeEvents.AsNoTracking()
+            .Where(e => chargeIds.Contains(e.RocChargeId) && e.PropertyParticulars != null && e.PropertyParticulars != "")
+            .Select(e => new { e.RocChargeId, e.EventDate, e.ChargeEventId, e.PropertyParticulars }).ToListAsync(ct);
+        return rows.GroupBy(r => r.RocChargeId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(r => r.EventDate).ThenByDescending(r => r.ChargeEventId).First().PropertyParticulars!);
     }
 
     /// <summary>The company's current name and the names it has had, which a party list may use.</summary>

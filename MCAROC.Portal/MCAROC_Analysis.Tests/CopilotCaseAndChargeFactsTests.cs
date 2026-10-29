@@ -177,6 +177,62 @@ public class CopilotCaseAndChargeFactsTests
         Assert.Contains("Created 2019-07-09", row.Text);
     }
 
+    private static void AddPropertyEvent(AppDbContext db, long requestId, long runId, long chargeId, string particulars) =>
+        db.RocChargeEvents.Add(new RocChargeEvent { RocChargeId = chargeId, RequestId = requestId, IngestionRunId = runId, SerialNumber = "1", EventType = ChargeEventType.Creation,
+            EventDate = new DateOnly(2011, 5, 20), HolderNameRaw = "X", HolderNameNormalized = "X", PropertyParticulars = particulars });
+
+    /// <summary>The Deccan Chronicle miss: two open charges sit on the same land, but the register rows named only holder and amount, so a question about the
+    /// land could be tied only to the one charge whose deed text was retrieved. The rows now carry the register's property particulars, and a question that
+    /// names the property's survey numbers always lists the charges that share them, however small and however many charges there are.</summary>
+    [Fact]
+    public async Task A_question_naming_a_propertys_survey_numbers_lists_every_charge_on_it_with_its_property_text()
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        for (var i = 0; i < 60; i++)
+            db.RocCharges.Add(new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = $"BIG-{i:D2}", LatestChargeHolderRaw = "BIG BANK",
+                ChargeStatus = "Open", CurrentAmount = 1000m + i, CreationDate = new DateOnly(2012, 5, 5) });
+        var tata = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "10301179", LatestChargeHolderRaw = "TATA CAPITAL LIMITED",
+            ChargeStatus = "Open", CurrentAmount = 100m, CreationDate = new DateOnly(2011, 4, 15) };
+        var lt = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "100187185", LatestChargeHolderRaw = "L&T FINANCE LIMITED",
+            ChargeStatus = "Open", CurrentAmount = 25m, CreationDate = new DateOnly(2011, 5, 20) };
+        db.RocCharges.AddRange(tata, lt);
+        await db.SaveChangesAsync();
+        AddPropertyEvent(db, requestId, runId, tata.ChargeId,
+            "All that piece or parcel of land admeasuring about 2152.25 sq. yards known as Mathuradas Mills Compound bearing Survey Nos. 1/2844, 2845, 2846, 3/2840, 2841, 2842");
+        AddPropertyEvent(db, requestId, runId, lt.ChargeId,
+            "Commercial Plot of Land bearing survey no. 3/2840, 3/2841, 2842, 2843, C.S.no.242, Mathuradas Mill Compound, Lower Parel, Mumbai");
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default,
+            "Is there any charge on this property? Non-Agricultural land forming part of Mathuradas Mills Compound bearing Survey Nos. 3/ 2840, 3/ 2841, 2842, CTS 242 of Lower Parel");
+
+        var tataRow = Assert.Single(facts, f => f.EntityType == "RocCharge" && f.Text.Contains("10301179"));
+        var ltRow = Assert.Single(facts, f => f.EntityType == "RocCharge" && f.Text.Contains("100187185"));
+        Assert.Contains("Property per register:", tataRow.Text);
+        Assert.Contains("Property per register:", ltRow.Text);
+        Assert.Contains("Mathuradas Mill", ltRow.Text);
+    }
+
+    [Fact]
+    public async Task Charge_rows_do_not_carry_property_text_when_the_question_is_not_about_a_property()
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        var charge = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "555", LatestChargeHolderRaw = "SOME BANK",
+            ChargeStatus = "Open", CurrentAmount = 10m, CreationDate = new DateOnly(2020, 1, 1) };
+        db.RocCharges.Add(charge);
+        await db.SaveChangesAsync();
+        AddPropertyEvent(db, requestId, runId, charge.ChargeId, "Plot bearing survey no. 1111, 2222 at Somewhere");
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default,
+            "How many open charges are there?");
+
+        var row = Assert.Single(facts, f => f.EntityType == "RocCharge");
+        Assert.DoesNotContain("Property per register", row.Text);
+    }
+
     private static async Task SeedCasesAsync(AppDbContext db, long requestId, params LitigationCase[] cases)
     {
         var job = new LitigationSearchJob { RequestId = requestId, Status = LitigationSearchJobStatus.Completed, RawResponseHash = "h" + Guid.NewGuid().ToString("N") };

@@ -356,7 +356,9 @@ builder.Services.AddScoped(sp => new FilingBatchProcessor(
     sp.GetRequiredService<DocumentChunkingQueue>(),
     sp.GetRequiredService<ILogger<FilingBatchProcessor>>(),
     sp.GetRequiredService<IOperationalSlotLeaseService>(),
-    sp.GetRequiredService<IOptions<LargeArchiveUploadOptions>>()));
+    sp.GetRequiredService<IOptions<LargeArchiveUploadOptions>>(),
+    pathResolver: null,
+    chargeLinks: sp.GetService<MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentLinkBuilder>()));
 builder.Services.AddHostedService<FilingProcessingWorker>();
 
 // Rule engine + AI cross-section analysis pipeline
