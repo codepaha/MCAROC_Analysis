@@ -293,9 +293,24 @@ public class ChargeInstrumentExtractionService(
 }
 
 public sealed class ChargeInstrumentExtractionWorker(IServiceScopeFactory scopes, ChargeInstrumentExtractionQueue queue,
-    ILogger<ChargeInstrumentExtractionWorker> logger) : BackgroundService
+    ILogger<ChargeInstrumentExtractionWorker> logger, ChargeDocumentLinkBuilder? linkBuilder = null) : BackgroundService
 {
     private readonly SemaphoreSlim _concurrency = new(2);
+    private static readonly TimeSpan RecoverySweepEvery = TimeSpan.FromMinutes(10);
+
+    /// <summary>Retries linking and extraction scheduling for recently completed filing batches that lost either (see
+    /// <see cref="ChargeDocumentLinkBuilder.RecoverPendingAsync"/>): once now, then every ten minutes.</summary>
+    private async Task SweepAsync(CancellationToken ct)
+    {
+        if (linkBuilder is null) return;
+        using var timer = new PeriodicTimer(RecoverySweepEvery);
+        do
+        {
+            try { await linkBuilder.RecoverPendingAsync(ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (Exception ex) { logger.LogWarning(ex, "Charge document recovery sweep failed; will retry"); }
+        } while (await timer.WaitForNextTickAsync(ct));
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -306,6 +321,7 @@ public sealed class ChargeInstrumentExtractionWorker(IServiceScopeFactory scopes
             if (count > 0) logger.LogInformation("Recovered {Count} charge instrument extraction(s)", count);
         }
         catch (Exception ex) { logger.LogError(ex, "Charge instrument extraction startup recovery failed"); }
+        _ = SweepAsync(stoppingToken);
         await foreach (var id in queue.ReadAllAsync(stoppingToken)) _ = HandleAsync(id, stoppingToken);
     }
 

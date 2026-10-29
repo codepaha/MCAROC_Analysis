@@ -143,10 +143,10 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
                 // What each charge says about its property (the register's own particulars, latest event): the only link from a question about a
                 // piece of land to the charges on it. Without it the model can name only the charge whose deed text it happened to retrieve.
                 var propertyByCharge = await LatestPropertyParticularsAsync(relevant.Select(c => c.ChargeId).ToList(), ct);
-                var questionNumbers = NumberTokens(question);
+                var questionIds = PropertyIds(question);
                 var asksAboutProperty = AsksAboutProperty(question);
-                bool NamesProperty(RocCharge c) => propertyByCharge.TryGetValue(c.ChargeId, out var p)
-                    && SharesProperty(questionNumbers, NumberTokens(p), asksAboutProperty);
+                bool NamesProperty(RocCharge c) => questionIds.Count > 0 && propertyByCharge.TryGetValue(c.ChargeId, out var p)
+                    && SharesProperty(questionIds, PropertyIds(p));
                 bool Asked(RocCharge c) =>
                     (hints.LenderNameKeyword is { } lender && c.LatestChargeHolderRaw.Contains(lender, StringComparison.OrdinalIgnoreCase))
                     || (hints.Year is { } year && (c.CreationDate?.Year == year || c.SatisfactionDate?.Year == year))
@@ -329,29 +329,50 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
         return flat.Length <= max ? flat : flat[..max] + "…";
     }
 
-    /// <summary>The identifiers a text names for a property: runs of three or more digits (survey, CTS, plot numbers, areas) and slash-joined pairs
-    /// such as 3/2840, kept whole (with any spaces removed) so a hit on the full structure counts for more than a bare number.</summary>
-    internal static HashSet<string> NumberTokens(string? text)
+    // Property identifiers as Indian address and deed text writes them (checked against ~143,000 delivered property addresses): a list introduced by a label
+    // (S NO, SY.NO., SURVEY NOS., RS NO, KH NO, KHASRA, KHATA, GAT, GUT, PLOT, FP, TPS, CTS, C.S.NO., RECT, HISSA), e.g. "S NO 358, 364" or
+    // "Survey Nos. 3/ 2840, 3/ 2841 & 2842". An identifier may be multi-part (3/2840, 43/1/3/2, 1-2-2870) and may end in one letter (2A, 204/P). Numbers are
+    // identifiers only here: a year, an area, a floor or a PIN code is never read as one because of its digits.
+    private const string IdPattern = @"\d+[A-Za-z]?(?![A-Za-z])(?:\s*[/\-.]\s*(?:\d+[A-Za-z]?(?![A-Za-z])|[A-Za-z](?![A-Za-z])))*";
+    private static readonly System.Text.RegularExpressions.Regex IdListAfterLabel = new(
+        @"(?<![A-Za-z])(?:r\.?\s*s\.?\s*no|re\.?\s*sy\.?\s*no|sy\.?\s*no|s\.?\s*no|survey(?:\s*(?:nos?|numbers?))?|kh\.?\s*no|khas+a?ra(?:\s*no)?|khat+h?a(?:\s*no)?"
+        + @"|gat|gut|plot(?:\s*no)?|f\.?\s*p(?:\s*no)?|t\.?\s*p\.?\s*s(?:\s*no)?|c\.?\s*t\.?\s*s(?:\s*no)?|c\.?\s*s\.?\s*no|rect(?:\s*no)?|hissa(?:\s*no)?|t\.?\s*s\.?\s*no)"
+        + @"(?![A-Za-z])[.:\-\s]*(" + IdPattern + @"(?:\s*(?:,|&|;|\+|and|to)\s*" + IdPattern + @")*)",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex OneId = new(IdPattern, System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex SlashPair = new(@"(?<![\w/])\d{1,3}\s*/\s*\d{3,6}(?![\d/])", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>A property identifier: its normalised text (spaces removed, upper case) and its numeric parts, so 3/2840 and 4/2840 are different identifiers.</summary>
+    internal readonly record struct PropertyId(string Text, string[] Parts)
     {
-        if (text is null) return [];
-        var tokens = System.Text.RegularExpressions.Regex.Matches(text, @"\d{3,}").Select(m => m.Value).ToHashSet(StringComparer.Ordinal);
-        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(text, @"\d+\s*/\s*\d{3,}"))
-            tokens.Add(System.Text.RegularExpressions.Regex.Replace(m.Value, @"\s+", ""));
-        return tokens;
+        public bool IsBare => Parts.Length == 1;
+        public bool Equals(PropertyId other) => Text == other.Text;
+        public override int GetHashCode() => Text.GetHashCode();
     }
 
-    // A year (1900-2099) or a six-digit number (a PIN code) is shared by unrelated charges; it does not identify a property.
-    private static bool IsIdentifying(string token) => !token.Contains('/') && !(token.Length == 4 && (token.StartsWith("19") || token.StartsWith("20"))) && token.Length != 6;
-
-    /// <summary>True when the question and a charge's particulars name the same property: a slash-joined identifier in common (3/2840), or two identifying
-    /// numbers in common, or one when the question is plainly about a property (a question naming "survey 2840" names that parcel).</summary>
-    internal static bool SharesProperty(HashSet<string> question, HashSet<string> particulars, bool asksAboutProperty)
+    internal static List<PropertyId> PropertyIds(string? text)
     {
-        var shared = question.Intersect(particulars).ToList();
-        if (shared.Any(t => t.Contains('/'))) return true;
-        var identifying = shared.Count(IsIdentifying);
-        return identifying >= 2 || (asksAboutProperty && identifying >= 1);
+        var ids = new Dictionary<string, PropertyId>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(text)) return [];
+        void Add(string raw)
+        {
+            var normalised = System.Text.RegularExpressions.Regex.Replace(raw, @"\s+", "").ToUpperInvariant();
+            var parts = System.Text.RegularExpressions.Regex.Matches(normalised, @"\d+").Select(m => m.Value).ToArray();
+            if (parts.Length == 0 || normalised.All(char.IsDigit) && (parts[0].Length < 3 || parts[0].Length == 6)) return; // too short to identify, or a PIN code
+            ids.TryAdd(normalised, new PropertyId(normalised, parts));
+        }
+        foreach (System.Text.RegularExpressions.Match list in IdListAfterLabel.Matches(text))
+            foreach (System.Text.RegularExpressions.Match one in OneId.Matches(list.Groups[1].Value)) Add(one.Value);
+        foreach (System.Text.RegularExpressions.Match pair in SlashPair.Matches(text)) Add(pair.Value);
+        return [.. ids.Values];
     }
+
+    /// <summary>True when the question and a charge's particulars name the same parcel: an identical identifier, or a bare number on one side that is a part of
+    /// the other ("survey 2840" names 3/2840 and 4/2840; "3/2840" does not name 4/2840).</summary>
+    internal static bool SharesProperty(IReadOnlyCollection<PropertyId> question, IReadOnlyCollection<PropertyId> particulars) =>
+        question.Any(q => particulars.Any(p => p.Text == q.Text
+            || (q.IsBare && !p.IsBare && p.Parts.Contains(q.Parts[0]) && q.Parts[0].Length >= 3)
+            || (p.IsBare && !q.IsBare && q.Parts.Contains(p.Parts[0]) && p.Parts[0].Length >= 3)));
 
     /// <summary>True when the question is about a piece of land or other security, so every listed charge should show what it says about its property.</summary>
     internal static bool AsksAboutProperty(string? question) => question is not null

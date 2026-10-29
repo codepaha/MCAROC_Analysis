@@ -219,6 +219,9 @@ public class CopilotCaseAndChargeFactsTests
     [InlineData("Is there a charge on plot 3/2840 at Lower Parel?", true)]       // the full slash-joined identifier
     [InlineData("Which charges were created in 2011 or registered in 400013?", false)] // a year and a PIN code identify no property
     [InlineData("Which charges were created in 2840?", false)]                   // a bare number with no property wording
+    [InlineData("Which charges cover survey no. 4/2840?", false)]                // 4/2840 is not 3/2840: the sub-division prefix is part of the identifier
+    [InlineData("Which charges cover survey nos. 4/2840 and 2842?", true)]      // one of the listed parcels is shared
+    [InlineData("Which charges cover S.NO. 2840 AND CS NO 242 at Lower Parel?", true)] // the abbreviations real addresses use
     public async Task A_single_survey_number_is_enough_when_the_question_is_about_a_property(string question, bool expectListed)
     {
         await using var db = CreateContext();
@@ -236,6 +239,29 @@ public class CopilotCaseAndChargeFactsTests
         var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default, question);
 
         Assert.Equal(expectListed, facts.Any(f => f.EntityType == "RocCharge" && f.Text.Contains("SMALL-LT")));
+    }
+
+    [Theory]
+    [InlineData("Which charges cover survey no. 2011?", true)]    // a year-like number is a survey number when the text says so
+    [InlineData("Which charges were created in 2011?", false)]    // ...and only then
+    [InlineData("Which charges cover plot 400013?", false)]       // a plot that is not in the particulars
+    public async Task A_number_is_a_survey_number_only_where_the_text_says_so(string question, bool expectListed)
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        for (var i = 0; i < 60; i++)
+            db.RocCharges.Add(new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = $"BIG-{i:D2}", LatestChargeHolderRaw = "BIG BANK",
+                ChargeStatus = "Open", CurrentAmount = 1000m + i, CreationDate = new DateOnly(2012, 5, 5) });
+        var small = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "SMALL-2011", LatestChargeHolderRaw = "SOME FINANCE",
+            ChargeStatus = "Open", CurrentAmount = 1m, CreationDate = new DateOnly(2014, 1, 1) };
+        db.RocCharges.Add(small);
+        await db.SaveChangesAsync();
+        AddPropertyEvent(db, requestId, runId, small.ChargeId, "Land at Pune, survey no. 2011, pin code 400013, admeasuring 1800 sq mtrs");
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default, question);
+
+        Assert.Equal(expectListed, facts.Any(f => f.EntityType == "RocCharge" && f.Text.Contains("SMALL-2011")));
     }
 
     [Fact]

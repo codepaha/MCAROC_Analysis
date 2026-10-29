@@ -160,21 +160,39 @@ public class ChargeDocumentLinkBuilder(IServiceScopeFactory scopes, ChargeFormBa
             finally { _running.TryRemove(id, out _); }
         }));
 
-    /// <summary>Batches completed recently whose charge links were never stamped: the completion hook's in-memory request was lost (a restart between the
-    /// committed status and the run, or a failure inside it, which only logs). Run again at startup, so automatic linking survives a restart. Limited to
-    /// recent batches so old data is not swept into a mass re-extraction.</summary>
-    public virtual async Task<int> RecoverPendingAsync(CancellationToken ct, int maxBatches = 50)
+    /// <summary>Durable retry for the two steps the completion hook only requests in memory. For batches completed in the last seven days (so old data is not
+    /// swept into a mass re-extraction):
+    /// 1. never stamped: the linking request was lost (a restart between the committed status and the run, or a failed run, which only logs), so it is requested again;
+    /// 2. stamped, but a linked document has no extraction row: the builder stamps BEFORE it schedules extraction, so a crash or failure in between would
+    ///    otherwise never be retried; scheduling is idempotent and is run again.
+    /// Run at startup and periodically, so a transient failure during normal operation is retried too.</summary>
+    public virtual async Task<int> RecoverPendingAsync(CancellationToken ct, int maxBatches = 200)
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var since = DateTime.UtcNow.AddDays(-7);
-        var ids = await db.McaFilingBatches.AsNoTracking()
-            .Where(b => (b.Status == FilingBatchStatus.Completed || b.Status == FilingBatchStatus.CompletedWithErrors)
-                && b.ChargeLinksStamp == null && b.CompletedDate >= since)
-            .OrderByDescending(b => b.BatchId).Take(maxBatches).Select(b => b.BatchId).ToListAsync(ct);
-        foreach (var id in ids) Request(id);
-        if (ids.Count > 0) logger.LogInformation("Requested charge document linking for {Count} recently completed batch(es) that never got it", ids.Count);
-        return ids.Count;
+        var recent = db.McaFilingBatches.AsNoTracking()
+            .Where(b => (b.Status == FilingBatchStatus.Completed || b.Status == FilingBatchStatus.CompletedWithErrors) && b.CompletedDate >= since);
+
+        var unlinked = await recent.Where(b => b.ChargeLinksStamp == null).OrderByDescending(b => b.BatchId).Take(maxBatches).Select(b => b.BatchId).ToListAsync(ct);
+        foreach (var id in unlinked) Request(id);
+
+        var rescheduled = 0;
+        if (scope.ServiceProvider.GetService<ChargeInstrumentExtractionService>() is { IsActive: true } instruments)
+        {
+            var unscheduled = await recent
+                .Where(b => b.ChargeLinksStamp != null && db.ChargeDocumentLinks.Any(l => l.BatchId == b.BatchId
+                    && !db.ChargeInstrumentExtractions.Any(e => e.FilingDocumentId == l.FilingDocumentId)))
+                .OrderByDescending(b => b.BatchId).Take(maxBatches).Select(b => b.BatchId).ToListAsync(ct);
+            foreach (var id in unscheduled)
+            {
+                try { rescheduled += await instruments.ScheduleForBatchAsync(id, ct) > 0 ? 1 : 0; }
+                catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Re-scheduling charge instrument extraction failed for batch {BatchId}", id); }
+            }
+        }
+        if (unlinked.Count + rescheduled > 0)
+            logger.LogInformation("Charge document recovery: linking requested for {Unlinked} batch(es), extraction re-scheduled for {Rescheduled}", unlinked.Count, rescheduled);
+        return unlinked.Count + rescheduled;
     }
 
     internal async Task<int> RunAsync(long batchId, CancellationToken ct)
