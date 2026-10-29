@@ -148,8 +148,8 @@ public class RequestDetailsViewModel
     /// (<see cref="Services.Chat.FullTextSearchState.ChatNote"/>); null when keyword search covers everything.</summary>
     public string? KeywordSearchNote { get; set; }
 
-    /// <summary>True when the page was read while a litigation import was still moving the live-data counter and was read again ignoring it: the
-    /// litigation figures may then come from a slightly different moment than the rest of the page. The page says so.</summary>
+    /// <summary>True when the page was read while a litigation import was still moving the live-data counter: the page was read again without its
+    /// litigation figures (which change under the read) and says so.</summary>
     public bool LiveImportInProgress { get; set; }
     public int ChunkedDocumentCount { get; set; }
     public int AuthoritativeBatchChunkableCount { get; set; }

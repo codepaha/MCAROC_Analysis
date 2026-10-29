@@ -82,11 +82,15 @@ public sealed class RequestDetailsQuery(AppDbContext db, DossierCache dossierCac
                 .BuildAsync(id, vm.Request.LatestCompletedIngestionRunId, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException) { vm.ChatSuggestions = []; }
 
-        await new LitigationDetailsQuery(db, bprOptions, litigationAnalysis, orderOutcomes, readerGate, courtRefreshStatus)
-            .LoadAsync(vm, court, status, page, outcome, focusCase, ct, search, pageSize, compactLitigation);
+        // The relaxed read (a litigation import still moving the live-data counter) withholds everything litigation: those figures are the ones that
+        // change under the read, and showing them from a mix of moments would be an inconsistent assessment. Every other section reads tables the import
+        // does not touch, and any change to them still sends the user to a refresh.
+        if (!ignoreLiveData)
+            await new LitigationDetailsQuery(db, bprOptions, litigationAnalysis, orderOutcomes, readerGate, courtRefreshStatus)
+                .LoadAsync(vm, court, status, page, outcome, focusCase, ct, search, pageSize, compactLitigation);
 
         // Never let the charge-to-case comparison take the request page down: it is a highlight, not the page.
-        if (chargeLitigation is not null)
+        if (chargeLitigation is not null && !ignoreLiveData)
         {
             try { vm.ChargeLitigation = await chargeLitigation.GetAsync(id, ct); }
             catch (Exception ex) when (ex is not OperationCanceledException)

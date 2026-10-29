@@ -32,15 +32,25 @@ public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOpt
         // Two durable reasons to look again: a court update that finished after the analysis, or an order that became readable after it (an
         // earlier download failure the gate had stopped waiting for). Either way the evidence comparison decides whether a run is really needed.
         var courtNewer = courtUpdate?.FinishedUtc is { } courtFinished && done < courtFinished;
-        if (!courtNewer && !await OrderEvidenceAddedSinceAsync(db, requestId, readBoundary, ct)) return false;
+        if (!courtNewer)
+        {
+            if (!await OrderEvidenceAddedSinceAsync(db, requestId, readBoundary, ct)) return false;
+            var now = DateTime.UtcNow;
+            if (LastEvidenceComparisonUtc.TryGetValue(requestId, out var last) && now - last < EvidenceComparisonEvery) return false;
+            LastEvidenceComparisonUtc[requestId] = now;
+        }
         return !await litigationAnalysis.IsUpToDateAsync(requestId, ct);
     }
 
-    /// <summary>An order document of the request that was downloaded and chunked after <paramref name="sinceUtc"/>, so the analysis finished then could not have read it.</summary>
+    /// <summary>Order text that became readable after <paramref name="sinceUtc"/>: chunks of the request created since then. The analysis reads chunks, so
+    /// what matters is when the text became readable (chunked), not when the file was downloaded, which can be long before. A re-chunk of unchanged text also
+    /// counts; the evidence comparison that follows decides whether a run is really needed.</summary>
     public static Task<bool> OrderEvidenceAddedSinceAsync(AppDbContext db, long requestId, DateTime sinceUtc, CancellationToken ct) =>
-        db.LitigationOrderDocuments.AsNoTracking().AnyAsync(d => d.Order!.Case!.RequestId == requestId
-            && d.Status == LitigationOrderDocumentStatus.Downloaded && d.ChunkingStatus == ChunkingStatus.Chunked
-            && d.DownloadedUtc != null && d.DownloadedUtc > sinceUtc, ct);
+        db.LitigationOrderChunks.AsNoTracking().AnyAsync(c => c.RequestId == requestId && c.CreatedDate > sinceUtc, ct);
+
+    // The evidence comparison loads every chunk of the request, so when nothing needs analysing it must not be repeated on every reconcile tick.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<long, DateTime> LastEvidenceComparisonUtc = new();
+    internal static readonly TimeSpan EvidenceComparisonEvery = TimeSpan.FromMinutes(10);
 
     public virtual async Task<PipelineSnapshot?> ReadAsync(long requestId, CancellationToken ct)
     {

@@ -215,27 +215,39 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
     /// <summary>The gate stops waiting for an order that keeps failing, so the analysis can finish without it. If that order downloads and is chunked later,
     /// that must count as new evidence (it cannot depend on a court update happening to finish after the analysis).</summary>
     [Theory]
-    [InlineData(1, LitigationOrderDocumentStatus.Downloaded, ChunkingStatus.Chunked, true)]   // downloaded after the analysis, chunked: new evidence
-    [InlineData(-1, LitigationOrderDocumentStatus.Downloaded, ChunkingStatus.Chunked, false)] // downloaded before the analysis: it was already read
-    [InlineData(1, LitigationOrderDocumentStatus.Downloaded, ChunkingStatus.Pending, false)]  // downloaded but not chunked yet: not readable
-    [InlineData(1, LitigationOrderDocumentStatus.Failed, ChunkingStatus.Pending, false)]      // still failing
-    public async Task A_download_that_succeeds_after_the_analysis_counts_as_new_order_evidence(int hoursAfterAnalysis, LitigationOrderDocumentStatus status, ChunkingStatus chunking, bool expected)
+    [InlineData(1, true, true)]    // text became readable (chunked) after the boundary: new evidence
+    [InlineData(-1, true, false)]  // chunked before the boundary: the analysis could already read it
+    [InlineData(1, false, false)]  // downloaded but not chunked yet: not readable, so no chunks, so nothing new
+    public async Task Order_text_that_becomes_readable_after_the_analysis_began_counts_as_new_evidence(int hoursAfterBoundary, bool hasChunk, bool expected)
     {
         var requestId = await SeedManualRequestAsync(analysed: true);
-        var analysisDoneUtc = DateTime.UtcNow.AddHours(-2);
+        var boundaryUtc = DateTime.UtcNow.AddHours(-2); // when the analysis began reading its chunks
         await using (var seed = CreateContext())
         {
-            var (_, orderId) = await SeedCompletedSearchWithOneOrderAsync(seed, requestId);
-            seed.LitigationOrderDocuments.Add(new LitigationOrderDocument
+            var (caseId, orderId) = await SeedCompletedSearchWithOneOrderAsync(seed, requestId);
+            // Downloaded long BEFORE the boundary: only when it became readable (chunked) matters.
+            var document = new LitigationOrderDocument
             {
-                LitigationCaseOrderId = orderId, Status = status, ChunkingStatus = chunking, AttemptCount = 5,
-                DownloadedUtc = analysisDoneUtc.AddHours(hoursAfterAnalysis), RetainedUntilUtc = DateTime.UtcNow.AddDays(6), CreatedUtc = DateTime.UtcNow.AddDays(-1)
-            });
+                LitigationCaseOrderId = orderId, Status = LitigationOrderDocumentStatus.Downloaded, ChunkingStatus = hasChunk ? ChunkingStatus.Chunked : ChunkingStatus.Pending,
+                DownloadedUtc = boundaryUtc.AddHours(-5), RetainedUntilUtc = DateTime.UtcNow.AddDays(6), CreatedUtc = DateTime.UtcNow.AddDays(-1)
+            };
+            seed.LitigationOrderDocuments.Add(document);
             await seed.SaveChangesAsync();
+            if (hasChunk)
+            {
+                seed.LitigationOrderChunks.Add(new LitigationOrderChunk
+                {
+                    RequestId = requestId, LitigationOrderDocumentId = document.LitigationOrderDocumentId, LitigationCaseOrderId = orderId, LitigationCaseId = caseId,
+                    ChunkIndex = 0, PageNumber = 1, ChunkText = "order text", Embedding = new Microsoft.Data.SqlTypes.SqlVector<float>(new float[MCAROC_Analysis.Services.Chat.EmbeddingService.Dimensions]),
+                    EmbeddingModel = MCAROC_Analysis.Services.Chat.EmbeddingService.ModelId, EmbeddingDimensions = MCAROC_Analysis.Services.Chat.EmbeddingService.Dimensions,
+                    ChunkingVersion = "2.0", CreatedDate = boundaryUtc.AddHours(hoursAfterBoundary)
+                });
+                await seed.SaveChangesAsync();
+            }
         }
 
         await using var db = CreateContext();
-        Assert.Equal(expected, await PipelineSnapshotReader.OrderEvidenceAddedSinceAsync(db, requestId, analysisDoneUtc, CancellationToken.None));
+        Assert.Equal(expected, await PipelineSnapshotReader.OrderEvidenceAddedSinceAsync(db, requestId, boundaryUtc, CancellationToken.None));
     }
 
     /// <summary>A Completed search job + Completed snapshot + one case + one order — the shared setup every

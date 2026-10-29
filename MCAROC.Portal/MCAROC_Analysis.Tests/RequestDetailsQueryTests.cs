@@ -120,7 +120,10 @@ public class RequestDetailsQueryTests : IAsyncLifetime
 
         var view = Assert.IsType<ViewResult>(result);
         Assert.NotEqual("RefreshRequired", view.ViewName);
-        Assert.IsType<RequestDetailsViewModel>(view.Model);
+        var model = Assert.IsType<RequestDetailsViewModel>(view.Model);
+        Assert.True(model.LiveImportInProgress);
+        Assert.Null(model.LitigationDataLake); // the figures that change under the read are withheld, not shown from a mix of moments
+        Assert.Null(model.ChargeLitigation);
     }
 
     [Theory]
