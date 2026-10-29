@@ -103,6 +103,29 @@ public class RequestDetailsQueryTests : IAsyncLifetime
         Assert.Equal(409, controller.Response.StatusCode);
     }
 
+    /// <summary>A litigation import bumps the live-data counter with every order document, so a strict fence failed on every load of a request mid-import.
+    /// When only that counter moves, the page is read again ignoring it and renders; any other change (above) still sends the user to a refresh.</summary>
+    [Theory]
+    [InlineData(false)] // the counter moves once, during the first read
+    [InlineData(true)]  // the counter moves during every read: an import still running
+    public async Task A_live_data_only_change_during_the_load_still_renders_the_page(bool everyRead)
+    {
+        await using var db = Db();
+        var (id, _, _) = await Dossier.DossierTestSeed.SeedAsync(db);
+        await using var read = Db(new BumpLiveDataDuringRead(id, everyRead));
+        var controller = Controller(read);
+        controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+        var result = await controller.Details(id, null);
+
+        var view = Assert.IsType<ViewResult>(result);
+        Assert.NotEqual("RefreshRequired", view.ViewName);
+        var model = Assert.IsType<RequestDetailsViewModel>(view.Model);
+        Assert.True(model.LiveImportInProgress);
+        Assert.Null(model.LitigationDataLake); // the figures that change under the read are withheld, not shown from a mix of moments
+        Assert.Null(model.ChargeLitigation);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -166,6 +189,22 @@ public class RequestDetailsQueryTests : IAsyncLifetime
             }
             else
                 Assert.Empty(vm.ChargeLitigation.Links);
+        }
+    }
+
+    private sealed class BumpLiveDataDuringRead(long requestId, bool everyRead) : DbCommandInterceptor
+    {
+        private int reads;
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("Request page publication version") && (everyRead || ++reads == 2))
+            {
+                await using var writer = Db();
+                await writer.Requests.Where(r => r.RequestId == requestId).ExecuteUpdateAsync(s => s
+                    .SetProperty(r => r.LiveDataVersion, r => r.LiveDataVersion + 1), cancellationToken);
+            }
+            return result;
         }
     }
 

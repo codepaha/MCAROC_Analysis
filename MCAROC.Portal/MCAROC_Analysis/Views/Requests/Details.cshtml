@@ -21,6 +21,14 @@
     };
 }
 
+@if (Model.LiveImportInProgress)
+{
+    <div class="alert alert-warning py-2 small mb-2" role="status">
+        <i class="bi bi-arrow-repeat me-1"></i>Litigation orders for this company are still being imported, so the litigation figures are not shown on this page yet
+        (they would change while you read them). Everything else is current. Reload in a few minutes for the litigation view.
+    </div>
+}
+
 @* ─────────────────────────  Fixed company header + domain tabs  ───────────────────────── *@
 <div class="mca-detail-head" id="mcaDetailHead"
      data-compact-workspace="true"

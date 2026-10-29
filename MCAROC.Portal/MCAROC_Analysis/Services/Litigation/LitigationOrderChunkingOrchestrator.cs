@@ -124,6 +124,8 @@ public sealed class LitigationOrderChunkingOrchestrator(
         return $"[{string.Join(" | ", parts)}]";
     }
 
+    private static string? Clip(string? value, int max) => value is not null && value.Length > max ? value[..max] : value;
+
     private static string CleanHeaderField(string value) =>
         Regex.Replace(value.Trim(), @"[\r\n]+", " ");
 
@@ -213,11 +215,13 @@ public sealed class LitigationOrderChunkingOrchestrator(
                     LitigationOrderDocumentId = document.LitigationOrderDocumentId,
                     LitigationCaseOrderId = order.LitigationCaseOrderId,
                     LitigationCaseId = litigationCase.LitigationCaseId,
-                    CaseNumber = litigationCase.CaseNumber,
-                    Cnr = litigationCase.Cnr,
-                    Court = litigationCase.Court,
-                    OrderType = order.OrderType,
-                    OrderDate = order.OrderDate,
+                    // The chunk's copies of these fields are narrower than the case's (a merged-case number can run past 100 characters,
+                    // which failed every order of that case); the full values stay on the case.
+                    CaseNumber = Clip(litigationCase.CaseNumber, 100),
+                    Cnr = Clip(litigationCase.Cnr, 20),
+                    Court = Clip(litigationCase.Court, 200),
+                    OrderType = Clip(order.OrderType, 100),
+                    OrderDate = Clip(order.OrderDate, 20),
                     ChunkIndex = i,
                     PageNumber = preparedChunks[i].PageNumber,
                     ChunkText = preparedChunks[i].Text,
@@ -380,11 +384,16 @@ public sealed class LitigationOrderChunkingOrchestrator(
     /// to <paramref name="requestId"/> for single-request rebuilds.</summary>
     public async Task<List<long>> GetOutdatedDocumentIdsAsync(int maxDocuments, CancellationToken ct, long? requestId = null)
     {
+        // A document can legitimately yield no chunks (a blank or near-blank OCR scan). "No stored chunks" must not re-queue it on every pass —
+        // it re-chunked to zero again and again, and each flip back to Pending held the pipeline's order-processing gate open — so a
+        // chunkless document is looked at again at most once a day.
+        var chunklessRetryBefore = DateTime.UtcNow.AddDays(-1);
         var query = db.LitigationOrderDocuments.AsNoTracking()
             .Where(d => d.ChunkingStatus == ChunkingStatus.Chunked
                 && !string.IsNullOrWhiteSpace(d.ExtractedText)
                 && d.TextExtractionStatus == FilingDocumentProcessingStatus.TextExtracted
-                && (!db.LitigationOrderChunks.Any(c => c.LitigationOrderDocumentId == d.LitigationOrderDocumentId)
+                && ((!db.LitigationOrderChunks.Any(c => c.LitigationOrderDocumentId == d.LitigationOrderDocumentId)
+                        && (d.ChunkingLastAttemptUtc == null || d.ChunkingLastAttemptUtc < chunklessRetryBefore))
                     || db.LitigationOrderChunks.Any(c => c.LitigationOrderDocumentId == d.LitigationOrderDocumentId
                         && (c.ChunkingVersion != ChunkingVersion || c.EmbeddingModel != EmbeddingService.ModelId || c.EmbeddingDimensions != EmbeddingService.Dimensions))));
 

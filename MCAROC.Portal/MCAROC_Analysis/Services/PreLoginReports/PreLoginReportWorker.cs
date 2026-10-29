@@ -15,6 +15,8 @@ public sealed class PreLoginReportWorker(IServiceScopeFactory scopes, PreLoginRe
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // A failed recovery faults the worker on purpose: SupervisedBackgroundService restarts it with a growing wait, so recovery is retried
+        // (all of it; every step is safe to repeat) instead of the queue loop starting with interrupted jobs left in the database.
         await RecoverAsync(stoppingToken);
         await foreach (var jobId in queue.ReadAllAsync(stoppingToken))
         {

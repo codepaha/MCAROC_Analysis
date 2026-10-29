@@ -15,16 +15,42 @@ namespace MCAROC_Analysis.Services.Pipeline;
 public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOptions<BprLitigationOptions> bprOptions,
     IOptions<ReferenceToolOptions> referenceToolOptions, IOptions<ResolverOptions>? resolverOptions = null, LitigationAiAnalysisOrchestrator? litigationAnalysis = null)
 {
+    /// <summary>Failed order-document downloads after which the automatic litigation-analysis gate stops waiting for that document.</summary>
+    public const int OrderDownloadGiveUpAttempts = 5;
+
     /// <summary>Cheap first (timestamps), and only then the evidence check: it runs only in the window after a court update finished and before a re-analysis caught up.</summary>
     private async Task<bool> ReanalysisDueAsync(long requestId, MCAROC_Analysis.Services.LitigationModule.Fetching.RefreshRunProgress? courtUpdate, CancellationToken ct)
     {
-        if (litigationAnalysis is null || courtUpdate?.FinishedUtc is not { } courtFinished) return false;
+        if (litigationAnalysis is null) return false;
         var latest = await db.LitigationAiAnalysisRuns.AsNoTracking().Where(r => r.RequestId == requestId)
-            .OrderByDescending(r => r.LitigationAiAnalysisRunId).Select(r => new { r.Status, r.CompletedUtc }).FirstOrDefaultAsync(ct);
+            .OrderByDescending(r => r.LitigationAiAnalysisRunId).Select(r => new { r.Status, r.CompletedUtc, r.StartedUtc }).FirstOrDefaultAsync(ct);
         if (latest is null || latest.Status is not (LitigationAiAnalysisRunStatus.Completed or LitigationAiAnalysisRunStatus.CompletedWithErrors)) return false;
-        if (latest.CompletedUtc is { } done && done >= courtFinished) return false;
+        if (latest.CompletedUtc is not { } done) return false;
+        // The analysis loads its evidence near its START, so an order that arrived while it was running is not in it even though it arrived before it
+        // finished: evidence is measured against when the run began, not when it completed.
+        var readBoundary = latest.StartedUtc ?? done;
+        // Two durable reasons to look again: a court update that finished after the analysis, or an order that became readable after it (an
+        // earlier download failure the gate had stopped waiting for). Either way the evidence comparison decides whether a run is really needed.
+        var courtNewer = courtUpdate?.FinishedUtc is { } courtFinished && done < courtFinished;
+        if (!courtNewer)
+        {
+            if (!await OrderEvidenceAddedSinceAsync(db, requestId, readBoundary, ct)) return false;
+            var now = DateTime.UtcNow;
+            if (LastEvidenceComparisonUtc.TryGetValue(requestId, out var last) && now - last < EvidenceComparisonEvery) return false;
+            LastEvidenceComparisonUtc[requestId] = now;
+        }
         return !await litigationAnalysis.IsUpToDateAsync(requestId, ct);
     }
+
+    /// <summary>Order text that became readable after <paramref name="sinceUtc"/>: chunks of the request created since then. The analysis reads chunks, so
+    /// what matters is when the text became readable (chunked), not when the file was downloaded, which can be long before. A re-chunk of unchanged text also
+    /// counts; the evidence comparison that follows decides whether a run is really needed.</summary>
+    public static Task<bool> OrderEvidenceAddedSinceAsync(AppDbContext db, long requestId, DateTime sinceUtc, CancellationToken ct) =>
+        db.LitigationOrderChunks.AsNoTracking().AnyAsync(c => c.RequestId == requestId && c.CreatedDate > sinceUtc, ct);
+
+    // The evidence comparison loads every chunk of the request, so when nothing needs analysing it must not be repeated on every reconcile tick.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<long, DateTime> LastEvidenceComparisonUtc = new();
+    internal static readonly TimeSpan EvidenceComparisonEvery = TimeSpan.FromMinutes(10);
 
     public virtual async Task<PipelineSnapshot?> ReadAsync(long requestId, CancellationToken ct)
     {
@@ -123,9 +149,13 @@ public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOpt
 
             var orderDocs = await db.LitigationOrderDocuments.AsNoTracking()
                 .Where(d => d.Order!.Case!.RequestId == requestId)
-                .Select(d => new { d.Status, d.ChunkingStatus, d.CreatedUtc }).ToListAsync(ct);
+                .Select(d => new { d.Status, d.ChunkingStatus, d.CreatedUtc, d.AttemptCount }).ToListAsync(ct);
+            // A download that keeps failing (an expired link or an error page served in place of the PDF) is retried for days; the automatic
+            // stage must not wait that long for an order the source cannot serve. After OrderDownloadGiveUpAttempts it counts as settled
+            // (the case is analysed without that order's text, and a later successful download still refreshes the findings).
             var ordersFullyProcessed = orderDocs.All(d =>
                 d.Status is LitigationOrderDocumentStatus.Expired or LitigationOrderDocumentStatus.NotPublished
+                || (d.Status == LitigationOrderDocumentStatus.Failed && d.AttemptCount >= OrderDownloadGiveUpAttempts)
                 || (d.Status == LitigationOrderDocumentStatus.Downloaded && d.ChunkingStatus is ChunkingStatus.Chunked or ChunkingStatus.Failed));
             // #554: the properties each order names are read before the litigation stage moves on, so the report and dossier carry them.
             var readingOptions = new MCAROC_Analysis.Services.PropertyParticulars.OrderPropertyReadingOptions
