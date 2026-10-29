@@ -103,9 +103,10 @@ public sealed class RequestDetailsQuery(AppDbContext db, DossierCache dossierCac
             || (dossier is not null && dossier.IngestionRunId != vm.Request.LatestCompletedIngestionRunId)
             || (vm.ChargeLitigation is { } links && links.SnapshotId != vm.LitigationDataLake?.AuthoritativeSnapshot?.LitigationReportSnapshotId))
             throw new RequestPageChangedException();
-        // The relaxed read can mix live-data states across the model's separate queries, so it must not certify a generation: the case-list and
-        // analysis-availability endpoints take the generation as proof that their data matches this overview. Without one they fence only on themselves.
-        if (vm.LitigationDataLake?.CaseList is { } list) list.Generation = ignoreLiveData ? null : version?.Key;
+        // The generation is always the version read BEFORE the model's queries, never the one after. When the live-data counter moved while the page
+        // loaded (the relaxed read), the case-list and analysis-availability endpoints compare this generation with the current one and answer 409,
+        // so they never combine newer results with an overview that mixed live-data states; they accept it only if nothing has moved since.
+        if (vm.LitigationDataLake?.CaseList is { } list) list.Generation = version?.Key;
         return vm;
     }
 }

@@ -212,6 +212,32 @@ public sealed class PipelineReconcilerTests : IAsyncLifetime
         Assert.Equal(stillWaiting, analysis.ReasonCode == "AWAITING_ORDER_PROCESSING");
     }
 
+    /// <summary>The gate stops waiting for an order that keeps failing, so the analysis can finish without it. If that order downloads and is chunked later,
+    /// that must count as new evidence (it cannot depend on a court update happening to finish after the analysis).</summary>
+    [Theory]
+    [InlineData(1, LitigationOrderDocumentStatus.Downloaded, ChunkingStatus.Chunked, true)]   // downloaded after the analysis, chunked: new evidence
+    [InlineData(-1, LitigationOrderDocumentStatus.Downloaded, ChunkingStatus.Chunked, false)] // downloaded before the analysis: it was already read
+    [InlineData(1, LitigationOrderDocumentStatus.Downloaded, ChunkingStatus.Pending, false)]  // downloaded but not chunked yet: not readable
+    [InlineData(1, LitigationOrderDocumentStatus.Failed, ChunkingStatus.Pending, false)]      // still failing
+    public async Task A_download_that_succeeds_after_the_analysis_counts_as_new_order_evidence(int hoursAfterAnalysis, LitigationOrderDocumentStatus status, ChunkingStatus chunking, bool expected)
+    {
+        var requestId = await SeedManualRequestAsync(analysed: true);
+        var analysisDoneUtc = DateTime.UtcNow.AddHours(-2);
+        await using (var seed = CreateContext())
+        {
+            var (_, orderId) = await SeedCompletedSearchWithOneOrderAsync(seed, requestId);
+            seed.LitigationOrderDocuments.Add(new LitigationOrderDocument
+            {
+                LitigationCaseOrderId = orderId, Status = status, ChunkingStatus = chunking, AttemptCount = 5,
+                DownloadedUtc = analysisDoneUtc.AddHours(hoursAfterAnalysis), RetainedUntilUtc = DateTime.UtcNow.AddDays(6), CreatedUtc = DateTime.UtcNow.AddDays(-1)
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        await using var db = CreateContext();
+        Assert.Equal(expected, await PipelineSnapshotReader.OrderEvidenceAddedSinceAsync(db, requestId, analysisDoneUtc, CancellationToken.None));
+    }
+
     /// <summary>A Completed search job + Completed snapshot + one case + one order — the shared setup every
     /// order-document test in this class builds on before adding its own document row.</summary>
     private static async Task<(long CaseId, long OrderId)> SeedCompletedSearchWithOneOrderAsync(AppDbContext db, long requestId)

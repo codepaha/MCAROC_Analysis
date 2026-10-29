@@ -21,13 +21,23 @@ public class PipelineSnapshotReader(AppDbContext db, IConfiguration config, IOpt
     /// <summary>Cheap first (timestamps), and only then the evidence check: it runs only in the window after a court update finished and before a re-analysis caught up.</summary>
     private async Task<bool> ReanalysisDueAsync(long requestId, MCAROC_Analysis.Services.LitigationModule.Fetching.RefreshRunProgress? courtUpdate, CancellationToken ct)
     {
-        if (litigationAnalysis is null || courtUpdate?.FinishedUtc is not { } courtFinished) return false;
+        if (litigationAnalysis is null) return false;
         var latest = await db.LitigationAiAnalysisRuns.AsNoTracking().Where(r => r.RequestId == requestId)
             .OrderByDescending(r => r.LitigationAiAnalysisRunId).Select(r => new { r.Status, r.CompletedUtc }).FirstOrDefaultAsync(ct);
         if (latest is null || latest.Status is not (LitigationAiAnalysisRunStatus.Completed or LitigationAiAnalysisRunStatus.CompletedWithErrors)) return false;
-        if (latest.CompletedUtc is { } done && done >= courtFinished) return false;
+        if (latest.CompletedUtc is not { } done) return false;
+        // Two durable reasons to look again: a court update that finished after the analysis, or an order that became readable after it (an
+        // earlier download failure the gate had stopped waiting for). Either way the evidence comparison decides whether a run is really needed.
+        var courtNewer = courtUpdate?.FinishedUtc is { } courtFinished && done < courtFinished;
+        if (!courtNewer && !await OrderEvidenceAddedSinceAsync(db, requestId, done, ct)) return false;
         return !await litigationAnalysis.IsUpToDateAsync(requestId, ct);
     }
+
+    /// <summary>An order document of the request that was downloaded and chunked after <paramref name="sinceUtc"/>, so the analysis finished then could not have read it.</summary>
+    public static Task<bool> OrderEvidenceAddedSinceAsync(AppDbContext db, long requestId, DateTime sinceUtc, CancellationToken ct) =>
+        db.LitigationOrderDocuments.AsNoTracking().AnyAsync(d => d.Order!.Case!.RequestId == requestId
+            && d.Status == LitigationOrderDocumentStatus.Downloaded && d.ChunkingStatus == ChunkingStatus.Chunked
+            && d.DownloadedUtc != null && d.DownloadedUtc > sinceUtc, ct);
 
     public virtual async Task<PipelineSnapshot?> ReadAsync(long requestId, CancellationToken ct)
     {
