@@ -160,6 +160,23 @@ public class ChargeDocumentLinkBuilder(IServiceScopeFactory scopes, ChargeFormBa
             finally { _running.TryRemove(id, out _); }
         }));
 
+    /// <summary>Batches completed recently whose charge links were never stamped: the completion hook's in-memory request was lost (a restart between the
+    /// committed status and the run, or a failure inside it, which only logs). Run again at startup, so automatic linking survives a restart. Limited to
+    /// recent batches so old data is not swept into a mass re-extraction.</summary>
+    public virtual async Task<int> RecoverPendingAsync(CancellationToken ct, int maxBatches = 50)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var since = DateTime.UtcNow.AddDays(-7);
+        var ids = await db.McaFilingBatches.AsNoTracking()
+            .Where(b => (b.Status == FilingBatchStatus.Completed || b.Status == FilingBatchStatus.CompletedWithErrors)
+                && b.ChargeLinksStamp == null && b.CompletedDate >= since)
+            .OrderByDescending(b => b.BatchId).Take(maxBatches).Select(b => b.BatchId).ToListAsync(ct);
+        foreach (var id in ids) Request(id);
+        if (ids.Count > 0) logger.LogInformation("Requested charge document linking for {Count} recently completed batch(es) that never got it", ids.Count);
+        return ids.Count;
+    }
+
     internal async Task<int> RunAsync(long batchId, CancellationToken ct)
     {
         await backfill.RunSharedAsync(batchId);

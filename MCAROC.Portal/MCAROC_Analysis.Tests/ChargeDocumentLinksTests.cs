@@ -187,6 +187,44 @@ public sealed class ChargeDocumentLinkBuilderTests : IAsyncLifetime, IDisposable
         public override void Request(long batchId) => Requested.Add(batchId);
     }
 
+    private sealed class RecordingScopedBuilder(IServiceScopeFactory scopes) : ChargeDocumentLinkBuilder(scopes, null!, NullLogger<ChargeDocumentLinkBuilder>.Instance)
+    {
+        public readonly List<long> Requested = [];
+        public override void Request(long batchId) => Requested.Add(batchId);
+    }
+
+    /// <summary>The completion hook only queues an in-memory request, so a restart between the committed status and the run (or a failed run, which only
+    /// logs) left a completed batch with no links for good. Startup now asks again for recent completed batches that were never stamped.</summary>
+    [Fact]
+    public async Task Recovery_requests_linking_only_for_recently_completed_batches_that_were_never_stamped()
+    {
+        await using var db = CreateContext();
+        var request = new McaRequest { ClientId = 1, EntityType = EntityType.Company, CompanyName = "Recover Co", RequestNumber = $"RC-{Guid.NewGuid():N}",
+            RequestStatus = RequestStatus.DataExtracted, CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+        McaFilingBatch Batch(FilingBatchStatus status, DateTime? completed, string? stamp) => new()
+            { RequestId = request.RequestId, Status = status, StartedDate = DateTime.UtcNow.AddDays(-40), CompletedDate = completed, ChargeLinksStamp = stamp };
+        var lost = Batch(FilingBatchStatus.Completed, DateTime.UtcNow.AddHours(-2), null);
+        var lostWithErrors = Batch(FilingBatchStatus.CompletedWithErrors, DateTime.UtcNow.AddDays(-3), null);
+        var stamped = Batch(FilingBatchStatus.Completed, DateTime.UtcNow.AddHours(-2), "already-linked");
+        var old = Batch(FilingBatchStatus.Completed, DateTime.UtcNow.AddDays(-30), null);
+        var running = Batch(FilingBatchStatus.Processing, null, null);
+        db.McaFilingBatches.AddRange(lost, lostWithErrors, stamped, old, running);
+        await db.SaveChangesAsync();
+
+        var scopes = new ServiceCollection().AddScoped(_ => CreateContext()).BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+        var builder = new RecordingScopedBuilder(scopes);
+        var count = await builder.RecoverPendingAsync(CancellationToken.None, maxBatches: 1000);
+
+        Assert.Contains(lost.BatchId, builder.Requested);
+        Assert.Contains(lostWithErrors.BatchId, builder.Requested);
+        Assert.DoesNotContain(stamped.BatchId, builder.Requested);
+        Assert.DoesNotContain(old.BatchId, builder.Requested);
+        Assert.DoesNotContain(running.BatchId, builder.Requested);
+        Assert.Equal(builder.Requested.Count, count);
+    }
+
     private static string Hash(string content) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
 
     [Fact]

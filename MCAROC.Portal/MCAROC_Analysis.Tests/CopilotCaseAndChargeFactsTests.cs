@@ -214,6 +214,30 @@ public class CopilotCaseAndChargeFactsTests
         Assert.Contains("Mathuradas Mill", ltRow.Text);
     }
 
+    [Theory]
+    [InlineData("Which charges cover survey 2840?", true)]                       // one survey number, plainly about a property
+    [InlineData("Is there a charge on plot 3/2840 at Lower Parel?", true)]       // the full slash-joined identifier
+    [InlineData("Which charges were created in 2011 or registered in 400013?", false)] // a year and a PIN code identify no property
+    [InlineData("Which charges were created in 2840?", false)]                   // a bare number with no property wording
+    public async Task A_single_survey_number_is_enough_when_the_question_is_about_a_property(string question, bool expectListed)
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        for (var i = 0; i < 60; i++)
+            db.RocCharges.Add(new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = $"BIG-{i:D2}", LatestChargeHolderRaw = "BIG BANK",
+                ChargeStatus = "Open", CurrentAmount = 1000m + i, CreationDate = new DateOnly(2012, 5, 5) });
+        var small = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "SMALL-LT", LatestChargeHolderRaw = "L&T FINANCE LIMITED",
+            ChargeStatus = "Open", CurrentAmount = 1m, CreationDate = new DateOnly(2011, 5, 20) };
+        db.RocCharges.Add(small);
+        await db.SaveChangesAsync();
+        AddPropertyEvent(db, requestId, runId, small.ChargeId, "Plot of land bearing survey no. 3/2840, 2842, C.S.no.242, Lower Parel, Mumbai - 400013");
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default, question);
+
+        Assert.Equal(expectListed, facts.Any(f => f.EntityType == "RocCharge" && f.Text.Contains("SMALL-LT")));
+    }
+
     [Fact]
     public async Task Charge_rows_do_not_carry_property_text_when_the_question_is_not_about_a_property()
     {

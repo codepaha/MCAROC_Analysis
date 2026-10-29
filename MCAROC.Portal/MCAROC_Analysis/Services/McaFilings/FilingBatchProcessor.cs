@@ -860,6 +860,13 @@ public class FilingBatchProcessor(
     /// in-flight work — this method doesn't do that (yet), so it recovers unconditionally.</summary>
     public async Task<int> RecoverStaleWorkAsync(CancellationToken ct)
     {
+        // #562: a batch that completed but whose charge-document linking request was lost (restart in between, or a failed run) gets it again.
+        if (chargeLinks is not null)
+        {
+            try { await chargeLinks.RecoverPendingAsync(ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Recovering pending charge document linking failed"); }
+        }
+
         // Also covers a crash mid-unpack (Unpacking/Indexing), not just before it ever started (Uploaded).
         // IndexNestedZipAsync is idempotent (skips a nested zip it already indexed), and UnpackBatchAsync's
         // own post-unpack enqueue only targets still-Discovered documents, so re-running it from the top

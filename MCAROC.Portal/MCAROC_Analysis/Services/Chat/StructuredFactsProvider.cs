@@ -145,8 +145,8 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
                 var propertyByCharge = await LatestPropertyParticularsAsync(relevant.Select(c => c.ChargeId).ToList(), ct);
                 var questionNumbers = NumberTokens(question);
                 var asksAboutProperty = AsksAboutProperty(question);
-                bool NamesProperty(RocCharge c) => questionNumbers.Count >= 2 && propertyByCharge.TryGetValue(c.ChargeId, out var p)
-                    && NumberTokens(p).Intersect(questionNumbers).Count() >= 2;
+                bool NamesProperty(RocCharge c) => propertyByCharge.TryGetValue(c.ChargeId, out var p)
+                    && SharesProperty(questionNumbers, NumberTokens(p), asksAboutProperty);
                 bool Asked(RocCharge c) =>
                     (hints.LenderNameKeyword is { } lender && c.LatestChargeHolderRaw.Contains(lender, StringComparison.OrdinalIgnoreCase))
                     || (hints.Year is { } year && (c.CreationDate?.Year == year || c.SatisfactionDate?.Year == year))
@@ -329,9 +329,29 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
         return flat.Length <= max ? flat : flat[..max] + "…";
     }
 
-    /// <summary>The runs of three or more digits in a text (survey numbers, CTS numbers, areas): what a question about a property shares with a charge's particulars.</summary>
-    internal static HashSet<string> NumberTokens(string? text) => text is null ? []
-        : System.Text.RegularExpressions.Regex.Matches(text, @"\d{3,}").Select(m => m.Value).ToHashSet(StringComparer.Ordinal);
+    /// <summary>The identifiers a text names for a property: runs of three or more digits (survey, CTS, plot numbers, areas) and slash-joined pairs
+    /// such as 3/2840, kept whole (with any spaces removed) so a hit on the full structure counts for more than a bare number.</summary>
+    internal static HashSet<string> NumberTokens(string? text)
+    {
+        if (text is null) return [];
+        var tokens = System.Text.RegularExpressions.Regex.Matches(text, @"\d{3,}").Select(m => m.Value).ToHashSet(StringComparer.Ordinal);
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(text, @"\d+\s*/\s*\d{3,}"))
+            tokens.Add(System.Text.RegularExpressions.Regex.Replace(m.Value, @"\s+", ""));
+        return tokens;
+    }
+
+    // A year (1900-2099) or a six-digit number (a PIN code) is shared by unrelated charges; it does not identify a property.
+    private static bool IsIdentifying(string token) => !token.Contains('/') && !(token.Length == 4 && (token.StartsWith("19") || token.StartsWith("20"))) && token.Length != 6;
+
+    /// <summary>True when the question and a charge's particulars name the same property: a slash-joined identifier in common (3/2840), or two identifying
+    /// numbers in common, or one when the question is plainly about a property (a question naming "survey 2840" names that parcel).</summary>
+    internal static bool SharesProperty(HashSet<string> question, HashSet<string> particulars, bool asksAboutProperty)
+    {
+        var shared = question.Intersect(particulars).ToList();
+        if (shared.Any(t => t.Contains('/'))) return true;
+        var identifying = shared.Count(IsIdentifying);
+        return identifying >= 2 || (asksAboutProperty && identifying >= 1);
+    }
 
     /// <summary>True when the question is about a piece of land or other security, so every listed charge should show what it says about its property.</summary>
     internal static bool AsksAboutProperty(string? question) => question is not null
