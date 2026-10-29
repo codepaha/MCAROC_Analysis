@@ -211,8 +211,8 @@ public class CopilotCaseAndChargeFactsTests
 
         var tataRow = Assert.Single(facts, f => f.EntityType == "RocCharge" && f.Text.Contains("10301179"));
         var ltRow = Assert.Single(facts, f => f.EntityType == "RocCharge" && f.Text.Contains("100187185"));
-        Assert.Contains("Property per register:", tataRow.Text);
-        Assert.Contains("Property per register:", ltRow.Text);
+        Assert.Contains("Property per register (matches the question on", tataRow.Text);
+        Assert.Contains("Property per register (matches the question on", ltRow.Text);
         Assert.Contains("Mathuradas Mill", ltRow.Text);
     }
 
@@ -308,6 +308,45 @@ public class CopilotCaseAndChargeFactsTests
             "Which charges cover survey no. 11/3?");
 
         Assert.Contains(facts, f => f.EntityType == "RocCharge" && f.Text.Contains("SMALL-TS"));
+    }
+
+    /// <summary>A charge can be picked because an identifier far down a long register text matches the question; the row used to carry only the first 320
+    /// characters, so the model got the charge with no evidence connecting it to the property. The row now names the matching identifier and quotes the passage
+    /// around it.</summary>
+    [Fact]
+    public async Task A_charge_picked_for_an_identifier_late_in_a_long_text_carries_the_passage_that_matched()
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        var charge = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "LONG-TXT", LatestChargeHolderRaw = "SOME BANK",
+            ChargeStatus = "Open", CurrentAmount = 5m, CreationDate = new DateOnly(2016, 3, 3) };
+        db.RocCharges.Add(charge);
+        await db.SaveChangesAsync();
+        var filler = string.Concat(Enumerable.Repeat("Hypothecation of stocks, book debts and receivables of the borrower, both present and future. ", 8));
+        AddPropertyEvent(db, requestId, runId, charge.ChargeId, filler + "Also the factory land at Plot No. 14, survey no. 7788/2, Village Kherwadi, Taluka Pune, with all structures thereon, and the plant and machinery.");
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default,
+            "Which charges cover survey no. 7788/2 at Kherwadi?");
+
+        var row = Assert.Single(facts, f => f.EntityType == "RocCharge" && f.Text.Contains("LONG-TXT"));
+        Assert.Contains("matches the question on 7788/2", row.Text);
+        Assert.Contains("survey no. 7788/2", row.Text); // the passage around the identifier, which sits well past the first 320 characters
+    }
+
+    [Theory]
+    [InlineData(0, false)]    // identifier inside the opening: the opening is quoted, no ellipsis in front
+    [InlineData(900, true)]   // identifier far down: the stretch around it is quoted, with an ellipsis where text was cut
+    public void An_excerpt_quotes_the_stretch_around_the_matched_identifier(int position, bool expectLeadingEllipsis)
+    {
+        var text = new string('x', position) + " survey no. 4455/1 " + new string('y', 900);
+        var ids = StructuredFactsProvider.PropertyIds("survey no. 4455/1");
+
+        var excerpt = StructuredFactsProvider.Excerpt(text, ids, StructuredFactsProvider.MaxPropertyChars);
+
+        Assert.Contains("4455/1", excerpt);
+        Assert.Equal(expectLeadingEllipsis, excerpt.StartsWith('…'));
+        Assert.True(excerpt.Length <= StructuredFactsProvider.MaxPropertyChars + 2);
     }
 
     [Fact]

@@ -165,8 +165,7 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
                         $"Charge {c.RocChargeNumber}: Holder {c.LatestChargeHolderRaw}, Amount ₹{c.CurrentAmount} Cr, Status {c.ChargeStatus}"
                             + (c.CreationDate is { } created ? $", Created {created:yyyy-MM-dd}" : "")
                             + (c.SatisfactionDate is { } sd ? $", Satisfied {sd:yyyy-MM-dd}" : "")
-                            + (propertyByCharge.TryGetValue(c.ChargeId, out var property) && (asksAboutProperty || NamesProperty(c))
-                                ? $", Property per register: {Clip(property, MaxPropertyChars)}" : ""),
+                            + PropertyEvidence(c, propertyByCharge, idsByCharge, questionIds, asksAboutProperty),
                         "RocCharge", c.ChargeId));
                 if (listed.Count < relevant.Count)
                     facts.Add(new StructuredFact("Charges",
@@ -329,6 +328,45 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
 
     /// <summary>Characters of a charge's property particulars put in one prompt row.</summary>
     internal const int MaxPropertyChars = 320;
+
+    /// <summary>What a charge row says about its property. When the charge was picked because its particulars share an identifier with the question, the row
+    /// names that identifier and quotes the passage around it (the identifier can sit far past the start of a long text, and a row without it would give the
+    /// model no evidence connecting the charge to the property); otherwise the start of the text, when the question is about a property at all.</summary>
+    private static string PropertyEvidence(RocCharge c, IReadOnlyDictionary<long, string> text, IReadOnlyDictionary<long, List<PropertyId>> idsByCharge,
+        IReadOnlyCollection<PropertyId> questionIds, bool asksAboutProperty)
+    {
+        if (!text.TryGetValue(c.ChargeId, out var property)) return "";
+        if (questionIds.Count > 0 && idsByCharge.TryGetValue(c.ChargeId, out var charged))
+        {
+            var matched = MatchedIds(questionIds, charged);
+            if (matched.Count > 0)
+                return $", Property per register (matches the question on {string.Join(", ", matched.Select(m => m.Text))}): {Excerpt(property, matched, MaxPropertyChars)}";
+        }
+        return asksAboutProperty ? $", Property per register: {Clip(property, MaxPropertyChars)}" : "";
+    }
+
+    /// <summary>The charge's identifiers that the question names (same rule as <see cref="SharesProperty"/>).</summary>
+    internal static List<PropertyId> MatchedIds(IReadOnlyCollection<PropertyId> question, IReadOnlyCollection<PropertyId> particulars) =>
+        particulars.Where(p => SharesProperty(question, [p])).ToList();
+
+    /// <summary>The first <paramref name="max"/> characters, or, when the text is longer and one of the identifiers sits past that, the stretch around its first
+    /// occurrence, with an ellipsis where text was cut.</summary>
+    internal static string Excerpt(string text, IReadOnlyCollection<PropertyId> ids, int max)
+    {
+        var flat = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        if (flat.Length <= max) return flat;
+        var at = -1;
+        foreach (var id in ids)
+        {
+            var pattern = string.Join(@"\s*[/\-.]\s*", id.Text.Split('/', '-', '.').Select(System.Text.RegularExpressions.Regex.Escape));
+            var m = System.Text.RegularExpressions.Regex.Match(flat, @"(?<![\w/])" + pattern + @"(?![\d])", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (m.Success && (at < 0 || m.Index < at)) at = m.Index;
+        }
+        if (at < 0 || at + 40 <= max) return Clip(flat, max); // not found (e.g. only the stored extraction has it), or already inside the opening
+        var start = Math.Max(0, at - max / 3);
+        var end = Math.Min(flat.Length, start + max);
+        return (start > 0 ? "…" : "") + flat[start..end] + (end < flat.Length ? "…" : "");
+    }
 
     private static string Clip(string text, int max)
     {

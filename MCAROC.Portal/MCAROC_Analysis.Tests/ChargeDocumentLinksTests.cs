@@ -188,6 +188,20 @@ public sealed class ChargeDocumentLinkBuilderTests : IAsyncLifetime, IDisposable
         public override void Request(long batchId) => Requested.Add(batchId);
     }
 
+    /// <summary>A batch whose linking keeps failing stays a candidate (it is still unstamped). Selecting the newest N on every sweep would retry the same ones
+    /// forever while older candidates were never tried before they left the window: due batches go oldest first, and a batch already tried waits its turn.</summary>
+    [Fact]
+    public void Recovery_rotates_through_every_candidate_so_failing_batches_cannot_starve_older_ones()
+    {
+        var kind = "rotate-" + Guid.NewGuid().ToString("N");
+        long[] oldestFirst = [11, 12, 13, 14, 15];
+
+        Assert.Equal([11L, 12L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2));
+        Assert.Equal([13L, 14L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2));   // the first two failed (still candidates) but wait their turn
+        Assert.Equal([15L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2));
+        Assert.Empty(ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2));                 // all tried within the retry interval: nothing is due yet
+    }
+
     private sealed class RecordingScopedBuilder(IServiceScopeFactory scopes) : ChargeDocumentLinkBuilder(scopes, null!, NullLogger<ChargeDocumentLinkBuilder>.Instance)
     {
         public readonly List<long> Requested = [];

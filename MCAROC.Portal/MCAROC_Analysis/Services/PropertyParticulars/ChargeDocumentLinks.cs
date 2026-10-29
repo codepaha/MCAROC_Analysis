@@ -166,6 +166,28 @@ public class ChargeDocumentLinkBuilder(IServiceScopeFactory scopes, ChargeFormBa
     /// 2. stamped, but a linked document has no extraction row: the builder stamps BEFORE it schedules extraction, so a crash or failure in between would
     ///    otherwise never be retried; scheduling is idempotent and is run again.
     /// Run at startup and periodically, so a transient failure during normal operation is retried too.</summary>
+    // Which batch was last tried, and when. A batch that keeps failing stays a candidate (it is still unstamped), so without this the same ones would be
+    // selected on every sweep and older candidates behind them would never be tried before they left the seven-day window. In memory on purpose: after a
+    // restart every candidate is due again, and what is a candidate at all is always decided by the database.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Kind, long BatchId), DateTime> LastTried = new();
+    internal static readonly TimeSpan RetryAfter = TimeSpan.FromMinutes(30);
+
+    /// <summary>Of the candidates (oldest first, as those leave the window first) the ones not tried within <see cref="RetryAfter"/>, at most
+    /// <paramref name="max"/>, recording the attempt. A failing batch waits its turn again while the others get theirs.</summary>
+    internal static List<long> TakeDue(string kind, IEnumerable<long> candidatesOldestFirst, int max)
+    {
+        var now = DateTime.UtcNow;
+        var due = new List<long>();
+        foreach (var id in candidatesOldestFirst)
+        {
+            if (due.Count >= max) break;
+            if (LastTried.TryGetValue((kind, id), out var last) && now - last < RetryAfter) continue;
+            LastTried[(kind, id)] = now;
+            due.Add(id);
+        }
+        return due;
+    }
+
     public virtual async Task<int> RecoverPendingAsync(CancellationToken ct, int maxBatches = 200)
     {
         await using var scope = scopes.CreateAsyncScope();
@@ -174,7 +196,10 @@ public class ChargeDocumentLinkBuilder(IServiceScopeFactory scopes, ChargeFormBa
         var recent = db.McaFilingBatches.AsNoTracking()
             .Where(b => (b.Status == FilingBatchStatus.Completed || b.Status == FilingBatchStatus.CompletedWithErrors) && b.CompletedDate >= since);
 
-        var unlinked = await recent.Where(b => b.ChargeLinksStamp == null).OrderByDescending(b => b.BatchId).Take(maxBatches).Select(b => b.BatchId).ToListAsync(ct);
+        // Every candidate in the window (bounded), not just the newest few: fairness is decided by TakeDue, not by the query's limit.
+        var candidates = await recent.Where(b => b.ChargeLinksStamp == null).OrderBy(b => b.CompletedDate).ThenBy(b => b.BatchId)
+            .Take(maxBatches * 10).Select(b => b.BatchId).ToListAsync(ct);
+        var unlinked = TakeDue("link", candidates, maxBatches);
         foreach (var id in unlinked) Request(id);
 
         var rescheduled = 0;
@@ -187,8 +212,8 @@ public class ChargeDocumentLinkBuilder(IServiceScopeFactory scopes, ChargeFormBa
                 .Where(b => b.ChargeLinksStamp != null && db.ChargeDocumentLinks.Any(l => l.BatchId == b.BatchId
                     && db.McaFilingDocuments.Any(d => d.FilingDocumentId == l.FilingDocumentId && d.ExtractedTextPath != null && d.TextExtractionMethod != TextExtractionMethod.Xfa)
                     && !db.ChargeInstrumentExtractions.Any(e => e.FilingDocumentId == l.FilingDocumentId && e.PromptVersion == ChargeInstrumentAi.PromptVersion)))
-                .OrderBy(b => b.CompletedDate).ThenBy(b => b.BatchId).Take(maxBatches).Select(b => b.BatchId).ToListAsync(ct);
-            foreach (var id in unscheduled)
+                .OrderBy(b => b.CompletedDate).ThenBy(b => b.BatchId).Take(maxBatches * 10).Select(b => b.BatchId).ToListAsync(ct);
+            foreach (var id in TakeDue("extract", unscheduled, maxBatches))
             {
                 try { rescheduled += await instruments.ScheduleForBatchAsync(id, ct) > 0 ? 1 : 0; }
                 catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Re-scheduling charge instrument extraction failed for batch {BatchId}", id); }
