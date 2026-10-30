@@ -219,6 +219,34 @@ public sealed class ChargeDocumentLinkBuilderTests : IAsyncLifetime, IDisposable
         Assert.Equal([2L, 3L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0 + later + later + later)); // 2 (t0) before 3 (t0+later); 4, 5 and 1 were tried more recently
     }
 
+    /// <summary>The query used to hand only the oldest <c>10 x limit</c> candidates to the rotation, so if those kept failing, later batches never entered it and could leave the
+    /// seven-day window unchecked. Every candidate in the window now enters it: with one request per sweep, repeated sweeps reach every unstamped recent batch, including
+    /// ones newer than the first ten.</summary>
+    [Fact]
+    public async Task Recovery_reaches_candidates_beyond_the_first_ten_times_the_limit()
+    {
+        await using var db = CreateContext();
+        var request = new McaRequest { ClientId = 1, EntityType = EntityType.Company, CompanyName = "Backlog Co", RequestNumber = $"BL-{Guid.NewGuid():N}",
+            RequestStatus = RequestStatus.DataExtracted, CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+        // 12 unstamped completed batches, all older than anything else a test may have left, so that with a limit of 1 the first ten are the oldest ten
+        var mine = new List<McaFilingBatch>();
+        for (var i = 0; i < 12; i++)
+            mine.Add(new McaFilingBatch { RequestId = request.RequestId, Status = FilingBatchStatus.Completed, StartedDate = DateTime.UtcNow.AddDays(-7),
+                CompletedDate = DateTime.UtcNow.AddDays(-6).AddMinutes(i) });
+        db.McaFilingBatches.AddRange(mine);
+        await db.SaveChangesAsync();
+        var scopes = new ServiceCollection().AddScoped(_ => CreateContext()).BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+        var builder = new RecordingScopedBuilder(scopes);
+        var wanted = mine.Select(b => b.BatchId).ToHashSet();
+
+        for (var sweep = 0; sweep < 5000 && !wanted.IsSubsetOf(builder.Requested); sweep++)
+            await builder.RecoverPendingAsync(CancellationToken.None, maxBatches: 1);
+
+        Assert.True(wanted.IsSubsetOf(builder.Requested), "a sweep must eventually reach every unstamped recent batch, however many are ahead of it");
+    }
+
     private sealed class RecordingScopedBuilder(IServiceScopeFactory scopes) : ChargeDocumentLinkBuilder(scopes, null!, NullLogger<ChargeDocumentLinkBuilder>.Instance)
     {
         public readonly List<long> Requested = [];
