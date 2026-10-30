@@ -117,7 +117,7 @@ public class ChatCompletionService
         catch (JsonException) { return null; }
     }
 
-    private static string BuildPrompt(string companyName, RetrievalContext context, IReadOnlyList<ChatMessage> history, string question)
+    internal static string BuildPrompt(string companyName, RetrievalContext context, IReadOnlyList<ChatMessage> history, string question)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"You are a document-grounded assistant answering questions about \"{companyName}\" for a BFSI credit analyst.");
@@ -131,7 +131,12 @@ public class ChatCompletionService
         sb.AppendLine("- \"O\" sources are an exact, structured order-outcome lookup. When the question asks which or how many orders had an outcome, list every matching O source (not a sample), cite each, and cite and repeat the coverage note's wording if it says the list is not exhaustive.");
         sb.AppendLine("- \"C\" facts are the litigation record of a case the question names (status, hearing dates, newest orders). For current status, next hearing or the latest orders, answer from C and the newest-dated L sources and state the order dates; never present an older order as the latest.");
         sb.AppendLine("- \"M\" facts are exact computed metrics. For a count, total, ratio or trend, quote the M value and cite it rather than recomputing it from other facts.");
-        sb.AppendLine("- If an \"S\" source is present and your list or count relies on D or L sources, cite S1 and say plainly that the list may not be complete.");
+        sb.AppendLine("- Facts of the Documents domain list the filing documents whose own text names the property the question describes. Read their header: " +
+            "(1) \"N document(s) on file whose own text describes the property ... This is every such document\" is the complete list for the current filing batch. When the question asks which documents, charges or satisfactions concern that property, list EVERY \"Document:\" fact by name with its charge number, holder and status (say Satisfied for a released charge) and cite each; do not add a \"may not be complete\" caveat for that list, and never answer that no charge was satisfied while such a fact says otherwise. " +
+            "(2) \"At least N document(s) ... reached its limit\" is NOT complete: list what is given and say plainly that there may be more. " +
+            "(3) \"Candidate document (possible match only, identity not established)\" facts are only possible matches (one shared identifier, an area figure alone, or a number shared across kinds of identifier): list them separately as possible, say identity is not established, and never present their charge as a charge on this property. " +
+            "(4) \"The question names only one identifier\" means the documents cannot be established as being about the property: say so and offer them only as candidates.");
+        sb.AppendLine("- If an \"S\" source is present and your list or count relies on D or L sources (other than the complete property-documents list above), cite S1 and say plainly that the list may not be complete.");
         sb.AppendLine("- Never treat earlier chat turns as evidence — only the [FACT]/[SOURCE] blocks below, freshly retrieved for this question.");
         sb.AppendLine($"- Document index status for this request: {context.IndexingStatusLabel}. If not Complete, never conclude a document 'does not exist' — only that it was 'not found in the currently indexed records.'");
         sb.AppendLine("- Respond with ONLY a JSON object matching this exact shape (no markdown fences, no commentary):");
