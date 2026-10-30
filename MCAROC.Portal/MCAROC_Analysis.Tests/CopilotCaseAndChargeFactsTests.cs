@@ -275,6 +275,8 @@ public class CopilotCaseAndChargeFactsTests
     [InlineData("UNIT-34 CHANDRAKALA TOWNSHIP PH I S NO T.S.NOS.32/3B,33/2B,WARD35, BLOCK I", new[] { "32/3B", "33/2B" })]
     [InlineData("PLOT-365 SREE CITY S NO 40/3B(P); 41/1, 2, 3, 5A, 42/1(P), 3", new[] { "365", "40/3B" })] // PLOT-365 is a plot number; the list stops at "(P)"
     [InlineData("Property in S. No 1341, Vavilalpalli, admeasuring 3602.5 Sq yards", new[] { "1341" })]
+    [InlineData("Land bearing Survey Nos. 3/2840, 3/2841, 2842 at Lower Parel", new[] { "3/2840", "3/2841", "2842" })]   // a labelled pair is one identifier, not two
+    [InlineData("see item 3/2840 of the schedule", new[] { "3/2840" })]                                                 // an unlabelled pair is still one
     public void Property_identifiers_are_read_as_real_addresses_write_them(string text, string[] expected) =>
         Assert.Equal(expected.OrderBy(x => x), StructuredFactsProvider.PropertyIds(text).Select(i => i.Text).OrderBy(x => x));
 
