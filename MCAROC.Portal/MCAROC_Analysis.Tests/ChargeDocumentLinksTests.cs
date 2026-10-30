@@ -195,11 +195,28 @@ public sealed class ChargeDocumentLinkBuilderTests : IAsyncLifetime, IDisposable
     {
         var kind = "rotate-" + Guid.NewGuid().ToString("N");
         long[] oldestFirst = [11, 12, 13, 14, 15];
+        var t0 = new DateTime(2026, 10, 30, 9, 0, 0, DateTimeKind.Utc);
 
-        Assert.Equal([11L, 12L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2));
-        Assert.Equal([13L, 14L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2));   // the first two failed (still candidates) but wait their turn
-        Assert.Equal([15L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2));
-        Assert.Empty(ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2));                 // all tried within the retry interval: nothing is due yet
+        Assert.Equal([11L, 12L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0));
+        Assert.Equal([13L, 14L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0.AddMinutes(1)));   // the first two failed (still candidates) but wait their turn
+        Assert.Equal([15L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0.AddMinutes(2)));
+        Assert.Empty(ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0.AddMinutes(3)));                // all tried within the retry interval: nothing is due yet
+    }
+
+    /// <summary>Under a sustained backlog the oldest failing batches must not keep winning the limited slots: once the retry interval has passed, never-tried candidates
+    /// go before any retry, and retries go least recently tried first.</summary>
+    [Fact]
+    public void Recovery_serves_never_tried_batches_before_retries_and_retries_least_recently_tried_first()
+    {
+        var kind = "fair-" + Guid.NewGuid().ToString("N");
+        long[] oldestFirst = [1, 2, 3, 4, 5];
+        var t0 = new DateTime(2026, 10, 30, 9, 0, 0, DateTimeKind.Utc);
+        var later = ChargeDocumentLinkBuilder.RetryAfter + TimeSpan.FromMinutes(1);
+
+        Assert.Equal([1L, 2L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0));
+        Assert.Equal([3L, 4L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0 + later));              // 1 and 2 are due again, but 3 and 4 were never tried
+        Assert.Equal([5L, 1L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0 + later + later));      // 5 was never tried; then the least recently tried (1, from t0)
+        Assert.Equal([2L, 3L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0 + later + later + later)); // 2 (t0) before 3 (t0+later); 4, 5 and 1 were tried more recently
     }
 
     private sealed class RecordingScopedBuilder(IServiceScopeFactory scopes) : ChargeDocumentLinkBuilder(scopes, null!, NullLogger<ChargeDocumentLinkBuilder>.Instance)
