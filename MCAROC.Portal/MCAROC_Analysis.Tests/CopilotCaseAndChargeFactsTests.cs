@@ -330,7 +330,7 @@ public class CopilotCaseAndChargeFactsTests
             "Which charges cover survey no. 7788/2 at Kherwadi?");
 
         var row = Assert.Single(facts, f => f.EntityType == "RocCharge" && f.Text.Contains("LONG-TXT"));
-        Assert.Contains("matches the question on 7788/2", row.Text);
+        Assert.Contains("matches the question on survey 7788/2", row.Text);
         Assert.Contains("survey no. 7788/2", row.Text); // the passage around the identifier, which sits well past the first 320 characters
     }
 
@@ -347,6 +347,36 @@ public class CopilotCaseAndChargeFactsTests
         Assert.Contains("4455/1", excerpt);
         Assert.Equal(expectLeadingEllipsis, excerpt.StartsWith('…'));
         Assert.True(excerpt.Length <= StructuredFactsProvider.MaxPropertyChars + 2);
+    }
+
+    /// <summary>"survey 42" and "plot 42" share a number, not a parcel. The charge is still listed (it may be the one asked about), but the row says the match is only
+    /// possible and why, instead of presenting a numerical overlap as a property match.</summary>
+    [Theory]
+    [InlineData("Which charges cover survey no. 4242?", "POSSIBLE match only", "plot 4242 here against survey 4242 in the question")]
+    [InlineData("Which charges cover plot no. 4242?", "matches the question on plot 4242", null)]
+    [InlineData("Which charges cover 4242?", null, null)]   // no kind in the question and no label: no identifier at all
+    public async Task A_number_shared_across_kinds_of_identifier_is_a_possible_match_not_a_match(string question, string? expected, string? alsoExpected)
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        for (var i = 0; i < 60; i++)
+            db.RocCharges.Add(new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = $"BIG-{i:D2}", LatestChargeHolderRaw = "BIG BANK",
+                ChargeStatus = "Open", CurrentAmount = 1000m + i, CreationDate = new DateOnly(2012, 5, 5) });
+        var small = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "SMALL-PLOT", LatestChargeHolderRaw = "SOME BANK",
+            ChargeStatus = "Open", CurrentAmount = 1m, CreationDate = new DateOnly(2014, 1, 1) };
+        db.RocCharges.Add(small);
+        await db.SaveChangesAsync();
+        AddPropertyEvent(db, requestId, runId, small.ChargeId, "Shop on plot no. 4242 of the industrial estate at Thane");
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default, question);
+
+        var row = facts.SingleOrDefault(f => f.EntityType == "RocCharge" && f.Text.Contains("SMALL-PLOT"));
+        if (expected is null) { Assert.Null(row); return; }
+        Assert.NotNull(row);
+        Assert.Contains(expected, row!.Text);
+        if (alsoExpected is not null) Assert.Contains(alsoExpected, row.Text);
+        if (expected.StartsWith("POSSIBLE")) Assert.DoesNotContain("matches the question on", row.Text);
     }
 
     [Fact]

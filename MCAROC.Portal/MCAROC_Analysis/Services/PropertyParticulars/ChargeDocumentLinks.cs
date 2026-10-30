@@ -174,17 +174,17 @@ public class ChargeDocumentLinkBuilder(IServiceScopeFactory scopes, ChargeFormBa
 
     /// <summary>Of the candidates (oldest first, as those leave the window first) the ones not tried within <see cref="RetryAfter"/>, at most
     /// <paramref name="max"/>, recording the attempt. A failing batch waits its turn again while the others get theirs.</summary>
-    internal static List<long> TakeDue(string kind, IEnumerable<long> candidatesOldestFirst, int max)
+    internal static List<long> TakeDue(string kind, IEnumerable<long> candidatesOldestFirst, int max, DateTime? at = null)
     {
-        var now = DateTime.UtcNow;
-        var due = new List<long>();
-        foreach (var id in candidatesOldestFirst)
-        {
-            if (due.Count >= max) break;
-            if (LastTried.TryGetValue((kind, id), out var last) && now - last < RetryAfter) continue;
-            LastTried[(kind, id)] = now;
-            due.Add(id);
-        }
+        var now = at ?? DateTime.UtcNow;
+        // Never-tried candidates first (oldest completion first, as those leave the window first), then the least recently tried: a batch that keeps failing
+        // goes to the back of the line each time, so under a backlog every candidate gets its turn before any gets a second one.
+        var due = candidatesOldestFirst
+            .Select((id, order) => (id, order, last: LastTried.TryGetValue((kind, id), out var l) ? l : (DateTime?)null))
+            .Where(x => x.last is null || now - x.last.Value >= RetryAfter)
+            .OrderBy(x => x.last ?? DateTime.MinValue).ThenBy(x => x.order)
+            .Take(max).Select(x => x.id).ToList();
+        foreach (var id in due) LastTried[(kind, id)] = now;
         return due;
     }
 
