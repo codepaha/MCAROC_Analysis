@@ -14,7 +14,7 @@ public sealed record LinkedCharge(string Number, string Holder, string Status);
 public sealed record PropertyDocument(long FilingDocumentId, string Name, string? FormType, IReadOnlyList<int> Pages, IReadOnlyList<string> Matched, IReadOnlyList<LinkedCharge> Charges, bool Confirmed);
 
 /// <summary>What the search found, and what it could not do. <paramref name="Unsearched"/> lists identifiers in the question that were too short to search on.</summary>
-public sealed record PropertyDocumentSearch(IReadOnlyList<PropertyDocument> Documents, bool Truncated, string? OnlyIdentifier, IReadOnlyList<string> Unsearched)
+public sealed record PropertyDocumentSearch(IReadOnlyList<PropertyDocument> Documents, bool Truncated, string? OnlyIdentifier, IReadOnlyList<string> Unsearched, bool AreaOnlyInOtherUnitsNotSearched = false)
 {
     public static readonly PropertyDocumentSearch None = new([], false, null, []);
 }
@@ -39,6 +39,8 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
     public const int DefaultMaxChunksPerTerm = 600;
     public const int DefaultMaxTerms = 40;
     private const int MinSearchableDigits = 3;
+    private const int MaxDocumentsRead = 100;       // documents whose other chunks are read to find their area
+    private const int MaxChunksReadForArea = 6000;
 
     private static readonly Regex Quoted = new("[\"“‘']([A-Za-z][^\"”’']{5,80})[\"”’']", RegexOptions.Compiled);
 
@@ -57,6 +59,9 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
         };
 
         public string Label => $"{Text} {Family}";
+
+        /// <summary>True when the unit has a fixed size, so the same area can be recognised in another unit.</summary>
+        public bool IsConvertible => SqMetres.ContainsKey(Family);
 
         public bool SameAs(AreaFigure other)
         {
@@ -142,7 +147,7 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
         }
 
         var perDocument = new Dictionary<long, Evidence>();
-        foreach (var (docId, name, formType, page, text) in chunks.Values)
+        void Absorb(long docId, string name, string? formType, int page, string text)
         {
             var ids = StructuredFactsProvider.PropertyIds(text);
             var confirmedIds = ids.Where(t => subject.Ids.Any(q => StructuredFactsProvider.Compare(q, t) == StructuredFactsProvider.PropertyMatch.Match)).Select(t => t.Label).ToList();
@@ -150,7 +155,7 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
             var docAreas = subject.Areas.Count == 0 ? [] : AreasIn(text).ToList();
             var matchedAreas = subject.Areas.Where(q => docAreas.Any(d => q.SameAs(d))).Select(q => q.Label).ToList();
             var nameHit = subject.Name is not null && subject.Name.IsMatch(Regex.Replace(text, @"\s+", " "));
-            if (confirmedIds.Count == 0 && otherKindIds.Count == 0 && matchedAreas.Count == 0 && !nameHit) continue;
+            if (confirmedIds.Count == 0 && otherKindIds.Count == 0 && matchedAreas.Count == 0 && !nameHit) return;
             if (!perDocument.TryGetValue(docId, out var e)) perDocument[docId] = e = new Evidence(name, formType);
             e.Pages.Add(page);
             foreach (var i in confirmedIds) e.Ids.Add(i);
@@ -158,9 +163,29 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
             foreach (var a in matchedAreas) e.Areas.Add(a);
             e.NameHit |= nameHit;
         }
+        foreach (var (docId, name, formType, page, text) in chunks.Values) Absorb(docId, name, formType, page, text);
+
+        // Second pass: a document found through an identifier or the name may give the area in another chunk (and another unit, which no search term can find). Read the
+        // rest of every such document that is not yet confirmed and look for the area there. A document that gives the area only in another unit and names neither the
+        // property nor an identifier cannot be found this way; that is disclosed, not hidden.
+        if (subject.Areas.Count > 0)
+        {
+            var more = perDocument.Where(kv => kv.Value.Decide() != Verdict.Confirmed).Select(kv => kv.Key).ToList();
+            if (more.Count > MaxDocumentsRead) { truncated = true; more = more.Take(MaxDocumentsRead).ToList(); }
+            if (more.Count > 0)
+            {
+                var seen = chunks.Keys.ToHashSet();
+                var rest = await db.DocumentChunks.AsNoTracking().Where(c => c.RequestId == requestId && c.BatchId == batchId && more.Contains(c.FilingDocumentId))
+                    .OrderBy(c => c.FilingDocumentId).ThenBy(c => c.PageNumber).Take(MaxChunksReadForArea + 1)
+                    .Select(c => new { c.ChunkId, c.FilingDocumentId, c.DocumentName, c.FormType, c.PageNumber, c.ChunkText }).ToListAsync(ct);
+                if (rest.Count > MaxChunksReadForArea) { truncated = true; rest = rest.Take(MaxChunksReadForArea).ToList(); }
+                foreach (var c in rest.Where(c => !seen.Contains(c.ChunkId))) Absorb(c.FilingDocumentId, c.DocumentName, c.FormType, c.PageNumber, c.ChunkText);
+            }
+        }
+        var areaNote = subject.Areas.Any(a => a.IsConvertible);
 
         var qualifying = perDocument.Where(kv => kv.Value.Decide() != Verdict.No).ToList();
-        if (qualifying.Count == 0) return new([], truncated, onlyOne, unsearched);
+        if (qualifying.Count == 0) return new([], truncated, onlyOne, unsearched, areaNote);
 
         // The charge each document belongs to, from the links the system has built, with that charge's current status.
         var docIds = qualifying.Select(q => q.Key).ToList();
@@ -186,7 +211,7 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
         }).OrderByDescending(d => d.Confirmed).ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase).ToList();
 
         if (all.Count > maxDocuments) truncated = true;
-        return new([.. all.Take(maxDocuments)], truncated, onlyOne, unsearched);
+        return new([.. all.Take(maxDocuments)], truncated, onlyOne, unsearched, areaNote);
     }
 
     private enum Verdict { No, Candidate, Confirmed }
@@ -231,10 +256,15 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
         if (confirmed.Count > 0)
             facts.Add(new("Documents", search.Truncated
                 ? $"At least {confirmed.Count} document(s) on file whose own text describes the property the question names. The search reached its limit, so there may be more such documents than are listed: do not describe this list as complete."
-                : $"{confirmed.Count} document(s) on file whose own text describes the property the question names. This is every such document in the current filing batch, not a sample; " +
-                  "a charge shown as Satisfied here is a charge on this property that has been released.", null, null));
-        else if (search.Truncated)
-            facts.Add(new("Documents", "The search reached its limit, so the candidate documents below may not be all of them.", null, null));
+                : search.Unsearched.Count > 0
+                    ? $"At least {confirmed.Count} document(s) on file whose own text describes the property the question names. The search could not use some identifiers ({string.Join(", ", search.Unsearched)}), so there may be more such documents than are listed: do not describe this list as complete."
+                    : $"{confirmed.Count} document(s) on file whose own text describes the property the question names. This is every such document in the current filing batch, not a sample; " +
+                      "a charge shown as Satisfied here is a charge on this property that has been released." +
+                      (search.AreaOnlyInOtherUnitsNotSearched
+                          ? " One gap: a document that states the area only in another unit (for example square metres where the question gave square yards) and names neither the property nor one of its identifiers is not searched for."
+                          : ""), null, null));
+        else if ((search.Truncated || search.Unsearched.Count > 0) && candidates.Count > 0)
+            facts.Add(new("Documents", "The candidate documents below may not be all of them: the search reached its limit or could not use some identifiers.", null, null));
 
         foreach (var d in confirmed) facts.Add(Fact("Document", d));
         foreach (var d in candidates) facts.Add(Fact("Candidate document (possible match only, identity not established)", d));

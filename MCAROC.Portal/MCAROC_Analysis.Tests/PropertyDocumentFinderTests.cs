@@ -78,6 +78,11 @@ public class PropertyDocumentFinderTests
         // the same land given only in metres: 2,152.25 sq yards is 1,799.6 sq m, which the letter rounds to 1800
         await AddAsync("Metric-only-letter.pdf", "Charge Satisfaction Letter",
             (1, "The lender has no claim over land admeasuring 1800.00 sq mtrs forming part of the Mathuradas Mills Compound."));
+        // the property is named in one chunk and its extent, in metres only, in another: no search term for "1800" could find the second, but reading the document does
+        await AddAsync("Two-chunk-deed.pdf", "Instrument of Charge",
+            (1, "Schedule: the property known as the Mathuradas Mills Compound at Lower Parel, as described in the title papers."),
+            (2, "Total extent of the property under mortgage: 1799.60 sq. mtrs. together with the structures standing thereon."))
+            ;
         await AddAsync("Plot-document.pdf", "Instrument of Charge",
             (1, "Shop on plot no. 4242 of the industrial estate at Thane, mortgaged to the lender."));
         await AddAsync("Unrelated.pdf", "Financial Statements", (1, "Balance sheet as at 31 March. Revenue from operations. Notes to accounts."));
@@ -93,7 +98,7 @@ public class PropertyDocumentFinderTests
         var found = await new PropertyDocumentFinder(db).FindAsync(s.RequestId, s.BatchId, Question, CancellationToken.None);
 
         Assert.False(found.Truncated);
-        Assert.Equal(["Deed-of-Mortgage.pdf", "Form-CHG-8.pdf", "HDFC-NoC.pdf", "Metric-only-letter.pdf"], found.Documents.Where(d => d.Confirmed).Select(d => d.Name).Order().ToList());
+        Assert.Equal(["Deed-of-Mortgage.pdf", "Form-CHG-8.pdf", "HDFC-NoC.pdf", "Metric-only-letter.pdf", "Two-chunk-deed.pdf"], found.Documents.Where(d => d.Confirmed).Select(d => d.Name).Order().ToList());
         Assert.DoesNotContain(found.Documents, d => d.Name is "Shareholder-list.pdf" or "Certificate-2840.pdf" or "Shareholder-at-the-compound.pdf" or "Loan-sanction.pdf" or "Unrelated.pdf" or "Other-parcel.pdf");
         var deed = found.Documents.Single(d => d.Name == "Deed-of-Mortgage.pdf");
         Assert.Equal([12], deed.Pages);                                    // only the page that describes the land, not the boilerplate page
@@ -113,6 +118,53 @@ public class PropertyDocumentFinderTests
         var metric = found.Documents.Single(d => d.Name == "Metric-only-letter.pdf");                     // different digits and unit, the same area once converted
         Assert.True(metric.Confirmed);
         Assert.Contains(metric.Matched, m => m.StartsWith("the area 2152.25 yd2"));
+    }
+
+    /// <summary>The converted figure cannot be a database search term (a number like 1800 appears on thousands of pages), so a document found through the property's name is read
+    /// in full, and its area found in whichever chunk gives it, in whichever unit.</summary>
+    [Fact]
+    public async Task A_document_found_by_name_has_its_other_chunks_read_for_the_area_in_another_unit()
+    {
+        await using var db = CreateContext();
+        var s = await SeedAsync(db);
+
+        var found = await new PropertyDocumentFinder(db).FindAsync(s.RequestId, s.BatchId, Question, CancellationToken.None);
+
+        var deed = found.Documents.Single(d => d.Name == "Two-chunk-deed.pdf");
+        Assert.True(deed.Confirmed);
+        Assert.Contains(deed.Matched, m => m.StartsWith("the area 2152.25 yd2"));
+        Assert.Equal([1, 2], deed.Pages);
+        Assert.True(found.AreaOnlyInOtherUnitsNotSearched);
+    }
+
+    /// <summary>An identifier that could not be searched on means the list may be missing documents, so the header must not say it is every such document.</summary>
+    [Fact]
+    public async Task An_unsearched_identifier_withdraws_the_claim_that_the_list_is_complete()
+    {
+        await using var db = CreateContext();
+        var s = await SeedAsync(db);
+        var question = Question + " Also survey no. 42.";
+
+        var facts = await new PropertyDocumentFinder(db).FactsAsync(s.RequestId, s.BatchId, question, CancellationToken.None);
+
+        Assert.Contains(facts, f => f.Text.Contains("NOT searched: survey 42"));
+        var header = facts.First(f => f.Text.Contains("document(s) on file"));
+        Assert.StartsWith("At least ", header.Text);
+        Assert.Contains("could not use some identifiers (survey 42)", header.Text);
+        Assert.DoesNotContain(facts, f => f.Text.Contains("This is every such document"));
+    }
+
+    [Fact]
+    public async Task A_complete_search_that_used_an_area_says_what_it_does_not_cover()
+    {
+        await using var db = CreateContext();
+        var s = await SeedAsync(db);
+
+        var facts = await new PropertyDocumentFinder(db).FactsAsync(s.RequestId, s.BatchId, Question, CancellationToken.None);
+
+        var header = facts.First(f => f.Text.Contains("document(s) on file"));
+        Assert.Contains("This is every such document", header.Text);
+        Assert.Contains("One gap: a document that states the area only in another unit", header.Text);
     }
 
     [Fact]
@@ -224,7 +276,8 @@ public class PropertyDocumentFinderTests
         Assert.Contains("\"N document(s) on file whose own text describes the property ... This is every such document\" is the complete list", prompt);
         Assert.Contains("list EVERY \"Document:\" fact", prompt);
         Assert.Contains("never answer that no charge was satisfied while such a fact says otherwise", prompt);
-        Assert.Contains("\"At least N document(s) ... reached its limit\" is NOT complete", prompt);
+        Assert.Contains("\"At least N document(s) ...\" (the search reached its limit, or could not use some identifiers) is NOT complete", prompt);
+        Assert.Contains("\"One gap:\"", prompt);
         Assert.Contains("\"Candidate document (possible match only, identity not established)\" facts are only possible matches", prompt);
         Assert.Contains("\"The question names only one identifier\" means the documents cannot be established", prompt);
         Assert.Contains("\"These identifiers in the question were NOT searched\" means those identifiers could not be used", prompt);
