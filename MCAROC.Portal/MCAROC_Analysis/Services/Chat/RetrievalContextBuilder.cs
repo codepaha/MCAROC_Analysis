@@ -63,7 +63,7 @@ public class RetrievalContextBuilder
         var hints = QuestionHintExtractor.Extract(question, knownLenders, knownSrns);
 
         var authoritativeBatch = await McaFilings.McaFilingBatchResolver.GetAuthoritativeBatchAsync(_db, requestId, ct);
-        var facts = await _structuredFacts.BuildDigestAsync(requestId, hints, ct);
+        var facts = await _structuredFacts.BuildDigestAsync(requestId, hints, ct, question);
 
         // A request without an authoritative batch must never search its historical chunks. Likewise,
         // there is no reason to call Vertex for an embedding until that batch has indexed a chunk. The

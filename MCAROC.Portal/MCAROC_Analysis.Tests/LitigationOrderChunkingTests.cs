@@ -104,7 +104,7 @@ public class LitigationOrderChunkingTests : IAsyncLifetime
         }
         else
         {
-            var client = new Client { ClientCode = "LOC" + suffix + Guid.NewGuid().ToString("N")[..6], ClientName = "Chunk Test Co", CreatedDate = DateTime.UtcNow };
+            var client = new Client { ClientCode = "LOC" + suffix + Guid.NewGuid().ToString("N")[..16], ClientName = "Chunk Test Co", CreatedDate = DateTime.UtcNow };
             db.Clients.Add(client);
             request = new McaRequest
             {

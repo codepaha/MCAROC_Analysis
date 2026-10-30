@@ -1,3 +1,5 @@
+using MCAROC_Analysis.Services.Excel.Parsers;
+using MCAROC_Analysis.Services.PropertyParticulars;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
@@ -175,6 +177,227 @@ public class CopilotCaseAndChargeFactsTests
 
         var row = Assert.Single(facts, f => f.EntityType == "RocCharge" && f.Text.Contains("SMALL-2019"));
         Assert.Contains("Created 2019-07-09", row.Text);
+    }
+
+    private static void AddPropertyEvent(AppDbContext db, long requestId, long runId, long chargeId, string particulars) =>
+        db.RocChargeEvents.Add(new RocChargeEvent { RocChargeId = chargeId, RequestId = requestId, IngestionRunId = runId, SerialNumber = "1", EventType = ChargeEventType.Creation,
+            EventDate = new DateOnly(2011, 5, 20), HolderNameRaw = "X", HolderNameNormalized = "X", PropertyParticulars = particulars });
+
+    /// <summary>The Deccan Chronicle miss: two open charges sit on the same land, but the register rows named only holder and amount, so a question about the
+    /// land could be tied only to the one charge whose deed text was retrieved. The rows now carry the register's property particulars, and a question that
+    /// names the property's survey numbers always lists the charges that share them, however small and however many charges there are.</summary>
+    [Fact]
+    public async Task A_question_naming_a_propertys_survey_numbers_lists_every_charge_on_it_with_its_property_text()
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        for (var i = 0; i < 60; i++)
+            db.RocCharges.Add(new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = $"BIG-{i:D2}", LatestChargeHolderRaw = "BIG BANK",
+                ChargeStatus = "Open", CurrentAmount = 1000m + i, CreationDate = new DateOnly(2012, 5, 5) });
+        var tata = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "10301179", LatestChargeHolderRaw = "TATA CAPITAL LIMITED",
+            ChargeStatus = "Open", CurrentAmount = 100m, CreationDate = new DateOnly(2011, 4, 15) };
+        var lt = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "100187185", LatestChargeHolderRaw = "L&T FINANCE LIMITED",
+            ChargeStatus = "Open", CurrentAmount = 25m, CreationDate = new DateOnly(2011, 5, 20) };
+        db.RocCharges.AddRange(tata, lt);
+        await db.SaveChangesAsync();
+        AddPropertyEvent(db, requestId, runId, tata.ChargeId,
+            "All that piece or parcel of land admeasuring about 2152.25 sq. yards known as Mathuradas Mills Compound bearing Survey Nos. 1/2844, 2845, 2846, 3/2840, 2841, 2842");
+        AddPropertyEvent(db, requestId, runId, lt.ChargeId,
+            "Commercial Plot of Land bearing survey no. 3/2840, 3/2841, 2842, 2843, C.S.no.242, Mathuradas Mill Compound, Lower Parel, Mumbai");
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default,
+            "Is there any charge on this property? Non-Agricultural land forming part of Mathuradas Mills Compound bearing Survey Nos. 3/ 2840, 3/ 2841, 2842, CTS 242 of Lower Parel");
+
+        var tataRow = Assert.Single(facts, f => f.EntityType == "RocCharge" && f.Text.Contains("10301179"));
+        var ltRow = Assert.Single(facts, f => f.EntityType == "RocCharge" && f.Text.Contains("100187185"));
+        Assert.Contains("Property per register (matches the question on", tataRow.Text);
+        Assert.Contains("Property per register (matches the question on", ltRow.Text);
+        Assert.Contains("Mathuradas Mill", ltRow.Text);
+    }
+
+    [Theory]
+    [InlineData("Which charges cover survey 2840?", true)]                       // one survey number, plainly about a property
+    [InlineData("Is there a charge on plot 3/2840 at Lower Parel?", true)]       // the full slash-joined identifier
+    [InlineData("Which charges were created in 2011 or registered in 400013?", false)] // a year and a PIN code identify no property
+    [InlineData("Which charges were created in 2840?", false)]                   // a bare number with no property wording
+    [InlineData("Which charges cover survey no. 4/2840?", false)]                // 4/2840 is not 3/2840: the sub-division prefix is part of the identifier
+    [InlineData("Which charges cover survey nos. 4/2840 and 2842?", true)]      // one of the listed parcels is shared
+    [InlineData("Which charges cover S.NO. 2840 AND CS NO 242 at Lower Parel?", true)] // the abbreviations real addresses use
+    public async Task A_single_survey_number_is_enough_when_the_question_is_about_a_property(string question, bool expectListed)
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        for (var i = 0; i < 60; i++)
+            db.RocCharges.Add(new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = $"BIG-{i:D2}", LatestChargeHolderRaw = "BIG BANK",
+                ChargeStatus = "Open", CurrentAmount = 1000m + i, CreationDate = new DateOnly(2012, 5, 5) });
+        var small = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "SMALL-LT", LatestChargeHolderRaw = "L&T FINANCE LIMITED",
+            ChargeStatus = "Open", CurrentAmount = 1m, CreationDate = new DateOnly(2011, 5, 20) };
+        db.RocCharges.Add(small);
+        await db.SaveChangesAsync();
+        AddPropertyEvent(db, requestId, runId, small.ChargeId, "Plot of land bearing survey no. 3/2840, 2842, C.S.no.242, Lower Parel, Mumbai - 400013");
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default, question);
+
+        Assert.Equal(expectListed, facts.Any(f => f.EntityType == "RocCharge" && f.Text.Contains("SMALL-LT")));
+    }
+
+    [Theory]
+    [InlineData("Which charges cover survey no. 42?", true)]      // a short number after a label is an identifier
+    [InlineData("Which charges cover survey no. 123456?", true)]  // so is a six-digit one
+    [InlineData("Which charges cover survey no. 2011?", true)]    // a year-like number is a survey number when the text says so
+    [InlineData("Which charges were created in 2011?", false)]    // ...and only then
+    [InlineData("Which charges cover plot 400013?", false)]       // a plot that is not in the particulars
+    public async Task A_number_is_a_survey_number_only_where_the_text_says_so(string question, bool expectListed)
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        for (var i = 0; i < 60; i++)
+            db.RocCharges.Add(new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = $"BIG-{i:D2}", LatestChargeHolderRaw = "BIG BANK",
+                ChargeStatus = "Open", CurrentAmount = 1000m + i, CreationDate = new DateOnly(2012, 5, 5) });
+        var small = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "SMALL-2011", LatestChargeHolderRaw = "SOME FINANCE",
+            ChargeStatus = "Open", CurrentAmount = 1m, CreationDate = new DateOnly(2014, 1, 1) };
+        db.RocCharges.Add(small);
+        await db.SaveChangesAsync();
+        AddPropertyEvent(db, requestId, runId, small.ChargeId, "Land at Pune, survey no. 2011 and plot 123456, gat no. 42, pin code 400013, admeasuring 1800 sq mtrs");
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default, question);
+
+        Assert.Equal(expectListed, facts.Any(f => f.EntityType == "RocCharge" && f.Text.Contains("SMALL-2011")));
+    }
+
+    /// <summary>Found by running 300 real addresses through both readers: a number followed by letters was cut back to a partial number ("RS NO 82NR RATNA" gave
+    /// "8"), which would have matched an unrelated charge. Digits are atomic now; a glued number is simply not read.</summary>
+    [Theory]
+    [InlineData("FLAT-1,FLOOR-1 SURYA RESIDENCY A TYPE RS NO 82NR RATNA VILLA", new string[] { })]
+    [InlineData("UNIT-34 CHANDRAKALA TOWNSHIP PH I S NO T.S.NOS.32/3B,33/2B,WARD35, BLOCK I", new[] { "32/3B", "33/2B" })]
+    [InlineData("PLOT-365 SREE CITY S NO 40/3B(P); 41/1, 2, 3, 5A, 42/1(P), 3", new[] { "365", "40/3B" })] // PLOT-365 is a plot number; the list stops at "(P)"
+    [InlineData("Property in S. No 1341, Vavilalpalli, admeasuring 3602.5 Sq yards", new[] { "1341" })]
+    [InlineData("Land bearing Survey Nos. 3/2840, 3/2841, 2842 at Lower Parel", new[] { "3/2840", "3/2841", "2842" })]   // a labelled pair is one identifier, not two
+    [InlineData("see item 3/2840 of the schedule", new[] { "3/2840" })]                                                 // an unlabelled pair is still one
+    public void Property_identifiers_are_read_as_real_addresses_write_them(string text, string[] expected) =>
+        Assert.Equal(expected.OrderBy(x => x), StructuredFactsProvider.PropertyIds(text).Select(i => i.Text).OrderBy(x => x));
+
+    /// <summary>Gemini has already split each charge's particulars into properties with grounded survey numbers; the regex reading stops early on some long lists
+    /// ("Plot No.3(SP) in TS Nos. 11/3, 19/1(P)" gives only "3"). A charge's identifiers are both readings, so a question naming a parcel only Gemini listed
+    /// still finds the charge, however small it is and however many charges there are.</summary>
+    [Fact]
+    public async Task A_stored_gemini_extraction_adds_the_survey_numbers_the_regex_reading_missed()
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        for (var i = 0; i < 60; i++)
+            db.RocCharges.Add(new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = $"BIG-{i:D2}", LatestChargeHolderRaw = "BIG BANK",
+                ChargeStatus = "Open", CurrentAmount = 1000m + i, CreationDate = new DateOnly(2012, 5, 5) });
+        var small = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "SMALL-TS", LatestChargeHolderRaw = "SOME BANK",
+            ChargeStatus = "Open", CurrentAmount = 1m, CreationDate = new DateOnly(2014, 1, 1) };
+        db.RocCharges.Add(small);
+        await db.SaveChangesAsync();
+        var text = $"Exclusive charge on stocks and book debts; land admeasuring 1 acre situated at Plot No.3(SP) in TS Nos. 11/3, 19/1(P), 53/1(P) of Nagpur, ref {Guid.NewGuid():N}"; // unique: extractions are keyed by text in a shared database
+        AddPropertyEvent(db, requestId, runId, small.ChargeId, text);
+        var extraction = new PropertyParticularsAiResult([new AiProperty(PropertyAssetClass.Immovable, Enum.GetValues<PropertyKind>().First(), null, null, null, null, null,
+            [], null, [new SurveyNumberGroup("Survey", null, ["11/3", "19/1(P)", "53/1(P)"])], [], null, null, null, "Nagpur", null, null)]);
+        db.PropertyParticularsExtractions.Add(new PropertyParticularsExtraction
+        {
+            TextHash = PropertyParticularsAi.HashOf(text, null), PromptVersion = PropertyParticularsAi.PromptVersion, ModelId = "m", SourceText = text,
+            Status = PropertyParticularsExtractionStatus.Completed, ExtractionJson = PropertyParticularsAi.Serialize(extraction), CreatedUtc = DateTime.UtcNow, CompletedUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default,
+            "Which charges cover survey no. 11/3?");
+
+        Assert.Contains(facts, f => f.EntityType == "RocCharge" && f.Text.Contains("SMALL-TS"));
+    }
+
+    /// <summary>A charge can be picked because an identifier far down a long register text matches the question; the row used to carry only the first 320
+    /// characters, so the model got the charge with no evidence connecting it to the property. The row now names the matching identifier and quotes the passage
+    /// around it.</summary>
+    [Fact]
+    public async Task A_charge_picked_for_an_identifier_late_in_a_long_text_carries_the_passage_that_matched()
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        var charge = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "LONG-TXT", LatestChargeHolderRaw = "SOME BANK",
+            ChargeStatus = "Open", CurrentAmount = 5m, CreationDate = new DateOnly(2016, 3, 3) };
+        db.RocCharges.Add(charge);
+        await db.SaveChangesAsync();
+        var filler = string.Concat(Enumerable.Repeat("Hypothecation of stocks, book debts and receivables of the borrower, both present and future. ", 8));
+        AddPropertyEvent(db, requestId, runId, charge.ChargeId, filler + "Also the factory land at Plot No. 14, survey no. 7788/2, Village Kherwadi, Taluka Pune, with all structures thereon, and the plant and machinery.");
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default,
+            "Which charges cover survey no. 7788/2 at Kherwadi?");
+
+        var row = Assert.Single(facts, f => f.EntityType == "RocCharge" && f.Text.Contains("LONG-TXT"));
+        Assert.Contains("matches the question on survey 7788/2", row.Text);
+        Assert.Contains("survey no. 7788/2", row.Text); // the passage around the identifier, which sits well past the first 320 characters
+    }
+
+    [Theory]
+    [InlineData(0, false)]    // identifier inside the opening: the opening is quoted, no ellipsis in front
+    [InlineData(900, true)]   // identifier far down: the stretch around it is quoted, with an ellipsis where text was cut
+    public void An_excerpt_quotes_the_stretch_around_the_matched_identifier(int position, bool expectLeadingEllipsis)
+    {
+        var text = new string('x', position) + " survey no. 4455/1 " + new string('y', 900);
+        var ids = StructuredFactsProvider.PropertyIds("survey no. 4455/1");
+
+        var excerpt = StructuredFactsProvider.Excerpt(text, ids, StructuredFactsProvider.MaxPropertyChars);
+
+        Assert.Contains("4455/1", excerpt);
+        Assert.Equal(expectLeadingEllipsis, excerpt.StartsWith('…'));
+        Assert.True(excerpt.Length <= StructuredFactsProvider.MaxPropertyChars + 2);
+    }
+
+    /// <summary>"survey 42" and "plot 42" share a number, not a parcel. The charge is still listed (it may be the one asked about), but the row says the match is only
+    /// possible and why, instead of presenting a numerical overlap as a property match.</summary>
+    [Theory]
+    [InlineData("Which charges cover survey no. 4242?", "POSSIBLE match only", "plot 4242 here against survey 4242 in the question")]
+    [InlineData("Which charges cover plot no. 4242?", "matches the question on plot 4242", null)]
+    [InlineData("Which charges cover 4242?", null, null)]   // no kind in the question and no label: no identifier at all
+    public async Task A_number_shared_across_kinds_of_identifier_is_a_possible_match_not_a_match(string question, string? expected, string? alsoExpected)
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        for (var i = 0; i < 60; i++)
+            db.RocCharges.Add(new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = $"BIG-{i:D2}", LatestChargeHolderRaw = "BIG BANK",
+                ChargeStatus = "Open", CurrentAmount = 1000m + i, CreationDate = new DateOnly(2012, 5, 5) });
+        var small = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "SMALL-PLOT", LatestChargeHolderRaw = "SOME BANK",
+            ChargeStatus = "Open", CurrentAmount = 1m, CreationDate = new DateOnly(2014, 1, 1) };
+        db.RocCharges.Add(small);
+        await db.SaveChangesAsync();
+        AddPropertyEvent(db, requestId, runId, small.ChargeId, "Shop on plot no. 4242 of the industrial estate at Thane");
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default, question);
+
+        var row = facts.SingleOrDefault(f => f.EntityType == "RocCharge" && f.Text.Contains("SMALL-PLOT"));
+        if (expected is null) { Assert.Null(row); return; }
+        Assert.NotNull(row);
+        Assert.Contains(expected, row!.Text);
+        if (alsoExpected is not null) Assert.Contains(alsoExpected, row.Text);
+        if (expected.StartsWith("POSSIBLE")) Assert.DoesNotContain("matches the question on", row.Text);
+    }
+
+    [Fact]
+    public async Task Charge_rows_do_not_carry_property_text_when_the_question_is_not_about_a_property()
+    {
+        await using var db = CreateContext();
+        var (requestId, runId) = await SeedRequestAsync(db);
+        var charge = new RocCharge { RequestId = requestId, IngestionRunId = runId, RocChargeNumber = "555", LatestChargeHolderRaw = "SOME BANK",
+            ChargeStatus = "Open", CurrentAmount = 10m, CreationDate = new DateOnly(2020, 1, 1) };
+        db.RocCharges.Add(charge);
+        await db.SaveChangesAsync();
+        AddPropertyEvent(db, requestId, runId, charge.ChargeId, "Plot bearing survey no. 1111, 2222 at Somewhere");
+        await db.SaveChangesAsync();
+
+        var facts = await new StructuredFactsProvider(db).BuildDigestAsync(requestId, new QuestionHints(FilingCategory.Charge, null, null, null, null), default,
+            "How many open charges are there?");
+
+        var row = Assert.Single(facts, f => f.EntityType == "RocCharge");
+        Assert.DoesNotContain("Property per register", row.Text);
     }
 
     private static async Task SeedCasesAsync(AppDbContext db, long requestId, params LitigationCase[] cases)

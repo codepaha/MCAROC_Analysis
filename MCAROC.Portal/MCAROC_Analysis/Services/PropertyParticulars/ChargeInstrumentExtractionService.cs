@@ -72,9 +72,22 @@ public class ChargeInstrumentExtractionService(
         var created = 0;
         foreach (var d in docs.Where(d => !have.Contains(d.FilingDocumentId)))
         {
-            // A form read exactly from its own data is part 1's; nothing to quote.
+            // A form read exactly from its own data is part 1's; nothing to quote. It is recorded as finished with no passages (which nothing displays), so
+            // it is a terminal answer and not a document that every recovery sweep would find unscheduled again and again.
             var resolvedSidecar = MCAROC_Analysis.Services.Storage.StoragePathHelper.ResolveFullPath(d.ExtractedTextPath);
-            if (await XfaFormReader.ReadSidecarAsync(resolvedSidecar, ct) is { Count: > 0 }) continue;
+            if (await XfaFormReader.ReadSidecarAsync(resolvedSidecar, ct) is { Count: > 0 })
+            {
+                var marker = new ChargeInstrumentExtraction
+                {
+                    RequestId = d.RequestId, FilingDocumentId = d.FilingDocumentId, PromptVersion = ChargeInstrumentAi.PromptVersion, ModelId = PropertyParticularsAi.ModelId,
+                    CreatedUtc = DateTime.UtcNow, CompletedUtc = DateTime.UtcNow, Status = ChargeInstrumentExtractionStatus.Completed,
+                    ResultJson = ChargeInstrumentAi.Serialize(new ChargeInstrumentAiResult([]))
+                };
+                db.ChargeInstrumentExtractions.Add(marker);
+                try { await db.SaveChangesAsync(ct); }
+                catch (DbUpdateException ex) when (ex.InnerException is SqlException { Number: 2627 or 2601 }) { db.Entry(marker).State = EntityState.Detached; } // another scheduler recorded it first
+                continue;
+            }
 
             var earlier = string.IsNullOrEmpty(d.FileHash) ? null : await (
                 from x in db.ChargeInstrumentExtractions.AsNoTracking()
@@ -293,9 +306,24 @@ public class ChargeInstrumentExtractionService(
 }
 
 public sealed class ChargeInstrumentExtractionWorker(IServiceScopeFactory scopes, ChargeInstrumentExtractionQueue queue,
-    ILogger<ChargeInstrumentExtractionWorker> logger) : BackgroundService
+    ILogger<ChargeInstrumentExtractionWorker> logger, ChargeDocumentLinkBuilder? linkBuilder = null) : BackgroundService
 {
     private readonly SemaphoreSlim _concurrency = new(2);
+    private static readonly TimeSpan RecoverySweepEvery = TimeSpan.FromMinutes(10);
+
+    /// <summary>Retries linking and extraction scheduling for recently completed filing batches that lost either (see
+    /// <see cref="ChargeDocumentLinkBuilder.RecoverPendingAsync"/>): once now, then every ten minutes.</summary>
+    private async Task SweepAsync(CancellationToken ct)
+    {
+        if (linkBuilder is null) return;
+        using var timer = new PeriodicTimer(RecoverySweepEvery);
+        do
+        {
+            try { await linkBuilder.RecoverPendingAsync(ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (Exception ex) { logger.LogWarning(ex, "Charge document recovery sweep failed; will retry"); }
+        } while (await timer.WaitForNextTickAsync(ct));
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -306,6 +334,7 @@ public sealed class ChargeInstrumentExtractionWorker(IServiceScopeFactory scopes
             if (count > 0) logger.LogInformation("Recovered {Count} charge instrument extraction(s)", count);
         }
         catch (Exception ex) { logger.LogError(ex, "Charge instrument extraction startup recovery failed"); }
+        _ = SweepAsync(stoppingToken);
         await foreach (var id in queue.ReadAllAsync(stoppingToken)) _ = HandleAsync(id, stoppingToken);
     }
 

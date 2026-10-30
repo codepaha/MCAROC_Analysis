@@ -1,3 +1,4 @@
+using MCAROC_Analysis.Services.PropertyParticulars;
 using MCAROC_Analysis.Data;
 using MCAROC_Analysis.Data.Entities;
 using MCAROC_Analysis.Models;
@@ -28,7 +29,7 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
     internal const int MaxChargeRows = 40;
     internal const int MaxHoldersListed = 12;
 
-    public async Task<List<StructuredFact>> BuildDigestAsync(long requestId, QuestionHints hints, CancellationToken ct)
+    public async Task<List<StructuredFact>> BuildDigestAsync(long requestId, QuestionHints hints, CancellationToken ct, string? question = null)
     {
         var request = await db.Requests.FirstAsync(r => r.RequestId == requestId, ct);
         var facts = new List<StructuredFact>();
@@ -140,16 +141,31 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
             {
                 // The largest charges, plus every charge the question points at (a lender it names, a year it asks about), so a capped
                 // list never hides the row asked for.
+                // What each charge says about its property (the register's own particulars, latest event): the only link from a question about a
+                // piece of land to the charges on it. Without it the model can name only the charge whose deed text it happened to retrieve.
+                var latestEvents = await LatestPropertyEventsAsync(relevant.Select(c => c.ChargeId).ToList(), ct);
+                var propertyByCharge = latestEvents.ToDictionary(kv => kv.Key, kv => kv.Value.PropertyParticulars!);
+                // Gemini has already split each charge's particulars into properties with grounded survey numbers (stored, so no new call). Its reading and the
+                // regex reading are complementary: Gemini recovers long lists the regex stops early on, the regex finds numbers Gemini drops (on a sample of 300
+                // real addresses each found identifiers the other missed), so a charge's identifiers are both.
+                var extractions = await PropertyParticularsExtractionService.LoadCompletedAsync(db, latestEvents.Values, ct);
+                var idsByCharge = latestEvents.ToDictionary(kv => kv.Key, kv => ChargeIds(kv.Value, extractions));
+                var questionIds = PropertyIds(question);
+                var asksAboutProperty = AsksAboutProperty(question);
+                bool NamesProperty(RocCharge c) => questionIds.Count > 0 && idsByCharge.TryGetValue(c.ChargeId, out var charged)
+                    && SharesProperty(questionIds, charged);
                 bool Asked(RocCharge c) =>
                     (hints.LenderNameKeyword is { } lender && c.LatestChargeHolderRaw.Contains(lender, StringComparison.OrdinalIgnoreCase))
-                    || (hints.Year is { } year && (c.CreationDate?.Year == year || c.SatisfactionDate?.Year == year));
+                    || (hints.Year is { } year && (c.CreationDate?.Year == year || c.SatisfactionDate?.Year == year))
+                    || NamesProperty(c);
                 var listed = relevant.OrderByDescending(Asked).ThenByDescending(c => c.CurrentAmount ?? 0m).ThenBy(c => c.RocChargeNumber, StringComparer.Ordinal)
                     .Take(Math.Max(MaxChargeRows, relevant.Count(Asked))).ToList();
                 foreach (var c in listed.OrderByDescending(c => c.CurrentAmount ?? 0m).ThenBy(c => c.RocChargeNumber, StringComparer.Ordinal))
                     facts.Add(new StructuredFact("Charges",
                         $"Charge {c.RocChargeNumber}: Holder {c.LatestChargeHolderRaw}, Amount ₹{c.CurrentAmount} Cr, Status {c.ChargeStatus}"
                             + (c.CreationDate is { } created ? $", Created {created:yyyy-MM-dd}" : "")
-                            + (c.SatisfactionDate is { } sd ? $", Satisfied {sd:yyyy-MM-dd}" : ""),
+                            + (c.SatisfactionDate is { } sd ? $", Satisfied {sd:yyyy-MM-dd}" : "")
+                            + PropertyEvidence(c, propertyByCharge, idsByCharge, questionIds, asksAboutProperty),
                         "RocCharge", c.ChargeId));
                 if (listed.Count < relevant.Count)
                     facts.Add(new StructuredFact("Charges",
@@ -308,6 +324,181 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
                 : new StructuredFact("CompanyProfile", text, nameof(CompanyNameHistory), c.HistoryRow?.CompanyNameHistoryId, ingestionRunId));
         }
         return facts;
+    }
+
+    /// <summary>Characters of a charge's property particulars put in one prompt row.</summary>
+    internal const int MaxPropertyChars = 320;
+
+    /// <summary>What a charge row says about its property. When the charge was picked because its particulars share an identifier with the question, the row
+    /// names that identifier and quotes the passage around it (the identifier can sit far past the start of a long text, and a row without it would give the
+    /// model no evidence connecting the charge to the property); otherwise the start of the text, when the question is about a property at all.</summary>
+    private static string PropertyEvidence(RocCharge c, IReadOnlyDictionary<long, string> text, IReadOnlyDictionary<long, List<PropertyId>> idsByCharge,
+        IReadOnlyCollection<PropertyId> questionIds, bool asksAboutProperty)
+    {
+        if (!text.TryGetValue(c.ChargeId, out var property)) return "";
+        if (questionIds.Count > 0 && idsByCharge.TryGetValue(c.ChargeId, out var charged))
+        {
+            var (confirmed, candidates) = MatchedIds(questionIds, charged);
+            if (confirmed.Count > 0)
+                return $", Property per register (matches the question on {string.Join(", ", confirmed.Select(m => m.Label))}): {Excerpt(property, confirmed, MaxPropertyChars)}";
+            if (candidates.Count > 0)
+                return $", Property per register (POSSIBLE match only: it shares the number {string.Join(", ", candidates.Select(c => c.Text))} with the question but as a different kind of identifier, " +
+                    $"{string.Join(", ", candidates.Select(c => c.Label))} here against {string.Join(", ", questionIds.Where(q => candidates.Any(c => Compare(q, c) == PropertyMatch.Candidate)).Select(q => q.Label))} in the question; not established as the same parcel): {Excerpt(property, candidates, MaxPropertyChars)}";
+        }
+        return asksAboutProperty ? $", Property per register: {Clip(property, MaxPropertyChars)}" : "";
+    }
+
+    /// <summary>The charge's identifiers that the question names (same rule as <see cref="SharesProperty"/>).</summary>
+    internal static (List<PropertyId> Confirmed, List<PropertyId> Candidates) MatchedIds(IReadOnlyCollection<PropertyId> question, IReadOnlyCollection<PropertyId> particulars)
+    {
+        var confirmed = particulars.Where(p => question.Any(q => Compare(q, p) == PropertyMatch.Match)).ToList();
+        var candidates = particulars.Except(confirmed).Where(p => question.Any(q => Compare(q, p) == PropertyMatch.Candidate)).ToList();
+        return (confirmed, candidates);
+    }
+
+    /// <summary>The first <paramref name="max"/> characters, or, when the text is longer and one of the identifiers sits past that, the stretch around its first
+    /// occurrence, with an ellipsis where text was cut.</summary>
+    internal static string Excerpt(string text, IReadOnlyCollection<PropertyId> ids, int max)
+    {
+        var flat = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        if (flat.Length <= max) return flat;
+        var at = -1;
+        foreach (var id in ids)
+        {
+            var pattern = string.Join(@"\s*[/\-.]\s*", id.Text.Split('/', '-', '.').Select(System.Text.RegularExpressions.Regex.Escape));
+            var m = System.Text.RegularExpressions.Regex.Match(flat, @"(?<![\w/])" + pattern + @"(?![\d])", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (m.Success && (at < 0 || m.Index < at)) at = m.Index;
+        }
+        if (at < 0 || at + 40 <= max) return Clip(flat, max); // not found (e.g. only the stored extraction has it), or already inside the opening
+        var start = Math.Max(0, at - max / 3);
+        var end = Math.Min(flat.Length, start + max);
+        return (start > 0 ? "…" : "") + flat[start..end] + (end < flat.Length ? "…" : "");
+    }
+
+    private static string Clip(string text, int max)
+    {
+        var flat = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        return flat.Length <= max ? flat : flat[..max] + "…";
+    }
+
+    // Property identifiers as Indian address and deed text writes them (checked against ~143,000 delivered property addresses): a list introduced by a label
+    // (S NO, SY.NO., SURVEY NOS., RS NO, KH NO, KHASRA, KHATA, GAT, GUT, PLOT, FP, TPS, CTS, C.S.NO., RECT, HISSA), e.g. "S NO 358, 364" or
+    // "Survey Nos. 3/ 2840, 3/ 2841 & 2842". An identifier may be multi-part (3/2840, 43/1/3/2, 1-2-2870) and may end in one letter (2A, 204/P). Numbers are
+    // identifiers only here: a year, an area, a floor or a PIN code is never read as one because of its digits, but any number a label introduces is.
+    private const string IdPattern = @"(?>\d+)[A-Za-z]?(?![A-Za-z])(?:\s*[/\-.]\s*(?:(?>\d+)[A-Za-z]?(?![A-Za-z])|[A-Za-z](?![A-Za-z])))*";
+    private static readonly System.Text.RegularExpressions.Regex IdListAfterLabel = new(
+        @"(?<![A-Za-z])(?<lbl>r\.?\s*s\.?\s*nos?|re\.?\s*sy\.?\s*nos?|sy\.?\s*nos?|s\.?\s*nos?|survey(?:\s*(?:nos?|numbers?))?|kh\.?\s*nos?|khas+a?ra(?:\s*nos?)?|khat+h?a(?:\s*nos?)?"
+        + @"|gat|gut|plot(?:\s*nos?)?|f\.?\s*p(?:\s*nos?)?|t\.?\s*p\.?\s*s(?:\s*nos?)?|c\.?\s*t\.?\s*s(?:\s*nos?)?|c\.?\s*s\.?\s*nos?|rect(?:\s*nos?)?|hissa(?:\s*nos?)?|t\.?\s*s\.?\s*nos?)"
+        + @"(?![A-Za-z])(?:\s*(?:nos?|numbers?)(?![A-Za-z]))?[.:\-\s]*(" + IdPattern + @"(?:\s*(?:,|&|;|\+|and|to)\s*" + IdPattern + @")*)",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex OneId = new(IdPattern, System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex SlashPair = new(@"(?<![\w/])\d{1,3}\s*/\s*\d{3,6}(?![\d/])", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>A property identifier: its normalised text (spaces removed, upper case) and its numeric parts, so 3/2840 and 4/2840 are different identifiers.</summary>
+    internal readonly record struct PropertyId(string Text, string[] Parts, string Kind = "")
+    {
+        public bool IsBare => Parts.Length == 1;
+        public bool Equals(PropertyId other) => Text == other.Text && Kind == other.Kind;
+        public override int GetHashCode() => HashCode.Combine(Text, Kind);
+        /// <summary>"survey 42", "plot 3/2840", or just the number when the text gave no kind.</summary>
+        public string Label => Kind.Length == 0 ? Text : $"{Kind.ToLowerInvariant()} {Text}";
+    }
+
+    /// <summary>The kind of identifier a label introduces. Survey, CTS, plot, gat, khasra, khata, hissa and rect are different numbering systems: "plot 42" and "survey 42"
+    /// share a number, not a parcel.</summary>
+    internal static string KindOfLabel(string label)
+    {
+        var l = System.Text.RegularExpressions.Regex.Replace(label.ToLowerInvariant(), @"[^a-z]", "");
+        if (l.StartsWith("plot") || l.StartsWith("fp") || l.StartsWith("tps") || l.StartsWith("tp")) return "Plot";
+        if (l.StartsWith("cts") || l.StartsWith("cs") || l.StartsWith("tsno") || l.StartsWith("ts")) return "CTS";
+        if (l.StartsWith("gat") || l.StartsWith("gut")) return "Gat";
+        if (l.StartsWith("khas") || l.StartsWith("khno") || l.StartsWith("kh") && l.Length <= 4) return "Khasra";
+        if (l.StartsWith("khat")) return "Khata";
+        if (l.StartsWith("hissa")) return "Hissa";
+        if (l.StartsWith("rect")) return "Rect";
+        return "Survey";
+    }
+
+    internal static string KindOfScheme(string scheme) => scheme.Trim().ToLowerInvariant() switch
+    {
+        "cts" => "CTS", "plot" => "Plot", "gat" => "Gat", "khasra" => "Khasra", "survey" => "Survey", _ => ""
+    };
+
+    internal static List<PropertyId> PropertyIds(string? text)
+    {
+        var ids = new Dictionary<string, PropertyId>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(text)) return [];
+        void Add(string raw, string kind)
+        {
+            // Whatever a label introduces is an identifier, however short ("Survey No. 42") or long ("Survey No. 123456"): the text says it is one.
+            var normalised = System.Text.RegularExpressions.Regex.Replace(raw, @"\s+", "").ToUpperInvariant();
+            var parts = System.Text.RegularExpressions.Regex.Matches(normalised, @"\d+").Select(m => m.Value).ToArray();
+            if (parts.Length > 0) ids.TryAdd(kind + "|" + normalised, new PropertyId(normalised, parts, kind));
+        }
+        foreach (System.Text.RegularExpressions.Match list in IdListAfterLabel.Matches(text))
+            foreach (System.Text.RegularExpressions.Match one in OneId.Matches(list.Groups[1].Value)) Add(one.Value, KindOfLabel(list.Groups["lbl"].Value));
+        // a slash-joined pair names no kind by itself; it is added only when no label has already introduced it (3/2840 after "Survey Nos." is one identifier, not two)
+        foreach (System.Text.RegularExpressions.Match pair in SlashPair.Matches(text))
+            if (!ids.Values.Any(v => v.Text == System.Text.RegularExpressions.Regex.Replace(pair.Value, @"\s+", "").ToUpperInvariant())) Add(pair.Value, "");
+        return [.. ids.Values];
+    }
+
+    /// <summary>True when the question and a charge's particulars name the same parcel: an identical identifier, or a bare number on one side that is a part of
+    /// the other ("survey 2840" names 3/2840 and 4/2840; "3/2840" does not name 4/2840).</summary>
+    internal static bool SharesProperty(IReadOnlyCollection<PropertyId> question, IReadOnlyCollection<PropertyId> particulars) =>
+        question.Any(q => particulars.Any(p => Compare(q, p) != PropertyMatch.None));
+
+    internal enum PropertyMatch { None, Candidate, Match }
+
+    /// <summary>Same number: a <see cref="PropertyMatch.Match"/> when the two identifiers are the same kind (or either gave none), only a
+    /// <see cref="PropertyMatch.Candidate"/> when the kinds differ ("survey 42" and "plot 42" share a number, not necessarily a parcel).</summary>
+    internal static PropertyMatch Compare(PropertyId q, PropertyId p)
+    {
+        var sameNumber = p.Text == q.Text
+            || (q.IsBare && !p.IsBare && p.Parts.Contains(q.Parts[0]) && q.Parts[0].Length >= 3)
+            || (p.IsBare && !q.IsBare && q.Parts.Contains(p.Parts[0]) && p.Parts[0].Length >= 3);
+        if (!sameNumber) return PropertyMatch.None;
+        return q.Kind.Length == 0 || p.Kind.Length == 0 || q.Kind == p.Kind ? PropertyMatch.Match : PropertyMatch.Candidate;
+    }
+
+    /// <summary>True when the question is about a piece of land or other security, so every listed charge should show what it says about its property.</summary>
+    internal static bool AsksAboutProperty(string? question) => question is not null
+        && System.Text.RegularExpressions.Regex.IsMatch(question, @"\b(propert(y|ies)|land|plot|survey|CTS|premises|security|secured|collateral|asset|mortgage[ds]?)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>The most recent event of each charge that has property particulars (text and property type, which the stored extraction is keyed by).</summary>
+    private async Task<Dictionary<long, RocChargeEvent>> LatestPropertyEventsAsync(IReadOnlyCollection<long> chargeIds, CancellationToken ct)
+    {
+        if (chargeIds.Count == 0) return [];
+        var rows = await db.RocChargeEvents.AsNoTracking()
+            .Where(e => chargeIds.Contains(e.RocChargeId) && e.PropertyParticulars != null && e.PropertyParticulars != "")
+            .Select(e => new { e.RocChargeId, e.EventDate, e.ChargeEventId, e.PropertyParticulars, e.PropertyType }).ToListAsync(ct);
+        return rows.GroupBy(r => r.RocChargeId).ToDictionary(g => g.Key, g =>
+        {
+            var latest = g.OrderByDescending(r => r.EventDate).ThenByDescending(r => r.ChargeEventId).First();
+            return new RocChargeEvent { RocChargeId = latest.RocChargeId, PropertyParticulars = latest.PropertyParticulars, PropertyType = latest.PropertyType };
+        });
+    }
+
+    /// <summary>A charge's property identifiers: the regex reading of its particulars plus the survey numbers of its stored Gemini extraction, if any.</summary>
+    internal static List<PropertyId> ChargeIds(RocChargeEvent latest, IReadOnlyDictionary<string, PropertyParticularsExtraction> extractions)
+    {
+        var ids = PropertyIds(latest.PropertyParticulars);
+        if (PropertyParticularsAi.IsExtractable(latest.PropertyParticulars)
+            && extractions.TryGetValue(PropertyParticularsAi.HashOf(latest.PropertyParticulars!, latest.PropertyType), out var stored)
+            && PropertyParticularsAi.Deserialize(stored.ExtractionJson) is { } result)
+            foreach (var (scheme, number) in result.Properties.SelectMany(p => p.SurveyNumbers).SelectMany(g => g.Numbers.Select(n => (g.Scheme, n))))
+            {
+                var id = AsPropertyId(number, KindOfScheme(scheme));
+                if (id is { } parsed && !ids.Contains(parsed)) ids.Add(parsed);
+            }
+        return ids;
+    }
+
+    private static PropertyId? AsPropertyId(string number, string kind)
+    {
+        var normalised = System.Text.RegularExpressions.Regex.Replace(number, @"\s+", "").ToUpperInvariant();
+        var parts = System.Text.RegularExpressions.Regex.Matches(normalised, @"\d+").Select(m => m.Value).ToArray();
+        return parts.Length == 0 ? null : new PropertyId(normalised, parts, kind);
     }
 
     /// <summary>The company's current name and the names it has had, which a party list may use.</summary>

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using System.Security.Cryptography;
 using System.Text;
 using MCAROC_Analysis.Data.Entities;
@@ -185,6 +186,169 @@ public sealed class ChargeDocumentLinkBuilderTests : IAsyncLifetime, IDisposable
     {
         public readonly List<long> Requested = [];
         public override void Request(long batchId) => Requested.Add(batchId);
+    }
+
+    /// <summary>A batch whose linking keeps failing stays a candidate (it is still unstamped). Selecting the newest N on every sweep would retry the same ones
+    /// forever while older candidates were never tried before they left the window: due batches go oldest first, and a batch already tried waits its turn.</summary>
+    [Fact]
+    public void Recovery_rotates_through_every_candidate_so_failing_batches_cannot_starve_older_ones()
+    {
+        var kind = "rotate-" + Guid.NewGuid().ToString("N");
+        long[] oldestFirst = [11, 12, 13, 14, 15];
+        var t0 = new DateTime(2026, 10, 30, 9, 0, 0, DateTimeKind.Utc);
+
+        Assert.Equal([11L, 12L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0));
+        Assert.Equal([13L, 14L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0.AddMinutes(1)));   // the first two failed (still candidates) but wait their turn
+        Assert.Equal([15L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0.AddMinutes(2)));
+        Assert.Empty(ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0.AddMinutes(3)));                // all tried within the retry interval: nothing is due yet
+    }
+
+    /// <summary>Under a sustained backlog the oldest failing batches must not keep winning the limited slots: once the retry interval has passed, never-tried candidates
+    /// go before any retry, and retries go least recently tried first.</summary>
+    [Fact]
+    public void Recovery_serves_never_tried_batches_before_retries_and_retries_least_recently_tried_first()
+    {
+        var kind = "fair-" + Guid.NewGuid().ToString("N");
+        long[] oldestFirst = [1, 2, 3, 4, 5];
+        var t0 = new DateTime(2026, 10, 30, 9, 0, 0, DateTimeKind.Utc);
+        var later = ChargeDocumentLinkBuilder.RetryAfter + TimeSpan.FromMinutes(1);
+
+        Assert.Equal([1L, 2L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0));
+        Assert.Equal([3L, 4L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0 + later));              // 1 and 2 are due again, but 3 and 4 were never tried
+        Assert.Equal([5L, 1L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0 + later + later));      // 5 was never tried; then the least recently tried (1, from t0)
+        Assert.Equal([2L, 3L], ChargeDocumentLinkBuilder.TakeDue(kind, oldestFirst, 2, t0 + later + later + later)); // 2 (t0) before 3 (t0+later); 4, 5 and 1 were tried more recently
+    }
+
+    /// <summary>The query used to hand only the oldest <c>10 x limit</c> candidates to the rotation, so if those kept failing, later batches never entered it and could leave the
+    /// seven-day window unchecked. Every candidate in the window now enters it: with one request per sweep, repeated sweeps reach every unstamped recent batch, including
+    /// ones newer than the first ten.</summary>
+    [Fact]
+    public async Task Recovery_reaches_candidates_beyond_the_first_ten_times_the_limit()
+    {
+        await using var db = CreateContext();
+        var request = new McaRequest { ClientId = 1, EntityType = EntityType.Company, CompanyName = "Backlog Co", RequestNumber = $"BL-{Guid.NewGuid():N}",
+            RequestStatus = RequestStatus.DataExtracted, CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+        // 12 unstamped completed batches, all older than anything else a test may have left, so that with a limit of 1 the first ten are the oldest ten
+        var mine = new List<McaFilingBatch>();
+        for (var i = 0; i < 12; i++)
+            mine.Add(new McaFilingBatch { RequestId = request.RequestId, Status = FilingBatchStatus.Completed, StartedDate = DateTime.UtcNow.AddDays(-7),
+                CompletedDate = DateTime.UtcNow.AddDays(-6).AddMinutes(i) });
+        db.McaFilingBatches.AddRange(mine);
+        await db.SaveChangesAsync();
+        var scopes = new ServiceCollection().AddScoped(_ => CreateContext()).BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+        var builder = new RecordingScopedBuilder(scopes);
+        var wanted = mine.Select(b => b.BatchId).ToHashSet();
+
+        for (var sweep = 0; sweep < 5000 && !wanted.IsSubsetOf(builder.Requested); sweep++)
+            await builder.RecoverPendingAsync(CancellationToken.None, maxBatches: 1);
+
+        Assert.True(wanted.IsSubsetOf(builder.Requested), "a sweep must eventually reach every unstamped recent batch, however many are ahead of it");
+    }
+
+    private sealed class RecordingScopedBuilder(IServiceScopeFactory scopes) : ChargeDocumentLinkBuilder(scopes, null!, NullLogger<ChargeDocumentLinkBuilder>.Instance)
+    {
+        public readonly List<long> Requested = [];
+        public override void Request(long batchId) => Requested.Add(batchId);
+    }
+
+    /// <summary>The completion hook only queues an in-memory request, so a restart between the committed status and the run (or a failed run, which only
+    /// logs) left a completed batch with no links for good. Startup now asks again for recent completed batches that were never stamped.</summary>
+    [Fact]
+    public async Task Recovery_requests_linking_only_for_recently_completed_batches_that_were_never_stamped()
+    {
+        await using var db = CreateContext();
+        var request = new McaRequest { ClientId = 1, EntityType = EntityType.Company, CompanyName = "Recover Co", RequestNumber = $"RC-{Guid.NewGuid():N}",
+            RequestStatus = RequestStatus.DataExtracted, CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+        McaFilingBatch Batch(FilingBatchStatus status, DateTime? completed, string? stamp) => new()
+            { RequestId = request.RequestId, Status = status, StartedDate = DateTime.UtcNow.AddDays(-40), CompletedDate = completed, ChargeLinksStamp = stamp };
+        var lost = Batch(FilingBatchStatus.Completed, DateTime.UtcNow.AddHours(-2), null);
+        var lostWithErrors = Batch(FilingBatchStatus.CompletedWithErrors, DateTime.UtcNow.AddDays(-3), null);
+        var stamped = Batch(FilingBatchStatus.Completed, DateTime.UtcNow.AddHours(-2), "already-linked");
+        var old = Batch(FilingBatchStatus.Completed, DateTime.UtcNow.AddDays(-30), null);
+        var running = Batch(FilingBatchStatus.Processing, null, null);
+        db.McaFilingBatches.AddRange(lost, lostWithErrors, stamped, old, running);
+        await db.SaveChangesAsync();
+
+        var scopes = new ServiceCollection().AddScoped(_ => CreateContext()).BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+        var builder = new RecordingScopedBuilder(scopes);
+        var count = await builder.RecoverPendingAsync(CancellationToken.None, maxBatches: 1000);
+
+        Assert.Contains(lost.BatchId, builder.Requested);
+        Assert.Contains(lostWithErrors.BatchId, builder.Requested);
+        Assert.DoesNotContain(stamped.BatchId, builder.Requested);
+        Assert.DoesNotContain(old.BatchId, builder.Requested);
+        Assert.DoesNotContain(running.BatchId, builder.Requested);
+        Assert.Equal(builder.Requested.Count, count);
+    }
+
+    private sealed class RecordingScheduler(MCAROC_Analysis.Data.AppDbContext db, IServiceProvider services)
+        : ChargeInstrumentExtractionService(db, new ChargeInstrumentExtractionQueue(), Microsoft.Extensions.Options.Options.Create(new ChargeInstrumentExtractionOptions()),
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+                { ["GoogleCloud:ProjectId"] = "p", ["GoogleCloud:CredentialsPath"] = "c" }).Build(),
+            services, NullLogger<ChargeInstrumentExtractionService>.Instance)
+    {
+        public static readonly List<long> Scheduled = [];
+        public override Task<int> ScheduleForBatchAsync(long batchId, CancellationToken ct) { lock (Scheduled) Scheduled.Add(batchId); return Task.FromResult(1); }
+    }
+
+    /// <summary>The builder stamps before it schedules extraction, so recovery also re-schedules for stamped batches. It must pick only batches with a linked
+    /// document the scheduler would accept (readable text, not read from form data, no extraction at the current prompt version): batches whose only
+    /// unscheduled documents are ones the scheduler skips on purpose would stay candidates forever and starve the ones that need it.</summary>
+    [Fact]
+    public async Task Recovery_reschedules_extraction_only_for_batches_with_a_document_the_scheduler_would_accept()
+    {
+        await using var db = CreateContext();
+        var request = new McaRequest { ClientId = 1, EntityType = EntityType.Company, CompanyName = "Reschedule Co", RequestNumber = $"RS-{Guid.NewGuid():N}",
+            RequestStatus = RequestStatus.DataExtracted, CreatedDate = DateTime.UtcNow };
+        db.Requests.Add(request);
+        await db.SaveChangesAsync();
+
+        async Task<long> BatchWithLinkedDocumentAsync(string? textPath, TextExtractionMethod method, bool alreadyExtracted)
+        {
+            var batch = new McaFilingBatch { RequestId = request.RequestId, Status = FilingBatchStatus.Completed, StartedDate = DateTime.UtcNow.AddHours(-3),
+                CompletedDate = DateTime.UtcNow.AddHours(-2), ChargeLinksStamp = "stamped" };
+            db.McaFilingBatches.Add(batch);
+            await db.SaveChangesAsync();
+            var filing = new McaFiling { BatchId = batch.BatchId, RequestId = request.RequestId, Srn = "SRN-" + Guid.NewGuid().ToString("N")[..6], NestedZipName = "n.zip" };
+            db.McaFilings.Add(filing);
+            await db.SaveChangesAsync();
+            var doc = new McaFilingDocument
+            {
+                FilingId = filing.FilingId, BatchId = batch.BatchId, RequestId = request.RequestId, OriginalFileName = "deed.pdf", StoragePath = "",
+                ExtractedTextPath = textPath, FileHash = Guid.NewGuid().ToString("N"), ProcessingStatus = FilingDocumentProcessingStatus.Completed,
+                Category = FilingCategory.Charge, TextExtractionMethod = method, UpdatedAt = DateTime.UtcNow
+            };
+            db.McaFilingDocuments.Add(doc);
+            await db.SaveChangesAsync();
+            db.ChargeDocumentLinks.Add(new ChargeDocumentLink { RequestId = request.RequestId, BatchId = batch.BatchId, RocChargeNumber = "C-1",
+                FilingDocumentId = doc.FilingDocumentId, Method = ChargeDocumentLinkMethod.FileName });
+            if (alreadyExtracted)
+                db.ChargeInstrumentExtractions.Add(new ChargeInstrumentExtraction { RequestId = request.RequestId, FilingDocumentId = doc.FilingDocumentId,
+                    PromptVersion = ChargeInstrumentAi.PromptVersion, ModelId = "m", Status = ChargeInstrumentExtractionStatus.Completed, CreatedUtc = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+            return batch.BatchId;
+        }
+
+        var wanted = await BatchWithLinkedDocumentAsync("t.txt", TextExtractionMethod.Native, alreadyExtracted: false);
+        var formData = await BatchWithLinkedDocumentAsync("t.txt", TextExtractionMethod.Xfa, alreadyExtracted: false);   // read exactly from form data: skipped on purpose
+        var noText = await BatchWithLinkedDocumentAsync(null, TextExtractionMethod.Native, alreadyExtracted: false);     // nothing readable to quote
+        var done = await BatchWithLinkedDocumentAsync("t.txt", TextExtractionMethod.Native, alreadyExtracted: true);     // already extracted
+
+        var services = new ServiceCollection().AddScoped(_ => CreateContext())
+            .AddScoped<ChargeInstrumentExtractionService>(sp => new RecordingScheduler(sp.GetRequiredService<MCAROC_Analysis.Data.AppDbContext>(), sp))
+            .BuildServiceProvider();
+        RecordingScheduler.Scheduled.Clear();
+        var builder = new RecordingScopedBuilder(services.GetRequiredService<IServiceScopeFactory>());
+        await builder.RecoverPendingAsync(CancellationToken.None, maxBatches: 1000);
+
+        Assert.Contains(wanted, RecordingScheduler.Scheduled);
+        Assert.DoesNotContain(formData, RecordingScheduler.Scheduled);
+        Assert.DoesNotContain(noText, RecordingScheduler.Scheduled);
+        Assert.DoesNotContain(done, RecordingScheduler.Scheduled);
     }
 
     private static string Hash(string content) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content)));

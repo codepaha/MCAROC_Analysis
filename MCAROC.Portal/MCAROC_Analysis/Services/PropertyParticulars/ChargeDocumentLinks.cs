@@ -160,6 +160,70 @@ public class ChargeDocumentLinkBuilder(IServiceScopeFactory scopes, ChargeFormBa
             finally { _running.TryRemove(id, out _); }
         }));
 
+    /// <summary>Durable retry for the two steps the completion hook only requests in memory. For batches completed in the last seven days (so old data is not
+    /// swept into a mass re-extraction):
+    /// 1. never stamped: the linking request was lost (a restart between the committed status and the run, or a failed run, which only logs), so it is requested again;
+    /// 2. stamped, but a linked document has no extraction row: the builder stamps BEFORE it schedules extraction, so a crash or failure in between would
+    ///    otherwise never be retried; scheduling is idempotent and is run again.
+    /// Run at startup and periodically, so a transient failure during normal operation is retried too.</summary>
+    // Which batch was last tried, and when. A batch that keeps failing stays a candidate (it is still unstamped), so without this the same ones would be
+    // selected on every sweep and older candidates behind them would never be tried before they left the seven-day window. In memory on purpose: after a
+    // restart every candidate is due again, and what is a candidate at all is always decided by the database.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Kind, long BatchId), DateTime> LastTried = new();
+    internal static readonly TimeSpan RetryAfter = TimeSpan.FromMinutes(30);
+
+    /// <summary>Of the candidates (oldest first, as those leave the window first) the ones not tried within <see cref="RetryAfter"/>, at most
+    /// <paramref name="max"/>, recording the attempt. A failing batch waits its turn again while the others get theirs.</summary>
+    internal static List<long> TakeDue(string kind, IEnumerable<long> candidatesOldestFirst, int max, DateTime? at = null)
+    {
+        var now = at ?? DateTime.UtcNow;
+        // Never-tried candidates first (oldest completion first, as those leave the window first), then the least recently tried: a batch that keeps failing
+        // goes to the back of the line each time, so under a backlog every candidate gets its turn before any gets a second one.
+        var due = candidatesOldestFirst
+            .Select((id, order) => (id, order, last: LastTried.TryGetValue((kind, id), out var l) ? l : (DateTime?)null))
+            .Where(x => x.last is null || now - x.last.Value >= RetryAfter)
+            .OrderBy(x => x.last ?? DateTime.MinValue).ThenBy(x => x.order)
+            .Take(max).Select(x => x.id).ToList();
+        foreach (var id in due) LastTried[(kind, id)] = now;
+        return due;
+    }
+
+    public virtual async Task<int> RecoverPendingAsync(CancellationToken ct, int maxBatches = 200)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var since = DateTime.UtcNow.AddDays(-7);
+        var recent = db.McaFilingBatches.AsNoTracking()
+            .Where(b => (b.Status == FilingBatchStatus.Completed || b.Status == FilingBatchStatus.CompletedWithErrors) && b.CompletedDate >= since);
+
+        // Every candidate in the window (bounded), not just the newest few: fairness is decided by TakeDue, not by the query's limit.
+        var candidates = await recent.Where(b => b.ChargeLinksStamp == null).OrderBy(b => b.CompletedDate).ThenBy(b => b.BatchId)
+            .Select(b => b.BatchId).ToListAsync(ct);   // every candidate in the window (ids only): the rotation, not a query limit, decides who goes next
+        var unlinked = TakeDue("link", candidates, maxBatches);
+        foreach (var id in unlinked) Request(id);
+
+        var rescheduled = 0;
+        if (scope.ServiceProvider.GetService<ChargeInstrumentExtractionService>() is { IsActive: true } instruments)
+        {
+            // Only batches with a linked document the scheduler would actually accept (the same rule as ScheduleForBatchAsync: readable text, not read from
+            // form data) and no extraction at the current prompt version. A batch whose only unscheduled documents are ones the scheduler skips on purpose
+            // must not stay a candidate, or enough of them would starve the batches that need this; oldest first, as those leave the window first.
+            var unscheduled = await recent
+                .Where(b => b.ChargeLinksStamp != null && db.ChargeDocumentLinks.Any(l => l.BatchId == b.BatchId
+                    && db.McaFilingDocuments.Any(d => d.FilingDocumentId == l.FilingDocumentId && d.ExtractedTextPath != null && d.TextExtractionMethod != TextExtractionMethod.Xfa)
+                    && !db.ChargeInstrumentExtractions.Any(e => e.FilingDocumentId == l.FilingDocumentId && e.PromptVersion == ChargeInstrumentAi.PromptVersion)))
+                .OrderBy(b => b.CompletedDate).ThenBy(b => b.BatchId).Select(b => b.BatchId).ToListAsync(ct);
+            foreach (var id in TakeDue("extract", unscheduled, maxBatches))
+            {
+                try { rescheduled += await instruments.ScheduleForBatchAsync(id, ct) > 0 ? 1 : 0; }
+                catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Re-scheduling charge instrument extraction failed for batch {BatchId}", id); }
+            }
+        }
+        if (unlinked.Count + rescheduled > 0)
+            logger.LogInformation("Charge document recovery: linking requested for {Unlinked} batch(es), extraction re-scheduled for {Rescheduled}", unlinked.Count, rescheduled);
+        return unlinked.Count + rescheduled;
+    }
+
     internal async Task<int> RunAsync(long batchId, CancellationToken ct)
     {
         await backfill.RunSharedAsync(batchId);

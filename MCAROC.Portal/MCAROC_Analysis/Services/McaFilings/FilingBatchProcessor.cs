@@ -23,7 +23,8 @@ public class FilingBatchProcessor(
     ILogger<FilingBatchProcessor> logger,
     IOperationalSlotLeaseService? slotLeaseService = null,
     IOptions<LargeArchiveUploadOptions>? archiveOptions = null,
-    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null)
+    MCAROC_Analysis.Services.Storage.IStoragePathResolver? pathResolver = null,
+    MCAROC_Analysis.Services.PropertyParticulars.ChargeDocumentLinkBuilder? chargeLinks = null)
 {
     private readonly MCAROC_Analysis.Services.Storage.IStoragePathResolver _pathResolver =
         pathResolver ?? MCAROC_Analysis.Services.Storage.StoragePathHelper.Default;
@@ -839,6 +840,11 @@ public class FilingBatchProcessor(
         // the extracted text is stable and ready to chunk/embed — trigger that pipeline here rather than
         // per-document, since chunking wants the whole batch's text available together.
         documentChunkingQueue.Enqueue(batchId);
+
+        // #562: the batch's charge deeds are tied to their charges, and read for their property passages, as soon as the batch is complete — not when
+        // someone happens to open the request page (a large company's page never finished loading, so neither step ever ran).
+        try { chargeLinks?.Request(batchId); }
+        catch (Exception ex) { logger.LogWarning(ex, "Requesting charge document linking failed for batch {BatchId}", batchId); }
     }
 
     /// <summary>Recovers work left in a non-terminal state by a crash/restart: anything whose heartbeat
@@ -854,6 +860,13 @@ public class FilingBatchProcessor(
     /// in-flight work — this method doesn't do that (yet), so it recovers unconditionally.</summary>
     public async Task<int> RecoverStaleWorkAsync(CancellationToken ct)
     {
+        // #562: a batch that completed but whose charge-document linking request was lost (restart in between, or a failed run) gets it again.
+        if (chargeLinks is not null)
+        {
+            try { await chargeLinks.RecoverPendingAsync(ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning(ex, "Recovering pending charge document linking failed"); }
+        }
+
         // Also covers a crash mid-unpack (Unpacking/Indexing), not just before it ever started (Uploaded).
         // IndexNestedZipAsync is idempotent (skips a nested zip it already indexed), and UnpackBatchAsync's
         // own post-unpack enqueue only targets still-Discovered documents, so re-running it from the top
