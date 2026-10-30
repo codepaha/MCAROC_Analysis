@@ -99,7 +99,7 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
     // Survey numbers repeat from village to village: 101 and 102 are numbers in every revenue village. When the question says where the land is, a document that names the same
     // numbers must also show that place, or it is only a candidate. A location term is a capitalised phrase ("Lower Parel") or a distinctive capitalised word of 8 or more letters
     // ("Mathuradas"); common words and the vocabulary of the question itself are not places.
-    private static readonly Regex Capitalised = new(@"\b[A-Z][a-z]{3,}(?:\s+[A-Z][a-z]{3,})*", RegexOptions.Compiled);
+    private static readonly Regex Capitalised = new(@"\b(?:[A-Z][a-z]{3,}|[A-Z]{4,})(?:\s+(?:[A-Z][a-z]{3,}|[A-Z]{4,}))*", RegexOptions.Compiled);   // Title Case or UPPER CASE words
     private static readonly HashSet<string> NotPlaces = new(StringComparer.OrdinalIgnoreCase)
     {
         "which", "what", "where", "does", "documents", "document", "survey", "land", "property", "plot", "charge", "charges", "deed", "deeds", "district", "registration", "agricultural",
@@ -268,10 +268,13 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
         public Verdict Decide()
         {
             var areaHit = Areas.Count > 0;
-            // two identifiers confirm only where the question's place is also shown; without a place in the question they stand on their own
-            if (Ids.Count >= 2 && (!RequiresPlace || Places.Count > 0 || NameHit)) return Verdict.Confirmed;
-            if (areaHit && (NameHit || Ids.Count >= 1)) return Verdict.Confirmed;
-            if (NameHit && Ids.Count >= 1) return Verdict.Confirmed;
+            // Identifiers recur from village to village, so every route that rests on them needs the question's place when the question gives one; without a place in the
+            // question they stand on their own. An area with the property's name does not rest on identifiers.
+            var placeOk = !RequiresPlace || Places.Count > 0;
+            if (Ids.Count >= 2 && placeOk) return Verdict.Confirmed;
+            if (areaHit && NameHit) return Verdict.Confirmed;
+            if (areaHit && Ids.Count >= 1 && placeOk) return Verdict.Confirmed;
+            if (NameHit && Ids.Count >= 1 && placeOk) return Verdict.Confirmed;
             // one identifier alone, an area with its unit alone, or a number shared across kinds of identifier: it may be the property, it is not established
             if (Ids.Count >= 1 || areaHit || OtherKindIds.Count > 0) return Verdict.Candidate;
             return Verdict.No;   // the name alone, or nothing

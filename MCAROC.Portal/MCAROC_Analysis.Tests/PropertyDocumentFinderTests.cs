@@ -86,6 +86,8 @@ public class PropertyDocumentFinderTests
         // the same survey numbers, in another village: revenue survey numbers repeat from village to village, so the numbers alone do not make it this land
         await AddAsync("Wrong-village-deed.pdf", "Instrument of Charge",
             (1, "Schedule: all that land bearing Survey Nos. 3/2840 and 3/2841 situated at Village Kondhwa, Taluka Haveli, District Pune, with the building thereon."));
+        await AddAsync("Area-and-id-elsewhere.pdf", "Instrument of Charge",
+            (1, "Land at Village Kondhwa, Pune, survey no. 3/2840, admeasuring 2152.25 sq yds."));
         await AddAsync("Plot-document.pdf", "Instrument of Charge",
             (1, "Shop on plot no. 4242 of the industrial estate at Thane, mortgaged to the lender."));
         await AddAsync("Unrelated.pdf", "Financial Statements", (1, "Balance sheet as at 31 March. Revenue from operations. Notes to accounts."));
@@ -241,7 +243,7 @@ public class PropertyDocumentFinderTests
 
         Assert.Equal("survey 2840", found.OnlyIdentifier);
         Assert.All(found.Documents, d => Assert.False(d.Confirmed));
-        Assert.Equal(["Deed-of-Mortgage.pdf", "Form-CHG-8.pdf", "Wrong-village-deed.pdf"], found.Documents.Select(d => d.Name).Order().ToList());
+        Assert.Equal(["Area-and-id-elsewhere.pdf", "Deed-of-Mortgage.pdf", "Form-CHG-8.pdf", "Wrong-village-deed.pdf"], found.Documents.Select(d => d.Name).Order().ToList());
         Assert.DoesNotContain(found.Documents, d => d.Name is "Shareholder-list.pdf" or "Certificate-2840.pdf");   // an unlabelled number is no identifier
         Assert.Contains("only one identifier (survey 2840)", facts[0].Text);
         Assert.Contains(facts, f => f.Text.StartsWith("Candidate document (possible match only, identity not established): Deed-of-Mortgage.pdf"));
@@ -266,6 +268,31 @@ public class PropertyDocumentFinderTests
 
         var noPlace = await new PropertyDocumentFinder(db).FindAsync(s.RequestId, s.BatchId, "Which documents bear survey nos. 3/2840 and 3/2841?", CancellationToken.None);
         Assert.True(noPlace.Documents.Single(d => d.Name == "Wrong-village-deed.pdf").Confirmed);                    // nothing in the question to tell the villages apart
+    }
+
+    [Theory]
+    [InlineData("Which documents bear survey nos. 3/2840 and 3/2841 at LOWER PAREL?")]
+    [InlineData("Which documents bear survey nos. 3/2840 and 3/2841 at Lower Parel, Mumbai?")]
+    public async Task The_place_is_recognised_in_upper_case_and_applies_to_every_identifier_route(string question)
+    {
+        await using var db = CreateContext();
+        var s = await SeedAsync(db);
+
+        var found = await new PropertyDocumentFinder(db).FindAsync(s.RequestId, s.BatchId, question, CancellationToken.None);
+
+        Assert.True(found.Documents.Single(d => d.Name == "Deed-of-Mortgage.pdf").Confirmed);
+        Assert.False(found.Documents.Single(d => d.Name == "Wrong-village-deed.pdf").Confirmed);
+    }
+
+    [Fact]
+    public async Task An_area_or_a_name_with_an_identifier_does_not_bypass_the_place()
+    {
+        await using var db = CreateContext();
+        var s = await SeedAsync(db);
+
+        var found = await new PropertyDocumentFinder(db).FindAsync(s.RequestId, s.BatchId, Question, CancellationToken.None);
+
+        Assert.False(found.Documents.Single(d => d.Name == "Area-and-id-elsewhere.pdf").Confirmed);
     }
 
     /// <summary>The 600 chunks read may hold the digits but no qualifying identifier while a qualifying document lies beyond the limit; the model must still be told the search stopped early.</summary>
