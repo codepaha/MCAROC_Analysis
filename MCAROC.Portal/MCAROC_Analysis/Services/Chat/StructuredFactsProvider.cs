@@ -445,7 +445,9 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
         }
         foreach (System.Text.RegularExpressions.Match list in IdListAfterLabel.Matches(text))
             foreach (System.Text.RegularExpressions.Match one in OneId.Matches(list.Groups[1].Value)) Add(one.Value, KindOfLabel(list.Groups["lbl"].Value));
-        foreach (System.Text.RegularExpressions.Match pair in SlashPair.Matches(text)) Add(pair.Value, "");   // a slash-joined pair names no kind by itself
+        // a slash-joined pair names no kind by itself; it is added only when no label has already introduced it (3/2840 after "Survey Nos." is one identifier, not two)
+        foreach (System.Text.RegularExpressions.Match pair in SlashPair.Matches(text))
+            if (!ids.Values.Any(v => v.Text == System.Text.RegularExpressions.Regex.Replace(pair.Value, @"\s+", "").ToUpperInvariant())) Add(pair.Value, "");
         return [.. ids.Values];
     }
 
