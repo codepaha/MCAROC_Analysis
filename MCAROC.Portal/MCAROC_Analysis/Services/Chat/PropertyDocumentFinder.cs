@@ -105,8 +105,20 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
         "which", "what", "where", "does", "documents", "document", "survey", "land", "property", "plot", "charge", "charges", "deed", "deeds", "district", "registration", "agricultural",
         "admeasuring", "corresponding", "larger", "known", "forming", "part", "bearing", "ward", "show", "give", "list", "about", "there", "every", "these", "those", "please", "their",
         "this", "that", "also", "form", "forms", "certificate", "certificates", "letter", "letters", "satisfaction", "mortgage", "hypothecation", "square", "yards", "meters", "metres",
-        "piece", "parcel", "sub", "with", "from", "when", "have", "been", "were", "mention", "concern", "relate", "related", "company"
+        "piece", "parcel", "sub", "with", "from", "when", "have", "been", "were", "mention", "concern", "relate", "related", "company",
+        "find", "tell", "check", "search", "any", "are", "the", "and", "for", "nos", "number", "numbers", "area", "sqft", "sqmt", "sqyd", "extent", "situated", "located", "lying",
+        "details", "whether", "title", "other", "such", "same", "exist", "exists", "available", "filed", "filing", "filings"
     };
+    // a place can be given in any case and any length ("lower parel", "PUNE"): the words after a locating cue are read as the place whatever their capitalisation
+    private static readonly Regex PlaceCue = new(@"\b(?:at|in|near|within|village|taluka|tehsil|district|city|town|locality|ward|nagar)\s+([A-Za-z][A-Za-z.\-]*(?:\s+[A-Za-z][A-Za-z.\-]*){0,2})", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // the phrase, each pair of neighbouring words ("lower parel mumbai" -> "lower parel", "parel mumbai") and each long distinctive word: a document seldom repeats the whole phrase
+    private static void AddPlace(List<string> terms, List<string> words)
+    {
+        terms.Add(string.Join(" ", words));
+        for (var i = 0; i + 1 < words.Count; i++) terms.Add(words[i] + " " + words[i + 1]);
+        if (words.Count > 1) terms.AddRange(words.Where(w => w.Length >= 6));
+    }
 
     internal static List<string> LocationsIn(string question)
     {
@@ -117,8 +129,19 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
             while (words.Count > 0 && NotPlaces.Contains(words[0])) words.RemoveAt(0);
             while (words.Count > 0 && NotPlaces.Contains(words[^1])) words.RemoveAt(words.Count - 1);
             if (words.Count == 0) continue;
-            if (words.Count >= 2) terms.Add(string.Join(" ", words));
-            terms.AddRange(words.Where(w => w.Length >= 8 && !NotPlaces.Contains(w)));
+            AddPlace(terms, words);
+        }
+        foreach (Match m in PlaceCue.Matches(question))
+        {
+            var words = new List<string>();
+            foreach (var w in m.Groups[1].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var word = w.Trim('.', '-');
+                if (word.Length < 3 || NotPlaces.Contains(word)) { if (words.Count == 0) continue; break; }
+                words.Add(word);
+            }
+            if (words.Count == 0) continue;
+            AddPlace(terms, words);
         }
         return terms.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
@@ -138,7 +161,10 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
             head = words[0].TrimEnd('s', 'S');
             break;
         }
-        return new(ids, areas, name, head, LocationsIn(question));
+        // the property's own name is not where it is: a compound of the same name elsewhere must not pass for the place
+        var nameWords = Quoted.Matches(question).SelectMany(m => m.Groups[1].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries)).Select(w => w.TrimEnd('s', 'S')).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var places = LocationsIn(question).Where(l => !l.Split(' ').All(w => nameWords.Contains(w.TrimEnd('s', 'S')))).ToList();
+        return new(ids, areas, name, head, places);
     }
 
     public async Task<PropertyDocumentSearch> FindAsync(long requestId, long? batchId, string? question, CancellationToken ct)
@@ -269,10 +295,10 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
         {
             var areaHit = Areas.Count > 0;
             // Identifiers recur from village to village, so every route that rests on them needs the question's place when the question gives one; without a place in the
-            // question they stand on their own. An area with the property's name does not rest on identifiers.
+            // question they stand on their own. The property's name alone is not a place.
             var placeOk = !RequiresPlace || Places.Count > 0;
             if (Ids.Count >= 2 && placeOk) return Verdict.Confirmed;
-            if (areaHit && NameHit) return Verdict.Confirmed;
+            if (areaHit && NameHit && placeOk) return Verdict.Confirmed;
             if (areaHit && Ids.Count >= 1 && placeOk) return Verdict.Confirmed;
             if (NameHit && Ids.Count >= 1 && placeOk) return Verdict.Confirmed;
             // one identifier alone, an area with its unit alone, or a number shared across kinds of identifier: it may be the property, it is not established

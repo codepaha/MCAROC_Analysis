@@ -77,7 +77,7 @@ public class PropertyDocumentFinderTests
             (1, "Mortgage of land admeasuring 2152.25 square metres forming part of the Mathuradas Mills Compound."));
         // the same land given only in metres: 2,152.25 sq yards is 1,799.6 sq m, which the letter rounds to 1800
         await AddAsync("Metric-only-letter.pdf", "Charge Satisfaction Letter",
-            (1, "The lender has no claim over land admeasuring 1800.00 sq mtrs forming part of the Mathuradas Mills Compound."));
+            (1, "The lender has no claim over land admeasuring 1800.00 sq mtrs forming part of the Mathuradas Mills Compound at Lower Parel."));
         // the property is named in one chunk and its extent, in metres only, in another: no search term for "1800" could find the second, but reading the document does
         await AddAsync("Two-chunk-deed.pdf", "Instrument of Charge",
             (1, "Schedule: the property known as the Mathuradas Mills Compound at Lower Parel, as described in the title papers."),
@@ -88,6 +88,8 @@ public class PropertyDocumentFinderTests
             (1, "Schedule: all that land bearing Survey Nos. 3/2840 and 3/2841 situated at Village Kondhwa, Taluka Haveli, District Pune, with the building thereon."));
         await AddAsync("Area-and-id-elsewhere.pdf", "Instrument of Charge",
             (1, "Land at Village Kondhwa, Pune, survey no. 3/2840, admeasuring 2152.25 sq yds."));
+        await AddAsync("Same-name-elsewhere.pdf", "Instrument of Charge",
+            (1, "The Mathuradas Mills Compound at Village Kondhwa, Pune, admeasuring 2152.25 sq yds."));
         await AddAsync("Plot-document.pdf", "Instrument of Charge",
             (1, "Shop on plot no. 4242 of the industrial estate at Thane, mortgaged to the lender."));
         await AddAsync("Unrelated.pdf", "Financial Statements", (1, "Balance sheet as at 31 March. Revenue from operations. Notes to accounts."));
@@ -273,6 +275,8 @@ public class PropertyDocumentFinderTests
     [Theory]
     [InlineData("Which documents bear survey nos. 3/2840 and 3/2841 at LOWER PAREL?")]
     [InlineData("Which documents bear survey nos. 3/2840 and 3/2841 at Lower Parel, Mumbai?")]
+    [InlineData("which documents bear survey nos. 3/2840 and 3/2841 at lower parel")]
+    [InlineData("survey nos 3/2840 and 3/2841 in lower parel mumbai")]
     public async Task The_place_is_recognised_in_upper_case_and_applies_to_every_identifier_route(string question)
     {
         await using var db = CreateContext();
@@ -293,6 +297,7 @@ public class PropertyDocumentFinderTests
         var found = await new PropertyDocumentFinder(db).FindAsync(s.RequestId, s.BatchId, Question, CancellationToken.None);
 
         Assert.False(found.Documents.Single(d => d.Name == "Area-and-id-elsewhere.pdf").Confirmed);
+        Assert.False(found.Documents.Single(d => d.Name == "Same-name-elsewhere.pdf").Confirmed);      // the same compound name and area, located elsewhere
     }
 
     /// <summary>The 600 chunks read may hold the digits but no qualifying identifier while a qualifying document lies beyond the limit; the model must still be told the search stopped early.</summary>
