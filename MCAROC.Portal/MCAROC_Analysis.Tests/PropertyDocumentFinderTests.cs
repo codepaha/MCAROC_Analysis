@@ -163,8 +163,35 @@ public class PropertyDocumentFinderTests
         var facts = await new PropertyDocumentFinder(db).FactsAsync(s.RequestId, s.BatchId, Question, CancellationToken.None);
 
         var header = facts.First(f => f.Text.Contains("document(s) on file"));
-        Assert.Contains("This is every such document", header.Text);
+        Assert.Contains("This is every such document that names the property or one of its identifiers", header.Text);
         Assert.Contains("One gap: a document that states the area only in another unit", header.Text);
+    }
+
+    /// <summary>The gap matters most when nothing is found: the only relevant document may give its area in another unit and be missed. The model must be told so even then.</summary>
+    [Theory]
+    [InlineData("Which documents mention land admeasuring 9999.99 sq yards?", "No document on file was found")]   // nothing matches at all
+    [InlineData("Which documents mention land admeasuring 2152.25 sq yards?", "No document on file was confirmed")] // an area with its unit alone: candidates only
+    public async Task The_area_gap_is_stated_when_no_document_is_confirmed(string question, string expected)
+    {
+        await using var db = CreateContext();
+        var s = await SeedAsync(db);
+
+        var facts = await new PropertyDocumentFinder(db).FactsAsync(s.RequestId, s.BatchId, question, CancellationToken.None);
+
+        var gap = Assert.Single(facts, f => f.Text.Contains("One gap:"));
+        Assert.StartsWith(expected, gap.Text);
+        Assert.DoesNotContain(facts, f => f.Text.Contains("This is every such document"));
+    }
+
+    [Fact]
+    public async Task A_question_with_no_area_and_no_result_adds_no_gap_note()
+    {
+        await using var db = CreateContext();
+        var s = await SeedAsync(db);
+
+        var facts = await new PropertyDocumentFinder(db).FactsAsync(s.RequestId, s.BatchId, "Which documents mention survey no. 987654?", CancellationToken.None);
+
+        Assert.Empty(facts);
     }
 
     [Fact]
@@ -277,7 +304,7 @@ public class PropertyDocumentFinderTests
         Assert.Contains("list EVERY \"Document:\" fact", prompt);
         Assert.Contains("never answer that no charge was satisfied while such a fact says otherwise", prompt);
         Assert.Contains("\"At least N document(s) ...\" (the search reached its limit, or could not use some identifiers) is NOT complete", prompt);
-        Assert.Contains("\"One gap:\"", prompt);
+        Assert.Contains("contains a sentence beginning \"One gap:\"", prompt);
         Assert.Contains("\"Candidate document (possible match only, identity not established)\" facts are only possible matches", prompt);
         Assert.Contains("\"The question names only one identifier\" means the documents cannot be established", prompt);
         Assert.Contains("\"These identifiers in the question were NOT searched\" means those identifiers could not be used", prompt);

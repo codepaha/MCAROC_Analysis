@@ -244,7 +244,8 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
         var search = await FindAsync(requestId, batchId, question, ct);
         var confirmed = search.Documents.Where(d => d.Confirmed).ToList();
         var candidates = search.Documents.Where(d => !d.Confirmed).ToList();
-        if (confirmed.Count == 0 && candidates.Count == 0 && search.Unsearched.Count == 0) return [];
+        if (confirmed.Count == 0 && candidates.Count == 0 && search.Unsearched.Count == 0 && !search.AreaOnlyInOtherUnitsNotSearched) return [];
+        const string AreaGap = "One gap: a document that states the area only in another unit (for example square metres where the question gave square yards) and names neither the property nor one of its identifiers is not searched for.";
 
         var facts = new List<StructuredFact>();
         if (search.Unsearched.Count > 0)
@@ -258,11 +259,16 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
                 ? $"At least {confirmed.Count} document(s) on file whose own text describes the property the question names. The search reached its limit, so there may be more such documents than are listed: do not describe this list as complete."
                 : search.Unsearched.Count > 0
                     ? $"At least {confirmed.Count} document(s) on file whose own text describes the property the question names. The search could not use some identifiers ({string.Join(", ", search.Unsearched)}), so there may be more such documents than are listed: do not describe this list as complete."
-                    : $"{confirmed.Count} document(s) on file whose own text describes the property the question names. This is every such document in the current filing batch, not a sample; " +
-                      "a charge shown as Satisfied here is a charge on this property that has been released." +
+                    : $"{confirmed.Count} document(s) on file whose own text describes the property the question names. " +
                       (search.AreaOnlyInOtherUnitsNotSearched
-                          ? " One gap: a document that states the area only in another unit (for example square metres where the question gave square yards) and names neither the property nor one of its identifiers is not searched for."
-                          : ""), null, null));
+                          ? "This is every such document that names the property or one of its identifiers (the area is checked, in any unit, in those documents), not a sample; "
+                          : "This is every such document in the current filing batch, not a sample; ") +
+                      "a charge shown as Satisfied here is a charge on this property that has been released." +
+                      (search.AreaOnlyInOtherUnitsNotSearched ? " " + AreaGap : ""), null, null));
+        // No confirmed document: the gap still matters. Nothing found, or only candidates, does not rule out a document that gives the area in another unit.
+        if (confirmed.Count == 0 && search.AreaOnlyInOtherUnitsNotSearched)
+            facts.Add(new("Documents", (candidates.Count == 0 ? "No document on file was found that describes the property the question names. " : "No document on file was confirmed as describing the property the question names. ") + AreaGap, null, null));
+        if (confirmed.Count > 0) { }
         else if ((search.Truncated || search.Unsearched.Count > 0) && candidates.Count > 0)
             facts.Add(new("Documents", "The candidate documents below may not be all of them: the search reached its limit or could not use some identifiers.", null, null));
 
