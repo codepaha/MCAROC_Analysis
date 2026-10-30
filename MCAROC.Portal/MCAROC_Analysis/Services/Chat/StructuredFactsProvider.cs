@@ -173,6 +173,14 @@ public class StructuredFactsProvider(AppDbContext db, IMemoryCache? cache = null
             }
         }
 
+        // A question that names a property (identifiers, an area figure or a quoted name): every document of the current filing batch whose own text describes
+        // it, with the charge each belongs to and whether that charge is still open. Retrieval alone cannot say which documents concern a property (#564).
+        if (!string.IsNullOrWhiteSpace(question))
+        {
+            var authoritative = await MCAROC_Analysis.Services.McaFilings.McaFilingBatchResolver.GetAuthoritativeBatchAsync(db, requestId, ct);
+            facts.AddRange(await new PropertyDocumentFinder(db).FactsAsync(requestId, authoritative?.BatchId, question, ct));
+        }
+
         var gstRegs = await db.GstRegistrations.Where(x => x.IngestionRunId == ingestionRunId).ToListAsync(ct);
         if (gstRegs.Count > 0)
         {
