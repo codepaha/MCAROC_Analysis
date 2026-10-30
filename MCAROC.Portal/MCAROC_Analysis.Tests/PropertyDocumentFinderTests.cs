@@ -72,6 +72,12 @@ public class PropertyDocumentFinderTests
             (1, "ANR INVESTMENTS LTD  67 IDEAL INDUSTRIAL ESTATE  2ND FLOOR MATHURADAS MILL COMPOUND  126 N M JOSHI MARG  LOWER PAREL  MUMBAI  100 shares"));
         await AddAsync("Loan-sanction.pdf", "Sanction Letter",
             (1, "Term loan of Rs 2152.25 lakhs sanctioned for working capital against hypothecation of stocks; interest at 12.5% per annum."));
+        // the same digits in a different unit are a different (larger) parcel, not this one
+        await AddAsync("Other-parcel.pdf", "Instrument of Charge",
+            (1, "Mortgage of land admeasuring 2152.25 square metres forming part of the Mathuradas Mills Compound."));
+        // the same land given only in metres: 2,152.25 sq yards is 1,799.6 sq m, which the letter rounds to 1800
+        await AddAsync("Metric-only-letter.pdf", "Charge Satisfaction Letter",
+            (1, "The lender has no claim over land admeasuring 1800.00 sq mtrs forming part of the Mathuradas Mills Compound."));
         await AddAsync("Plot-document.pdf", "Instrument of Charge",
             (1, "Shop on plot no. 4242 of the industrial estate at Thane, mortgaged to the lender."));
         await AddAsync("Unrelated.pdf", "Financial Statements", (1, "Balance sheet as at 31 March. Revenue from operations. Notes to accounts."));
@@ -87,11 +93,26 @@ public class PropertyDocumentFinderTests
         var found = await new PropertyDocumentFinder(db).FindAsync(s.RequestId, s.BatchId, Question, CancellationToken.None);
 
         Assert.False(found.Truncated);
-        Assert.Equal(["Deed-of-Mortgage.pdf", "Form-CHG-8.pdf", "HDFC-NoC.pdf"], found.Documents.Where(d => d.Confirmed).Select(d => d.Name).Order().ToList());
-        Assert.DoesNotContain(found.Documents, d => d.Name is "Shareholder-list.pdf" or "Certificate-2840.pdf" or "Shareholder-at-the-compound.pdf" or "Loan-sanction.pdf" or "Unrelated.pdf");
+        Assert.Equal(["Deed-of-Mortgage.pdf", "Form-CHG-8.pdf", "HDFC-NoC.pdf", "Metric-only-letter.pdf"], found.Documents.Where(d => d.Confirmed).Select(d => d.Name).Order().ToList());
+        Assert.DoesNotContain(found.Documents, d => d.Name is "Shareholder-list.pdf" or "Certificate-2840.pdf" or "Shareholder-at-the-compound.pdf" or "Loan-sanction.pdf" or "Unrelated.pdf" or "Other-parcel.pdf");
         var deed = found.Documents.Single(d => d.Name == "Deed-of-Mortgage.pdf");
         Assert.Equal([12], deed.Pages);                                    // only the page that describes the land, not the boilerplate page
         Assert.Contains(found.Documents.Single(d => d.Name == "HDFC-NoC.pdf").Matched, m => m.StartsWith("the area") || m == "the property's name");
+    }
+
+    /// <summary>"2152.25 square metres" and "2152.25 square yards" share digits, not an area (the first is about 1.2 times larger). Areas match in the same unit or converted.</summary>
+    [Fact]
+    public async Task An_area_matches_in_the_same_unit_or_converted_never_by_its_digits_alone()
+    {
+        await using var db = CreateContext();
+        var s = await SeedAsync(db);
+
+        var found = await new PropertyDocumentFinder(db).FindAsync(s.RequestId, s.BatchId, Question, CancellationToken.None);
+
+        Assert.DoesNotContain(found.Documents, d => d.Name == "Other-parcel.pdf");                        // same digits, square metres: another, larger parcel
+        var metric = found.Documents.Single(d => d.Name == "Metric-only-letter.pdf");                     // different digits and unit, the same area once converted
+        Assert.True(metric.Confirmed);
+        Assert.Contains(metric.Matched, m => m.StartsWith("the area 2152.25 yd2"));
     }
 
     [Fact]
@@ -145,6 +166,21 @@ public class PropertyDocumentFinderTests
         Assert.DoesNotContain(facts, f => f.Text.Contains("This is every such document"));
     }
 
+    /// <summary>A one- or two-digit number recurs on almost every page, so it cannot be searched on its own. The result must say so rather than return nothing silently.</summary>
+    [Fact]
+    public async Task A_short_identifier_is_reported_as_not_searched_not_silently_ignored()
+    {
+        await using var db = CreateContext();
+        var s = await SeedAsync(db);
+
+        var found = await new PropertyDocumentFinder(db).FindAsync(s.RequestId, s.BatchId, "Which documents mention survey no. 42?", CancellationToken.None);
+        var facts = await new PropertyDocumentFinder(db).FactsAsync(s.RequestId, s.BatchId, "Which documents mention survey no. 42?", CancellationToken.None);
+
+        Assert.Empty(found.Documents);
+        Assert.Equal(["survey 42"], found.Unsearched);
+        Assert.Contains("NOT searched: survey 42", Assert.Single(facts).Text);
+    }
+
     [Fact]
     public async Task A_number_shared_across_kinds_of_identifier_is_only_a_candidate()
     {
@@ -160,13 +196,14 @@ public class PropertyDocumentFinderTests
     }
 
     [Theory]
-    [InlineData(1, 600, "documents")]   // more qualifying documents than may be returned
-    [InlineData(25, 1, "chunks")]       // more matching chunks for a term than may be read
-    public async Task A_search_that_hits_a_limit_says_so_and_is_never_called_complete(int maxDocuments, int maxChunksPerTerm, string limit)
+    [InlineData(1, 600, 40, "documents")]   // more qualifying documents than may be returned
+    [InlineData(25, 1, 40, "chunks")]       // more matching chunks for a term than may be read
+    [InlineData(25, 600, 2, "terms")]       // more search terms (identifiers, areas) than may be searched: documents found only through an omitted one would be missed
+    public async Task A_search_that_hits_a_limit_says_so_and_is_never_called_complete(int maxDocuments, int maxChunksPerTerm, int maxTerms, string limit)
     {
         await using var db = CreateContext();
         var s = await SeedAsync(db);
-        var finder = new PropertyDocumentFinder(db, maxChunksPerTerm, maxDocuments);
+        var finder = new PropertyDocumentFinder(db, maxChunksPerTerm, maxDocuments, maxTerms);
 
         var found = await finder.FindAsync(s.RequestId, s.BatchId, Question, CancellationToken.None);
         var facts = await finder.FactsAsync(s.RequestId, s.BatchId, Question, CancellationToken.None);
@@ -190,6 +227,7 @@ public class PropertyDocumentFinderTests
         Assert.Contains("\"At least N document(s) ... reached its limit\" is NOT complete", prompt);
         Assert.Contains("\"Candidate document (possible match only, identity not established)\" facts are only possible matches", prompt);
         Assert.Contains("\"The question names only one identifier\" means the documents cannot be established", prompt);
+        Assert.Contains("\"These identifiers in the question were NOT searched\" means those identifiers could not be used", prompt);
     }
 
     [Theory]
