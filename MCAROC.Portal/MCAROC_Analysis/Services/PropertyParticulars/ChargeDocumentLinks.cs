@@ -198,7 +198,7 @@ public class ChargeDocumentLinkBuilder(IServiceScopeFactory scopes, ChargeFormBa
 
         // Every candidate in the window (bounded), not just the newest few: fairness is decided by TakeDue, not by the query's limit.
         var candidates = await recent.Where(b => b.ChargeLinksStamp == null).OrderBy(b => b.CompletedDate).ThenBy(b => b.BatchId)
-            .Take(maxBatches * 10).Select(b => b.BatchId).ToListAsync(ct);
+            .Select(b => b.BatchId).ToListAsync(ct);   // every candidate in the window (ids only): the rotation, not a query limit, decides who goes next
         var unlinked = TakeDue("link", candidates, maxBatches);
         foreach (var id in unlinked) Request(id);
 
@@ -212,7 +212,7 @@ public class ChargeDocumentLinkBuilder(IServiceScopeFactory scopes, ChargeFormBa
                 .Where(b => b.ChargeLinksStamp != null && db.ChargeDocumentLinks.Any(l => l.BatchId == b.BatchId
                     && db.McaFilingDocuments.Any(d => d.FilingDocumentId == l.FilingDocumentId && d.ExtractedTextPath != null && d.TextExtractionMethod != TextExtractionMethod.Xfa)
                     && !db.ChargeInstrumentExtractions.Any(e => e.FilingDocumentId == l.FilingDocumentId && e.PromptVersion == ChargeInstrumentAi.PromptVersion)))
-                .OrderBy(b => b.CompletedDate).ThenBy(b => b.BatchId).Take(maxBatches * 10).Select(b => b.BatchId).ToListAsync(ct);
+                .OrderBy(b => b.CompletedDate).ThenBy(b => b.BatchId).Select(b => b.BatchId).ToListAsync(ct);
             foreach (var id in TakeDue("extract", unscheduled, maxBatches))
             {
                 try { rescheduled += await instruments.ScheduleForBatchAsync(id, ct) > 0 ? 1 : 0; }
