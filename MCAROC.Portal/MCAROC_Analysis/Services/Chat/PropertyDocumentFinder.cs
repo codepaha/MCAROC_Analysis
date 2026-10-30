@@ -91,14 +91,41 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
             .Where(a => a.Family is not null);
 
     /// <summary>What the question says about the property that a document could repeat: identifiers, areas (figure and unit) and a quoted name.</summary>
-    internal sealed record Subject(IReadOnlyList<StructuredFactsProvider.PropertyId> Ids, IReadOnlyList<AreaFigure> Areas, Regex? Name, string? NameHead)
+    internal sealed record Subject(IReadOnlyList<StructuredFactsProvider.PropertyId> Ids, IReadOnlyList<AreaFigure> Areas, Regex? Name, string? NameHead, IReadOnlyList<string> Locations)
     {
         public bool IsEmpty => Ids.Count == 0 && Areas.Count == 0 && Name is null;
     }
 
+    // Survey numbers repeat from village to village: 101 and 102 are numbers in every revenue village. When the question says where the land is, a document that names the same
+    // numbers must also show that place, or it is only a candidate. A location term is a capitalised phrase ("Lower Parel") or a distinctive capitalised word of 8 or more letters
+    // ("Mathuradas"); common words and the vocabulary of the question itself are not places.
+    private static readonly Regex Capitalised = new(@"\b[A-Z][a-z]{3,}(?:\s+[A-Z][a-z]{3,})*", RegexOptions.Compiled);
+    private static readonly HashSet<string> NotPlaces = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "which", "what", "where", "does", "documents", "document", "survey", "land", "property", "plot", "charge", "charges", "deed", "deeds", "district", "registration", "agricultural",
+        "admeasuring", "corresponding", "larger", "known", "forming", "part", "bearing", "ward", "show", "give", "list", "about", "there", "every", "these", "those", "please", "their",
+        "this", "that", "also", "form", "forms", "certificate", "certificates", "letter", "letters", "satisfaction", "mortgage", "hypothecation", "square", "yards", "meters", "metres",
+        "piece", "parcel", "sub", "with", "from", "when", "have", "been", "were", "mention", "concern", "relate", "related", "company"
+    };
+
+    internal static List<string> LocationsIn(string question)
+    {
+        var terms = new List<string>();
+        foreach (Match m in Capitalised.Matches(question))
+        {
+            var words = m.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+            while (words.Count > 0 && NotPlaces.Contains(words[0])) words.RemoveAt(0);
+            while (words.Count > 0 && NotPlaces.Contains(words[^1])) words.RemoveAt(words.Count - 1);
+            if (words.Count == 0) continue;
+            if (words.Count >= 2) terms.Add(string.Join(" ", words));
+            terms.AddRange(words.Where(w => w.Length >= 8 && !NotPlaces.Contains(w)));
+        }
+        return terms.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
     internal static Subject SubjectOf(string? question)
     {
-        if (string.IsNullOrWhiteSpace(question)) return new([], [], null, null);
+        if (string.IsNullOrWhiteSpace(question)) return new([], [], null, null, []);
         var ids = StructuredFactsProvider.PropertyIds(question);
         // a distinctive figure: with a fractional part and at least three digits before it (a bare "1800" would match half the land filings)
         var areas = AreasIn(question).Where(a => a.Text.Contains('.') && a.Text.Split('.')[0].Length >= 3).DistinctBy(a => (a.Value, a.Family)).ToList();
@@ -111,7 +138,7 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
             head = words[0].TrimEnd('s', 'S');
             break;
         }
-        return new(ids, areas, name, head);
+        return new(ids, areas, name, head, LocationsIn(question));
     }
 
     public async Task<PropertyDocumentSearch> FindAsync(long requestId, long? batchId, string? question, CancellationToken ct)
@@ -155,8 +182,10 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
             var docAreas = subject.Areas.Count == 0 ? [] : AreasIn(text).ToList();
             var matchedAreas = subject.Areas.Where(q => docAreas.Any(d => q.SameAs(d))).Select(q => q.Label).ToList();
             var nameHit = subject.Name is not null && subject.Name.IsMatch(Regex.Replace(text, @"\s+", " "));
+            var places = subject.Locations.Where(l => text.Contains(l, StringComparison.OrdinalIgnoreCase)).ToList();
             if (confirmedIds.Count == 0 && otherKindIds.Count == 0 && matchedAreas.Count == 0 && !nameHit) return;
-            if (!perDocument.TryGetValue(docId, out var e)) perDocument[docId] = e = new Evidence(name, formType);
+            if (!perDocument.TryGetValue(docId, out var e)) perDocument[docId] = e = new Evidence(name, formType, subject.Locations.Count > 0);
+            foreach (var l in places) e.Places.Add(l);
             e.Pages.Add(page);
             foreach (var i in confirmedIds) e.Ids.Add(i);
             foreach (var i in otherKindIds) e.OtherKindIds.Add(i);
@@ -168,7 +197,7 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
         // Second pass: a document found through an identifier or the name may give the area in another chunk (and another unit, which no search term can find). Read the
         // rest of every such document that is not yet confirmed and look for the area there. A document that gives the area only in another unit and names neither the
         // property nor an identifier cannot be found this way; that is disclosed, not hidden.
-        if (subject.Areas.Count > 0)
+        if (subject.Areas.Count > 0 || subject.Locations.Count > 0)
         {
             var more = perDocument.Where(kv => kv.Value.Decide() != Verdict.Confirmed).Select(kv => kv.Key).ToList();
             if (more.Count > MaxDocumentsRead) { truncated = true; more = more.Take(MaxDocumentsRead).ToList(); }
@@ -179,7 +208,13 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
                     .OrderBy(c => c.FilingDocumentId).ThenBy(c => c.PageNumber).Take(MaxChunksReadForArea + 1)
                     .Select(c => new { c.ChunkId, c.FilingDocumentId, c.DocumentName, c.FormType, c.PageNumber, c.ChunkText }).ToListAsync(ct);
                 if (rest.Count > MaxChunksReadForArea) { truncated = true; rest = rest.Take(MaxChunksReadForArea).ToList(); }
-                foreach (var c in rest.Where(c => !seen.Contains(c.ChunkId))) Absorb(c.FilingDocumentId, c.DocumentName, c.FormType, c.PageNumber, c.ChunkText);
+                foreach (var c in rest.Where(c => !seen.Contains(c.ChunkId)))
+                {
+                    Absorb(c.FilingDocumentId, c.DocumentName, c.FormType, c.PageNumber, c.ChunkText);
+                    // a chunk with no identifier, area or name of its own can still be where the place is named
+                    if (perDocument.TryGetValue(c.FilingDocumentId, out var known))
+                        foreach (var l in subject.Locations.Where(l => c.ChunkText.Contains(l, StringComparison.OrdinalIgnoreCase))) known.Places.Add(l);
+                }
             }
         }
         var areaNote = subject.Areas.Any(a => a.IsConvertible);
@@ -204,6 +239,8 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
             var matched = e.Ids.OrderBy(x => x, StringComparer.Ordinal).ToList();
             matched.AddRange(e.Areas.OrderBy(x => x, StringComparer.Ordinal).Select(x => "the area " + x));
             if (e.NameHit) matched.Add("the property's name");
+            if (e.Places.Count > 0) matched.Add("the place (" + string.Join(", ", e.Places.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)) + ")");
+            else if (e.RequiresPlace && e.Ids.Count >= 2) matched.Add($"these identifiers, but the document shows none of the question's places ({string.Join(", ", subject.Locations)}), so it is not established that they are the same parcel");
             matched.AddRange(e.OtherKindIds.OrderBy(x => x, StringComparer.Ordinal).Select(x => x + " (a different kind of identifier from the question's)"));
             return new PropertyDocument(q.Key, e.Name, e.FormType, [.. e.Pages.Take(4)], matched,
                 links.Where(l => l.FilingDocumentId == q.Key).Select(l => charges.GetValueOrDefault(l.RocChargeNumber)).Where(c => c is not null).Cast<LinkedCharge>().DistinctBy(c => c.Number).ToList(),
@@ -216,8 +253,10 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
 
     private enum Verdict { No, Candidate, Confirmed }
 
-    private sealed class Evidence(string name, string? formType)
+    private sealed class Evidence(string name, string? formType, bool requiresPlace)
     {
+        public bool RequiresPlace { get; } = requiresPlace;
+        public HashSet<string> Places { get; } = new(StringComparer.OrdinalIgnoreCase);
         public string Name { get; } = name;
         public string? FormType { get; } = formType;
         public SortedSet<int> Pages { get; } = [];
@@ -229,11 +268,12 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
         public Verdict Decide()
         {
             var areaHit = Areas.Count > 0;
-            if (Ids.Count >= 2) return Verdict.Confirmed;
+            // two identifiers confirm only where the question's place is also shown; without a place in the question they stand on their own
+            if (Ids.Count >= 2 && (!RequiresPlace || Places.Count > 0 || NameHit)) return Verdict.Confirmed;
             if (areaHit && (NameHit || Ids.Count >= 1)) return Verdict.Confirmed;
             if (NameHit && Ids.Count >= 1) return Verdict.Confirmed;
             // one identifier alone, an area with its unit alone, or a number shared across kinds of identifier: it may be the property, it is not established
-            if (Ids.Count == 1 || areaHit || OtherKindIds.Count > 0) return Verdict.Candidate;
+            if (Ids.Count >= 1 || areaHit || OtherKindIds.Count > 0) return Verdict.Candidate;
             return Verdict.No;   // the name alone, or nothing
         }
     }
@@ -244,7 +284,7 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
         var search = await FindAsync(requestId, batchId, question, ct);
         var confirmed = search.Documents.Where(d => d.Confirmed).ToList();
         var candidates = search.Documents.Where(d => !d.Confirmed).ToList();
-        if (confirmed.Count == 0 && candidates.Count == 0 && search.Unsearched.Count == 0 && !search.AreaOnlyInOtherUnitsNotSearched) return [];
+        if (confirmed.Count == 0 && candidates.Count == 0 && search.Unsearched.Count == 0 && !search.AreaOnlyInOtherUnitsNotSearched && !search.Truncated) return [];
         const string AreaGap = "One gap: a document that states the area only in another unit (for example square metres where the question gave square yards) and names neither the property nor one of its identifiers is not searched for.";
 
         var facts = new List<StructuredFact>();
@@ -265,6 +305,9 @@ public sealed class PropertyDocumentFinder(AppDbContext db, int maxChunksPerTerm
                           : "This is every such document in the current filing batch, not a sample; ") +
                       "a charge shown as Satisfied here is a charge on this property that has been released." +
                       (search.AreaOnlyInOtherUnitsNotSearched ? " " + AreaGap : ""), null, null));
+        if (confirmed.Count == 0 && candidates.Count == 0 && search.Truncated)
+            facts.Add(new("Documents", "The search reached its limit before it had read everything that could mention the property, so a document may exist that is not listed. " +
+                "Do not conclude that no document concerns the property.", null, null));
         // No confirmed document: the gap still matters. Nothing found, or only candidates, does not rule out a document that gives the area in another unit.
         if (confirmed.Count == 0 && search.AreaOnlyInOtherUnitsNotSearched)
             facts.Add(new("Documents", (candidates.Count == 0 ? "No document on file was found that describes the property the question names. " : "No document on file was confirmed as describing the property the question names. ") + AreaGap, null, null));

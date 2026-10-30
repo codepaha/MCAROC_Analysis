@@ -83,6 +83,9 @@ public class PropertyDocumentFinderTests
             (1, "Schedule: the property known as the Mathuradas Mills Compound at Lower Parel, as described in the title papers."),
             (2, "Total extent of the property under mortgage: 1799.60 sq. mtrs. together with the structures standing thereon."))
             ;
+        // the same survey numbers, in another village: revenue survey numbers repeat from village to village, so the numbers alone do not make it this land
+        await AddAsync("Wrong-village-deed.pdf", "Instrument of Charge",
+            (1, "Schedule: all that land bearing Survey Nos. 3/2840 and 3/2841 situated at Village Kondhwa, Taluka Haveli, District Pune, with the building thereon."));
         await AddAsync("Plot-document.pdf", "Instrument of Charge",
             (1, "Shop on plot no. 4242 of the industrial estate at Thane, mortgaged to the lender."));
         await AddAsync("Unrelated.pdf", "Financial Statements", (1, "Balance sheet as at 31 March. Revenue from operations. Notes to accounts."));
@@ -238,7 +241,7 @@ public class PropertyDocumentFinderTests
 
         Assert.Equal("survey 2840", found.OnlyIdentifier);
         Assert.All(found.Documents, d => Assert.False(d.Confirmed));
-        Assert.Equal(["Deed-of-Mortgage.pdf", "Form-CHG-8.pdf"], found.Documents.Select(d => d.Name).Order().ToList());
+        Assert.Equal(["Deed-of-Mortgage.pdf", "Form-CHG-8.pdf", "Wrong-village-deed.pdf"], found.Documents.Select(d => d.Name).Order().ToList());
         Assert.DoesNotContain(found.Documents, d => d.Name is "Shareholder-list.pdf" or "Certificate-2840.pdf");   // an unlabelled number is no identifier
         Assert.Contains("only one identifier (survey 2840)", facts[0].Text);
         Assert.Contains(facts, f => f.Text.StartsWith("Candidate document (possible match only, identity not established): Deed-of-Mortgage.pdf"));
@@ -246,6 +249,44 @@ public class PropertyDocumentFinderTests
     }
 
     /// <summary>A one- or two-digit number recurs on almost every page, so it cannot be searched on its own. The result must say so rather than return nothing silently.</summary>
+    /// <summary>Survey numbers repeat from village to village. The question says where the land is (Lower Parel); a deed that names the same numbers in Village Kondhwa shows none of
+    /// that place, so it is only a candidate, and its charge is not presented as a charge on this property. When the question names no place, the numbers stand on their own.</summary>
+    [Fact]
+    public async Task The_same_survey_numbers_in_another_village_are_only_a_candidate_when_the_question_names_a_place()
+    {
+        await using var db = CreateContext();
+        var s = await SeedAsync(db);
+
+        var found = await new PropertyDocumentFinder(db).FindAsync(s.RequestId, s.BatchId, Question, CancellationToken.None);
+        var elsewhere = found.Documents.Single(d => d.Name == "Wrong-village-deed.pdf");
+        Assert.False(elsewhere.Confirmed);
+        Assert.Contains(elsewhere.Matched, m => m.Contains("shows none of the question's places") && m.Contains("Lower Parel"));
+        Assert.True(found.Documents.Single(d => d.Name == "Deed-of-Mortgage.pdf").Confirmed);                       // same numbers AND Lower Parel
+        Assert.Contains(found.Documents.Single(d => d.Name == "Deed-of-Mortgage.pdf").Matched, m => m.StartsWith("the place (") && m.Contains("Lower Parel"));
+
+        var noPlace = await new PropertyDocumentFinder(db).FindAsync(s.RequestId, s.BatchId, "Which documents bear survey nos. 3/2840 and 3/2841?", CancellationToken.None);
+        Assert.True(noPlace.Documents.Single(d => d.Name == "Wrong-village-deed.pdf").Confirmed);                    // nothing in the question to tell the villages apart
+    }
+
+    /// <summary>The 600 chunks read may hold the digits but no qualifying identifier while a qualifying document lies beyond the limit; the model must still be told the search stopped early.</summary>
+    [Fact]
+    public async Task A_truncated_search_that_found_nothing_still_says_it_stopped_early()
+    {
+        await using var db = CreateContext();
+        var s = await SeedAsync(db);
+        var finder = new PropertyDocumentFinder(db, maxChunksPerTerm: 1);
+
+        // "EC 2851" in the certificate carries the digits of the question's plot number with no label, so it qualifies as nothing; the limit of one chunk per term is reached
+        var found = await finder.FindAsync(s.RequestId, s.BatchId, "Which documents mention plot no. 2851?", CancellationToken.None);
+        var facts = await finder.FactsAsync(s.RequestId, s.BatchId, "Which documents mention plot no. 2851?", CancellationToken.None);
+
+        Assert.Empty(found.Documents);
+        Assert.True(found.Truncated);
+        var fact = Assert.Single(facts);
+        Assert.Contains("reached its limit", fact.Text);
+        Assert.Contains("Do not conclude that no document concerns the property", fact.Text);
+    }
+
     [Fact]
     public async Task A_short_identifier_is_reported_as_not_searched_not_silently_ignored()
     {
